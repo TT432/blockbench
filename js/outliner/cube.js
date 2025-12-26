@@ -686,7 +686,7 @@ export class Cube extends OutlinerElement {
 		this.preview_controller.updateFaces(this);
 		this.preview_controller.updateUV(this);
 	}
-	mapAutoUV() {
+	mapAutoUV(options = {}) {
 		if (this.box_uv) return;
 		var scope = this;
 		if (scope.autouv === 2) {
@@ -697,7 +697,7 @@ export class Cube extends OutlinerElement {
 				var uv = scope.faces[side].uv.slice()
 				let texture = scope.faces[side].getTexture();
 				let uv_width = Project.getUVWidth(texture);
-				let uv_height = Project.getUVWidth(texture);
+				let uv_height = Project.getUVHeight(texture);
 
 				switch (side) {
 					case 'north':
@@ -775,7 +775,8 @@ export class Cube extends OutlinerElement {
 			scope.preview_controller.updateUV(scope)
 		} else if (scope.autouv === 1) {
 
-			function calcAutoUV(fkey, size) {
+			function calcAutoUV(fkey, dimension_axes, world_directions) {
+				let size = dimension_axes.map(axis => scope.size(axis));
 				let face = scope.faces[fkey];
 				size[0] = Math.abs(size[0]);
 				size[1] = Math.abs(size[1]);
@@ -786,19 +787,37 @@ export class Cube extends OutlinerElement {
 
 				let texture = face.getTexture();
 				let uv_width = Project.getUVWidth(texture);
-				let uv_height = Project.getUVWidth(texture);
+				let uv_height = Project.getUVHeight(texture);
 
 				//Match To Rotation
 				if (rot === 90 || rot === 270) {
 					size.reverse()
+					dimension_axes.reverse()
+					world_directions.reverse()
+				}
+				if (rot == 180) {
+					world_directions[0] *= -1;
+					world_directions[1] *= -1;
 				}
 				//Limit Input to 16
 				size[0] = Math.clamp(size[0], -uv_width, uv_width) * (Math.sign(previous_size[0]) || 1);
 				size[1] = Math.clamp(size[1], -uv_height, uv_height) * (Math.sign(previous_size[1]) || 1);
 
+				if (options && typeof options.axis == 'number') {
+					if (options.axis == dimension_axes[0] && options.direction == world_directions[0]) {
+						sx += previous_size[0] - size[0];
+					}
+					if (options.axis == dimension_axes[1] && options.direction == world_directions[1]) {
+						sy += previous_size[1] - size[1];
+					}
+				}
+
+				//Prevent Negative
+				if (sx < 0) sx = 0
+				if (sy < 0) sy = 0
 				//Calculate End Points
-				let endx = sx + size[0]
-				let endy = sy + size[1]
+				let endx = sx + size[0];
+				let endy = sy + size[1];
 				//Prevent overflow
 				if (endx > uv_width) {
 					sx = uv_width - (endx - sx)
@@ -808,18 +827,15 @@ export class Cube extends OutlinerElement {
 					sy = uv_height - (endy - sy)
 					endy = uv_height
 				}
-				//Prevent Negative
-				if (sx < 0) sx = 0
-				if (sy < 0) sy = 0
 				//Return
 				return [sx, sy, endx, endy]
 			}
-			scope.faces.north.uv = calcAutoUV('north', [scope.size(0), scope.size(1)])
-			scope.faces.east.uv =  calcAutoUV('east',  [scope.size(2), scope.size(1)])
-			scope.faces.south.uv = calcAutoUV('south', [scope.size(0), scope.size(1)])
-			scope.faces.west.uv =  calcAutoUV('west',  [scope.size(2), scope.size(1)])
-			scope.faces.up.uv =	   calcAutoUV('up',	   [scope.size(0), scope.size(2)])
-			scope.faces.down.uv =  calcAutoUV('down',  [scope.size(0), scope.size(2)])
+			scope.faces.north.uv = calcAutoUV('north', [0, 1], [1, 1]);
+			scope.faces.east.uv =  calcAutoUV('east',  [2, 1], [1, 1]);
+			scope.faces.south.uv = calcAutoUV('south', [0, 1], [-1, 1]);
+			scope.faces.west.uv =  calcAutoUV('west',  [2, 1], [-1, 1]);
+			scope.faces.up.uv =	   calcAutoUV('up',	   [0, 2], [-1, -1]);
+			scope.faces.down.uv =  calcAutoUV('down',  [0, 2], [-1, 1]);
 
 			scope.preview_controller.updateUV(scope)
 		}
@@ -907,7 +923,7 @@ export class Cube extends OutlinerElement {
 		if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
 			Format.cube_size_limiter.clamp(this, {}, axis, bidirectional ? null : !!negative);
 		}
-		this.mapAutoUV();
+		this.mapAutoUV({axis, direction: bidirectional ? 0 : (negative ? -1 : 1)});
 		if (this.box_uv) {
 			if (axis == 2) {
 				let difference = before - this.size(axis);
@@ -1031,7 +1047,7 @@ new Property(Cube, 'enum', 'render_order', {
 	}
 });
 new Property(Cube, 'boolean', 'rescale', {
-	condition: () => Format.rotation_limit,
+	condition: {features: ['java_cube_shading_properties']},
 	inputs: {
 		element_panel: {
 			input: {label: 'cube.rescale', description: 'cube.rescale.desc', type: 'checkbox'},
@@ -1123,10 +1139,12 @@ new NodePreviewController(Cube, {
 		let mesh = element.mesh;
 
 		if (Format.rotate_cubes && element.rescale === true) {
-			let axis = element.rotationAxis()||'y';
-			let rescale = getRescalingFactor(element.rotation[getAxisNumber(axis)]);
-			mesh.scale.set(rescale, rescale, rescale);
-			mesh.scale[axis] = 1;
+			let rescale = element.rotation.map(angle => getRescalingFactor(angle));
+			mesh.scale.set(
+				rescale[1] * rescale[2],
+				rescale[0] * rescale[2],
+				rescale[0] * rescale[1],
+			)
 		} else {
 			mesh.scale.set(1, 1, 1);
 		}

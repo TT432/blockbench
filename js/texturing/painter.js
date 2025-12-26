@@ -1,4 +1,5 @@
 import { clipboard, nativeImage } from "../native_apis";
+import { Dynamic2DMap } from "../util/dynamic_2d_map";
 
 StateMemory.init('brush_presets', 'array')
 
@@ -134,8 +135,14 @@ export const Painter = {
 			let [x, y] = Painter.getCanvasToolPixelCoords(data.intersects[0].uv, texture);
 
 			let interval = Toolbox.selected.brush?.interval || 1;
-			if (Math.sqrt(Math.pow(x - Painter.current.x, 2) + Math.pow(y - Painter.current.y, 2)) < interval) {
+			let delta = [x - Painter.current.x, y - Painter.current.y];
+			let distance = Math.sqrt(Math.pow(delta[0], 2) + Math.pow(delta[1], 2));
+			if (distance < interval) {
 				return;
+			} else if (distance > interval && !(!Toolbox.selected.brush || Condition(Toolbox.selected.brush.floor_coordinates))) {
+				let rounded_distance = Math.floor(distance/interval)*interval;
+				x = Painter.current.x + (delta[0] / distance) * rounded_distance;
+				y = Painter.current.y + (delta[1] / distance) * rounded_distance;
 			}
 
 			if (
@@ -906,7 +913,7 @@ export const Painter = {
 			}
 		}
 
-		while (i <= length) {
+		while (i <= length+0.001) {
 			x = length ? (start_x + diff_x / length * i) : end_x;
 			y = length ? (start_y + diff_y / length * i) : end_y;
 			if (!Toolbox.selected.brush || Condition(Toolbox.selected.brush.floor_coordinates)) {
@@ -2137,7 +2144,7 @@ SharedActions.add('copy', {
 		}
 
 		if (cut) {
-			SharedActions.runSpecific('delete', 'image_content', {message: 'Cut texture selection'});
+			SharedActions.runSpecific('delete', 'image_content', event, {message: 'Cut texture selection'});
 		}
 	}
 })
@@ -2369,6 +2376,7 @@ BARS.defineActions(function() {
 					return {r: color.r, g: color.g, b: color.b, a}
 
 				} else {
+					// Limit opacity per brush stroke
 					if (settings.limit_brush_opacity_per_stroke.value) {
 						if (blend_mode == BlendModes.difference) {
 							let before = Painter.getAlphaMatrix(texture, px, py)
@@ -2380,9 +2388,20 @@ BARS.defineActions(function() {
 							}
 						} else if (opacity < 1 || blend_mode != BlendModes.default) {
 							let before = Painter.getAlphaMatrix(texture, px, py) ?? 0;
+							if (!before) {
+								if (!Painter.current.original_color_maps) Painter.current.original_color_maps = {};
+								if (!Painter.current.original_color_maps[texture.uuid]) {
+									Painter.current.original_color_maps[texture.uuid] = new Dynamic2DMap();
+								}
+								Painter.current.original_color_maps[texture.uuid].set(px, py, pxcolor);
+							} else {
+								let color = Painter.current.original_color_maps[texture.uuid].get(px, py);
+								if (color) pxcolor = color;
+							}
+
 							let target = Math.lerp(before, opacity??1, local_opacity);
 							if (target > before) Painter.setAlphaMatrix(texture, px, py, target);
-							a = Math.clamp(Math.getLerp(before, 1, target), 0, 1);
+							a = target;
 						}
 					}
 					let result_color;

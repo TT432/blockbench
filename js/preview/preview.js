@@ -39,8 +39,21 @@ export const DefaultCameraPresets = [
 		name: 'menu.preview.angle.initial',
 		id: 'initial',
 		projection: 'perspective',
-		position: [-40, 32, -40],
-		target: [0, 8, 0],
+		get position() {
+			let base;
+			switch (Format.forward_direction) {
+				case '+x': base = [40, 32, -40]; break;
+				case '-x': base = [-40, 32, 40]; break;
+				case '+z': base = [40, 32, 40]; break;
+				case '-z': default: base = [-40, 32, -40]; break;
+			}
+			if (!Format) return base;
+			return base.map(v => v * (Format.block_size / 16));
+		},
+		get target() {
+			let block_size = Format.block_size ?? 16;
+			return [0, block_size * 0.75, 0]
+		},
 		default: true
 	},
 	{
@@ -336,7 +349,7 @@ export class Preview {
 				this.static_rclick = false;
 			}
 		}, false)
-		addEventListeners(this.canvas, 'mousemove', 			event => { this.mousemove(event)}, false)
+		addEventListeners(this.canvas, 'mousemove touchmove',	event => { this.mousemove(event)}, false)
 		addEventListeners(this.canvas, 'mouseup touchend',		event => { this.mouseup(event)}, false)
 		addEventListeners(this.canvas, 'dblclick', 				event => { if (settings.double_click_switch_tools.value) Toolbox.toggleTransforms(event); }, false)
 		addEventListeners(this.canvas, 'mouseenter touchstart', event => { this.occupyTransformer(event)}, false)
@@ -946,7 +959,7 @@ export class Preview {
 							processed_faces.forEach(face => {
 								selected_vertices.safePush(...face.vertices);
 								let fkey = face.getFaceKey();
-								selected_faces.push(fkey);
+								selected_faces.safePush(fkey);
 							});
 						} else {
 							let face_vkeys = data.element.faces[data.face].vertices;
@@ -999,8 +1012,9 @@ export class Preview {
 							selected_faces.push(fkey);
 							selected_vertices.safePush(...face.vertices);
 
-							for (let fkey2 in mesh.faces) {
-								let face2 = mesh.faces[fkey2];
+							let faces = mesh.faces;
+							for (let fkey2 in faces) {
+								let face2 = faces[fkey2];
 								if (face.vertices.find(vkey => face2.vertices.includes(vkey))) {
 									selectFace(face2, fkey2);
 								}
@@ -1159,18 +1173,19 @@ export class Preview {
 			updateCubeHighlights(data && data.element);
 		}
 
+		brush_cursor:
 		if (Toolbox.selected.brush?.size && Settings.get('brush_cursor_3d')) {
 			if (!data) {
 				scene.remove(Canvas.brush_outline);
-				return;
+				break brush_cursor;
 			}
-			if (!data.element.faces) return;
-			if (data.element instanceof SplineMesh && data.element.render_mode !== "mesh") return;
+			if (!data.element.faces) break brush_cursor;
+			if (data.element instanceof SplineMesh && data.element.render_mode !== "mesh") break brush_cursor;
 			let face = data.element.faces[data.face];
 			let texture = face.getTexture();
 			if (!texture) {
 				scene.remove(Canvas.brush_outline);
-				return;
+				break brush_cursor;
 			}
 			scene.add(Canvas.brush_outline);
 
@@ -1308,6 +1323,9 @@ export class Preview {
 			unselectAllElements();
 		}
 		delete this.selection.click_target;
+		if (event instanceof TouchEvent) {
+			Canvas.scene.remove(Canvas.brush_outline);
+		}
 		return this;
 	}
 	raycastMouseCoords(x,y) {

@@ -24,6 +24,7 @@ declare const VuePrismEditor: Vue.Component
 type EventName =
 	| 'remove_animation'
 	| 'display_animation_frame'
+	| 'display_default_pose'
 	| 'interpolate_keyframes'
 	| 'before_closing'
 	| 'create_session'
@@ -88,6 +89,7 @@ type EventName =
 	| 'setup_project'
 	| 'update_project_resolution'
 	| 'merge_project'
+	| 'display_model_stats'
 	| 'update_view'
 	| 'update_camera_position'
 	| 'render_frame'

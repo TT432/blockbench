@@ -142,7 +142,9 @@ export class GeneralAnimator {
 				has_before = true;
 			}
 		}
-		result = before ? before : this.createKeyframe(null, Timeline.time, channel, false, false);
+		let value = null;
+		if (Timeline.time > Animation.selected.length && Animation.selected.loop == 'once') value = {};
+		result = before ? before : this.createKeyframe(value, Timeline.time, channel, false, false);
 		let new_keyframe;
 		if (settings.auto_keyframe.value && Timeline.snapTime(Timeline.time) != 0 && !before && !has_before) {
 			new_keyframe = this.createKeyframe({}, 0, channel, false, false);
@@ -187,9 +189,11 @@ export class GeneralAnimator {
 GeneralAnimator.addChannel = function(channel, options) {
 	this.prototype.channels[channel] = {
 		name: options.name || channel,
+		condition: options.condition,
 		transform: options.transform || false,
 		mutable: typeof options.mutable === 'boolean' ? options.mutable : true,
-		max_data_points: options.max_data_points || 0
+		max_data_points: options.max_data_points || 0,
+		displayFrame: options.displayFrame
 	}
 	ModelProject.all.forEach(project => {
 		if (!project.animations)
@@ -236,13 +240,14 @@ export class BoneAnimator extends GeneralAnimator {
 		}
 		if (this.group.locked) return;
 
-		var duplicates;
 		for (var key in this.animation.animators) {
 			this.animation.animators[key].selected = false;
 		}
 		if (group_is_selected !== true && this.group) {
 			this.group.select();
 		}
+		/*
+		var duplicates;
 		Group.all.forEach(group => {
 			if (group.name == Group.first_selected.name && group != Group.first_selected) {
 				duplicates = true;
@@ -265,7 +270,7 @@ export class BoneAnimator extends GeneralAnimator {
 				translateKey: 'duplicate_groups',
 				icon: 'folder',
 			});
-		}
+		}*/
 		super.select();
 		
 		if (this[Toolbox.selected.animation_channel] && (Timeline.selected.length == 0 || Timeline.selected[0].animator != this) && !Blockbench.hasFlag('loading_selection_save')) {
@@ -560,6 +565,13 @@ export class BoneAnimator extends GeneralAnimator {
 		if (!this.muted.rotation) this.displayRotation(this.interpolate('rotation'), multiplier)
 		if (!this.muted.position) this.displayPosition(this.interpolate('position'), multiplier)
 		if (!this.muted.scale) this.displayScale(this.interpolate('scale'), multiplier)
+
+		for (let channel in this.channels) {
+			let channel_config = this.channels[channel];
+			if (channel_config.displayFrame) {
+				channel_config.displayFrame(this, multiplier);
+			}
+		}
 	}
 	applyAnimationPreset(preset) {
 		let keyframes = [];

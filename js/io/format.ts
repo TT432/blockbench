@@ -60,7 +60,7 @@ export interface CubeSizeLimiter {
  */
 declare const Format: ModelFormat
 
-export const Formats = {};
+export const Formats: Record<string, ModelFormat> = {};
 
 Object.defineProperty(window, 'Format', {
 	get() {
@@ -130,6 +130,10 @@ export interface FormatFeatures {
 	 * Specify how large in pixels a block is. Defaults to 16.
 	 */
 	block_size: number
+	/**
+	 * Which direction of the model is facing forward
+	 */
+	forward_direction: '-z' | '+z' | '-x' | '+x'
 	/**
 	 * Add the ability to rotate cubes
 	 */
@@ -202,6 +206,10 @@ export interface FormatFeatures {
 	 * If true, animations will be saved into files
 	 */
 	animation_files: boolean
+	/**
+	 * Change how animations can be grouped
+	 */
+	animation_grouping: 'by_file' | 'custom' | 'disabled'
 	/**
 	 * Enables a folder path per texture that can be set in the texture properties window
 	 */
@@ -367,6 +375,9 @@ export class ModelFormat implements FormatOptions {
 		for (let id in ModelFormat.properties) {
 			ModelFormat.properties[id].merge(this, data);
 		}
+		if (!data.animation_files && !data.animation_grouping) {
+			this.animation_grouping = 'custom';
+		}
 		if (this.format_page && this.format_page.component) {
 			Vue.component(`format_page_${this.id}`, this.format_page.component)
 		}
@@ -381,11 +392,14 @@ export class ModelFormat implements FormatOptions {
 		Canvas.buildGrid()
 		if (Format.centered_grid) {
 			scene.position.set(0, 0, 0);
-			Canvas.ground_plane.position.x = Canvas.ground_plane.position.z = 8;
+			Canvas.ground_plane.position.x = Canvas.ground_plane.position.z = Format.block_size/2;
 		} else {
-			scene.position.set(-8, 0, -8);
+			scene.position.set(-Format.block_size/2, 0, -Format.block_size/2);
 			Canvas.ground_plane.position.x = Canvas.ground_plane.position.z = 0;
 		}
+		let ground_plane_scale = Format.block_size / 16;
+		Canvas.ground_plane.scale.set(ground_plane_scale, ground_plane_scale, ground_plane_scale);
+
 		PreviewModel.getActiveModels().forEach(model => {
 			model.update();
 		})
@@ -399,7 +413,8 @@ export class ModelFormat implements FormatOptions {
 		if (Mode.selected && !Condition(Mode.selected.condition)) {
 			(this.pose_mode ? Modes.options.paint : Modes.options.edit).select();
 		}
-		Interface.Panels.animations.inside_vue.$data.group_animations_by_file = this.animation_files;
+		Interface.Panels.animations.inside_vue.$data.animation_files = this.animation_files;
+		Interface.Panels.animations.inside_vue.$data.group_animations_by_file = this.animation_grouping == 'by_file';
 		// @ts-ignore
 		Interface.status_bar.vue.Format = this;
 		UVEditor.vue.cube_uv_rotation = this.uv_rotation;
@@ -622,6 +637,7 @@ new Property(ModelFormat, 'boolean', 'bone_rig');
 new Property(ModelFormat, 'boolean', 'armature_rig');
 new Property(ModelFormat, 'boolean', 'centered_grid');
 new Property(ModelFormat, 'number', 'block_size', {default: 16});
+new Property(ModelFormat, 'enum', 'forward_direction', {default: '-z', values: ['-z', '+z', '-x', '+x']});
 new Property(ModelFormat, 'boolean', 'rotate_cubes');
 new Property(ModelFormat, 'boolean', 'stretch_cubes');
 new Property(ModelFormat, 'boolean', 'integer_size');
@@ -640,6 +656,7 @@ new Property(ModelFormat, 'boolean', 'select_texture_for_particles');
 new Property(ModelFormat, 'boolean', 'texture_mcmeta');
 new Property(ModelFormat, 'boolean', 'bone_binding_expression');
 new Property(ModelFormat, 'boolean', 'animation_files');
+new Property(ModelFormat, 'enum', 'animation_grouping', {default: 'by_file', values: ['by_file', 'custom', 'disabled']});
 new Property(ModelFormat, 'boolean', 'animation_controllers');
 new Property(ModelFormat, 'boolean', 'animation_loop_wrapping');
 new Property(ModelFormat, 'boolean', 'quaternion_interpolation');

@@ -162,6 +162,8 @@ interface AddChannelOptions {
 	transform?: boolean
 	mutable?: boolean
 	max_data_points?: number
+	condition?: ConditionResolvable
+	displayFrame?: (animator: GeneralAnimator, multiplier: number) => void
 }
 interface Channel {
 	name: string
@@ -222,6 +224,7 @@ declare class NullObjectAnimator extends GeneralAnimator {
 	displayFrame(): void
 }
 declare class EffectAnimator extends GeneralAnimator {
+	constructor(animation: _Animation)
 	name: string
 	uuid: string
 	rotations: _Keyframe[]

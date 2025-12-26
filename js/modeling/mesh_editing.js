@@ -604,7 +604,7 @@ export class KnifeToolCubeContext {
 			this.first_point[getAxisLetter(off_axes[0])] = Math.round((this.first_point[getAxisLetter(off_axes[0])] - modified_from[off_axes[0]]) / snap) * snap + modified_from[off_axes[0]];
 			this.first_point[getAxisLetter(off_axes[1])] = Math.round((this.first_point[getAxisLetter(off_axes[1])] - modified_from[off_axes[1]]) / snap) * snap + modified_from[off_axes[1]];
 
-		} else {
+		} else if (this.cube) {
 			this.mesh_3d.add(this.preview_mesh);
 			this.face_axis = KnifeToolCubeContext.face_axis[this.face];
 			let off_axes = [0, 1, 2].filter(a1 => a1 != this.face_axis);
@@ -984,6 +984,35 @@ export function cleanupOverlappingMeshFaces(mesh) {
 			}
 		}
 	}
+}
+
+export function uncorruptMesh() {
+	for (let mesh of Mesh.selected) {
+		console.log(`Fixing mesh "${mesh.name}"`);
+		for (let vkey in mesh.vertices) {
+			let value = mesh.vertices[vkey];
+			if (value instanceof Array == false || value.length != 3 || value.findIndex(val => isNaN(val)) != -1) {
+				delete mesh.vertices[vkey];
+				console.log(`Delete vertex "${vkey}" with value`, value);
+			}
+		}
+		for (let fkey in mesh.faces) {
+			let face = mesh.faces[fkey];
+			let missing_vertices = face.vertices.filter(vkey => mesh.vertices[vkey] == undefined);
+			if (missing_vertices.length == face.vertices.length || missing_vertices.length == face.vertices.length-1) {
+				console.log(`Deleting face "${fkey}" due to not having 1 or more valid vertices`);
+				delete mesh.faces[fkey];
+			} else if (missing_vertices.length) {
+				for (let vkey of missing_vertices) {
+					face.vertices.remove(vkey);
+					delete face.uv[vkey];
+					console.log(`Deleting invalid vertex "${vkey}" from face "${fkey}"`);
+				}
+			}
+		}
+		Mesh.preview_controller.updateAll(mesh);
+	}
+	updateSelection();
 }
 
 SharedActions.add('delete', {
@@ -1435,6 +1464,7 @@ BARS.defineActions(function() {
 					}
 				}
 				if (result.shape == 'cuboid') {
+					mesh.name = 'mesh';
 					let r = result.diameter/2;
 					let h = result.height;
 					mesh.addVertices([r, h, r], [r, h, -r], [r, 0, r], [r, 0, -r], [-r, h, r], [-r, h, -r], [-r, 0, r], [-r, 0, -r]);
@@ -1758,7 +1788,16 @@ BARS.defineActions(function() {
 			}
 		},
 		onCanvasClick(data) {
-			if (!data) return;
+			if (!data || !data.type) return;
+			if (data.event instanceof TouchEvent) {
+				// Stop controls on mobile
+				Transformer.dragging = true;
+				function onTouchEnd() {
+					Transformer.dragging = false;
+					document.removeEventListener('touchend', onTouchEnd);
+				}
+				document.addEventListener('touchend', onTouchEnd);
+			}
 			if (!KnifeToolContext.current) {
 				if (data.element instanceof Mesh) {
 					if (!KnifeToolContext.current && Mesh.selected.length == 1) {
@@ -1772,9 +1811,12 @@ BARS.defineActions(function() {
 						KnifeToolContext.current = new KnifeToolCubeContext(data.element);
 					}
 				}
+				if (data.event instanceof TouchEvent) return;
 			}
 			let context = KnifeToolContext.current;
-			context.addPoint(data);
+			if (context) {
+				context.addPoint(data);
+			}
 		},
 		onSelect() {
 			Interface.addSuggestedModifierKey('shift', 'modifier_actions.snap_to_center');
@@ -3221,4 +3263,5 @@ Object.assign(window, {
 	KnifeToolCubeContext,
 	autoFixMeshEdit,
 	cleanupOverlappingMeshFaces,
+	uncorruptMesh,
 })
