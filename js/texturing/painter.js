@@ -685,6 +685,10 @@ export const Painter = {
 				} else {
 					point_on_uv[1] = Math.max(face.uv[1], face.uv[1+2]) * uvFactorY - point_on_uv[1] - offset_pixel_brush;
 				}
+				if (offset_pixel_brush == 1) {
+					point_on_uv[0] = Math.round(point_on_uv[0]);
+					point_on_uv[1] = Math.round(point_on_uv[1]);
+				}
 	
 				return {
 					element: mirror_element,
@@ -767,6 +771,10 @@ export const Painter = {
 					} else {
 						point_on_uv = point_on_uv.map(v => Math.floor(v))
 					}
+				}
+				if (offset_pixel_brush == 1) {
+					point_on_uv[0] = Math.round(point_on_uv[0]);
+					point_on_uv[1] = Math.round(point_on_uv[1]);
 				}
 				
 				return {

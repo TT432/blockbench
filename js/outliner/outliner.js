@@ -1,4 +1,5 @@
 import { Blockbench } from "../api"
+import StateMemory from "../util/state_memory"
 
 export const Outliner = {
 	ROOT: 'root',
