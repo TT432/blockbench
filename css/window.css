@@ -1157,6 +1157,9 @@
 		max-width: fit-content;
 		display: flex;
 		width: fit-content;
+		padding: 4px;
+		border-radius: 6px;
+		margin-bottom: -5px;
 	}
 
 	.toolbar[toolbar_id=reference_images] {
