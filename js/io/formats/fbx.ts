@@ -1,8 +1,8 @@
 import { Blockbench } from "../../api";
 import { Filesystem } from "../../file_system";
-import { Armature } from "../../outliner/armature";
-import { ArmatureBone } from "../../outliner/armature_bone";
-import { adjustFromAndToForInflateAndStretch } from "../../outliner/cube";
+import { Armature } from "../../outliner/types/armature";
+import { ArmatureBone } from "../../outliner/types/armature_bone";
+import { adjustFromAndToForInflateAndStretch } from "../../outliner/types/cube";
 import { patchedAtob } from "../../util/util";
 import { JSZip, THREE } from './../../lib/libs'
 
@@ -1475,6 +1475,7 @@ class BinaryWriter {
 			var oldArray = this.array;
 			// Expand by at least 160 bytes at a time to improve performance. Only works for FBX since 176+ arbitrary bytes are added to the file end.
 			this.array = new Uint8Array(this.cursor + Math.max(n, 176));
+			// @ts-ignore
 			this.buffer = this.array.buffer;
 			this.array.set(oldArray);
 			this.view = new DataView(this.buffer)

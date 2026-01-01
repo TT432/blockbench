@@ -1,9 +1,11 @@
-import { Animation } from "../animations/animation";
-import { Blockbench } from "../api";
-import { THREE } from "../lib/libs";
-import { flipNameOnAxis } from "../modeling/transform";
+import { Animation } from "../../animations/animation";
+import { Blockbench } from "../../api";
+import { THREE } from "../../lib/libs";
+import { flipNameOnAxis } from "../../modeling/transform";
 import { Armature } from "./armature";
-import { Vue } from '../lib/libs'
+import { Vue } from '../../lib/libs'
+import { OutlinerElement } from "../abstract/outliner_element";
+import { OutlinerNode } from "../abstract/outliner_node";
 
 interface ArmatureBoneOptions {
 	name?: string
@@ -21,7 +23,7 @@ interface ArmatureBoneOptions {
 
 
 export class ArmatureBone extends OutlinerElement {
-	children: ArmatureBone[]
+	declare children: ArmatureBone[]
 	isOpen: boolean
 	visibility: boolean
 	origin: ArrayVector3
@@ -102,8 +104,9 @@ export class ArmatureBone extends OutlinerElement {
 		Canvas.updateAllBones([this]);
 		return this;
 	}
-	select(event?: Event, isOutlinerClick?: boolean): this {
-		super.select(event, isOutlinerClick);
+	select(event?: Event, isOutlinerClick?: boolean): false | this {
+		let result = super.select(event, isOutlinerClick);
+		if (result == false) return false;
 		if (Animator.open && Animation.selected) {
 			Animation.selected.getBoneAnimator(this).select(true);
 		}
@@ -237,7 +240,7 @@ export class ArmatureBone extends OutlinerElement {
 		}
 		return copy;
 	}
-	getUndoCopy() {
+	getUndoCopy(): any {
 		let copy = {
 			isOpen: this.isOpen,
 			uuid: this.uuid,

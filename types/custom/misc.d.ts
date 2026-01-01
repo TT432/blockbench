@@ -137,7 +137,7 @@ declare function updateSelection(): void
 
 declare var LZUTF8: any
 
-declare function unselectAllElements(): void
+declare function unselectAllElements(exceptions?: OutlinerNode[]): void
 declare function updateCubeHighlights(hover_cube: Cube, force_off: boolean): void
 declare function getRescalingFactor(angle: number): number
 

@@ -1,5 +1,5 @@
-import { Armature } from "../../outliner/armature";
-import { ArmatureBone } from "../../outliner/armature_bone";
+import { Armature } from "../../outliner/types/armature";
+import { ArmatureBone } from "../../outliner/types/armature_bone";
 import { sameMeshEdge } from "./util";
 import { THREE } from "../../lib/libs";
 import { pointInPolygon } from "../../util/util";

@@ -71,6 +71,7 @@ declare class _Animation extends AnimationItem {
 	 * Returns (if necessary creates) the animator of a specific outliner node of this animation
 	 */
 	getBoneAnimator(node?: OutlinerNode): BoneAnimator
+	removeAnimator(id: string): void
 	/**
 	 * Adds the animation to the current project and to the interface
 	 * @param undo If true, the addition of the animation will be registered as an edit

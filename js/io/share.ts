@@ -4,7 +4,7 @@ import { FormInputType } from "../interface/form";
 import { settings } from "../interface/settings";
 import { BARS } from "../interface/toolbars";
 import { tl } from "../languages";
-import { Mesh } from "../outliner/mesh";
+import { Mesh } from "../outliner/types/mesh";
 import { Outliner } from "../outliner/outliner";
 import { ReferenceImage } from "../preview/reference_images";
 import { capitalizeFirstLetter } from "../util/util";

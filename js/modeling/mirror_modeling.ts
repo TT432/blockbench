@@ -1,7 +1,7 @@
 import { Blockbench } from "../api";
-import { Armature } from "../outliner/armature";
-import { ArmatureBone } from "../outliner/armature_bone";
-import { Billboard } from "../outliner/billboard";
+import { Armature } from "../outliner/types/armature";
+import { ArmatureBone } from "../outliner/types/armature_bone";
+import { Billboard } from "../outliner/types/billboard";
 import { flipNameOnAxis } from "./transform";
 
 export const MirrorModeling = {

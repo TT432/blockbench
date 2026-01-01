@@ -1,4 +1,4 @@
-import { Property } from "../util/property";
+import { Property } from "../../util/property";
 // import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 
 // Add dummy Mesh with vertex keys

@@ -82,7 +82,7 @@ declare class Cube extends OutlinerElement {
 	 */
 	size(axis: number, floored?: boolean): number
 	rotationAxis(): string
-	getUndoCopy(aspects?: any): void
+	getUndoCopy(aspects?: any): any
 	getSaveCopy(): Cube
 	/**
 	 * Rotate the cube around axis in 90 degree steps

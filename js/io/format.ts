@@ -4,11 +4,11 @@ import { setProjectTitle } from "../interface/interface";
 import { settings, Settings } from "../interface/settings";
 import { TickUpdates } from "../misc";
 import { Mode, Modes } from "../modes";
-import { Group } from "../outliner/group";
+import { Group } from "../outliner/types/group";
 import { Canvas } from "../preview/canvas";
 import { DefaultCameraPresets } from "../preview/preview";
 import { Property } from "../util/property";
-import { SplineMesh } from "../outliner/spline_mesh";
+import { SplineMesh } from "../outliner/types/spline_mesh";
 
 export interface FormatPage {
 	component?: Vue.Component

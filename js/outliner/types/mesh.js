@@ -1,4 +1,5 @@
-import { Property } from "../util/property";
+import { Property } from "../../util/property";
+import { Face } from "../abstract/face";
 
 export class MeshFace extends Face {
 	constructor(mesh, data) {

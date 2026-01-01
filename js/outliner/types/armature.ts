@@ -1,5 +1,7 @@
-import { Blockbench } from "../api";
-import { THREE, Vue } from "../lib/libs";
+import { Blockbench } from "../../api";
+import { THREE, Vue } from "../../lib/libs";
+import { OutlinerElement } from "../abstract/outliner_element";
+import { OutlinerNode } from "../abstract/outliner_node";
 import { ArmatureBone } from "./armature_bone";
 
 interface ArmatureOptions {
@@ -10,7 +12,7 @@ interface ArmatureOptions {
 }
 
 export class Armature extends OutlinerElement {
-	children: (ArmatureBone|Mesh|NullObject)[]
+	declare children: (ArmatureBone|Mesh|NullObject)[]
 	isOpen: boolean
 	visibility: boolean
 	origin: ArrayVector3
@@ -107,7 +109,7 @@ export class Armature extends OutlinerElement {
 		}
 		return copy;
 	}
-	getUndoCopy() {
+	getUndoCopy(): any {
 		let copy = {
 			isOpen: this.isOpen,
 			uuid: this.uuid,
@@ -286,7 +288,7 @@ BARS.defineActions(function() {
 		click: function () {
 			Undo.initEdit({outliner: true, elements: []});
 			let add_to_node: OutlinerNode | typeof Outliner.ROOT = Outliner.selected.last() || Group.first_selected;
-			if (add_to_node && add_to_node.getTypeBehavior('child_types')?.indexOf('armature') == -1) {
+			if (add_to_node instanceof OutlinerNode && add_to_node.getTypeBehavior('child_types')?.indexOf('armature') == -1) {
 				add_to_node = Outliner.ROOT;
 			}
 			let armature = new Armature();

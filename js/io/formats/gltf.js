@@ -1,5 +1,5 @@
 import { THREE } from "../../lib/libs";
-import { Armature } from "../../outliner/armature";
+import { Armature } from "../../outliner/types/armature";
 
 export function buildAnimationTracks(export_scale = Settings.get('model_export_scale'), do_quaternions = true) {
 	let anims = [];

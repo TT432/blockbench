@@ -358,7 +358,7 @@ export class Group extends OutlinerNode {
 	duplicate() {
 		var copy = this.getChildlessCopy(false)
 		delete copy.parent;
-		if (this.getTypeBehavior('unique_name')) copy._original_name = this.name;
+		if (this.getTypeBehavior('unique_name')) copy.old_name = this.name;
 		Property.resetUniqueValues(Group, copy);
 		copy.sortInBefore(this, 1).init()
 		if (this.getTypeBehavior('unique_name')) {
