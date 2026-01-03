@@ -6,7 +6,7 @@ interface FaceOptions {
 	texture?: Texture | UUID | false
 }
 
-export class Face {
+export abstract class Face {
 	texture: UUID | false | undefined
 	element: OutlinerElement
 	direction?: string
@@ -36,7 +36,7 @@ export class Face {
 		}
 		return this;
 	}
-	getTexture(): Texture | undefined {
+	getTexture(): Texture | undefined | null | false {
 		if (Format.per_group_texture && this.element.parent instanceof Group && this.element.parent.texture) {
 			return Texture.all.find(texture => texture.uuid == (this.element.parent as Group).texture);
 		}
@@ -46,6 +46,7 @@ export class Face {
 		if (typeof this.texture === 'string') {
 			return Texture.all.find(texture => texture.uuid == this.texture)
 		}
+		return this.texture;
 	}
 	reset() {
 		for (let key in (this.constructor as typeof Face).properties) {
@@ -79,7 +80,7 @@ export class Face {
 	 * Get a copy for undo tracking
 	 */
 	getUndoCopy(): Face {
-		let copy = new (this.constructor as typeof Face)(this) as Face & {cube?: any, mesh?: any};
+		let copy = new (this.constructor as any)(this.direction, this) as Face & {cube?: any, mesh?: any};
 		delete copy.cube;
 		delete copy.mesh;
 		delete copy.direction;

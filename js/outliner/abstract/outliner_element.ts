@@ -137,9 +137,15 @@ export abstract class OutlinerElement extends OutlinerNode {
 		//Shift
 		var just_selected = [];
 		let allow_multi_select = (!Modes.paint || (Toolbox.selected.id == 'fill_tool' && (BarItems.fill_mode as BarSelect<string>).value == 'selected_elements'));
-		if (event && allow_multi_select && (event.shiftKey === true || Pressing.overrides.shift) && this.getParentArray().includes(selected[selected.length-1]) && is_outliner_click) {
-			var starting_point;
-			var last_selected = selected[selected.length-1]
+		if (
+			event &&
+			allow_multi_select &&
+			(event.shiftKey === true || Pressing.overrides.shift) &&
+			this.getParentArray().includes(Outliner.selected.last() as OutlinerElement) &&
+			is_outliner_click
+		) {
+			var starting_point: boolean;
+			var last_selected = Outliner.selected.last();
 			this.getParentArray().forEach((s, i) => {
 				if (s === last_selected || s === this) {
 					if (starting_point) {

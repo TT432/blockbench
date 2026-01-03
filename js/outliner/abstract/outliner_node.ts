@@ -10,9 +10,9 @@ export abstract class OutlinerNode {
 	locked: boolean
 	parent: (OutlinerNode & OutlinerNodeParentTraits) | 'root'
 	selected: boolean
-	menu?: Menu
-	old_name?: string
-	children?: OutlinerNode[]
+	declare old_name?: string
+	declare children?: OutlinerNode[]
+	declare menu: Menu
 	declare type: string
 
 	public name_regex: ((element?: OutlinerNode) => string | boolean) | undefined = undefined;
@@ -132,7 +132,7 @@ export abstract class OutlinerNode {
 	}
 	getParentArray(): OutlinerNode[] {
 		if (this.parent === 'root') {
-			return Outliner.root;
+			return Outliner.root as OutlinerNode[];
 		} else if (typeof this.parent === 'object') {
 			return this.parent.children;
 		}
