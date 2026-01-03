@@ -2,6 +2,7 @@ import { Blockbench } from "../api"
 import StateMemory from "../util/state_memory"
 import { OutlinerNode } from "./abstract/outliner_node"
 import { OutlinerElement } from "./abstract/outliner_element"
+import { radToDeg } from "three/src/math/MathUtils"
 
 export const Outliner = {
 	ROOT: 'root',
@@ -369,7 +370,7 @@ export function parseGroups(...args) {
 };
 
 // Dropping
-export function moveOutlinerSelectionTo(item, target, event, order) {
+export function moveOutlinerSelectionTo(item, target, event, order, adjust_position) {
 	let duplicate = event.altKey || Pressing.overrides.alt;
 	if (item.children instanceof Array && target instanceof OutlinerNode && target.parent) {
 		var is_parent = false;
@@ -411,24 +412,85 @@ export function moveOutlinerSelectionTo(item, target, event, order) {
 		Undo.initEdit({elements: [], outliner: true, selection: true})
 		Outliner.selected.empty();
 	} else {
-		Undo.initEdit({outliner: true, selection: true})
-		var updatePosRecursive = function(item) {
-			if (item.children && item.children.length) {
-				item.children.forEach(updatePosRecursive)
-			}
-			if (item.preview_controller?.updateTransform) {
-				item.preview_controller.updateTransform(item);
-				if (Format.per_group_texture && item.preview_controller.updateFaces) {
-					item.preview_controller.updateFaces(item);
-				}
+		Undo.initEdit({
+			outliner: true,
+			selection: true,
+			elements: adjust_position ? Outliner.selected : undefined,
+			groups: adjust_position ? Group.selected : undefined,
+		})
+	}
+	function updatePosRecursive(item) {
+		if (item.children && item.children.length) {
+			item.children.forEach(updatePosRecursive)
+		}
+		if (item.preview_controller?.updateTransform) {
+			item.preview_controller.updateTransform(item);
+			if (Format.per_group_texture && item.preview_controller.updateFaces) {
+				item.preview_controller.updateFaces(item);
 			}
 		}
 	}
+	let matrix1 = new THREE.Matrix4();
+	let matrix2 = new THREE.Matrix4();
 	function place(obj) {
+		let scene_object = obj.scene_object;
+		let old_parent = obj.parent;
+
+		scene_object.updateMatrix();
+		matrix2.copy(scene_object.matrix);
+
 		if (!order) {
 			obj.addTo(target)
 		} else {
 			obj.sortInBefore(target, order == 1 ? 1 : undefined);
+		}
+		updatePosRecursive(obj);
+
+		if (adjust_position) {
+
+			// Calculate matrix
+			scene_object.parent.updateMatrixWorld(true);
+			matrix1.copy(scene_object.parent.matrixWorld).invert();
+			matrix1.multiply(old_parent.scene_object.matrixWorld);
+			matrix2.premultiply(matrix1);
+
+			let position_change = Reusable.vec1;
+			let rotation_change = new THREE.Euler(0, 0, 0, scene_object.order);
+			let scale_change = Reusable.vec2;
+			matrix2.decompose(position_change, rotation_change, scale_change);
+
+			// Todo: Fix rotation
+			rotation_change.x -= scene_object.rotation.x;
+			rotation_change.y -= scene_object.rotation.y;
+			rotation_change.z -= scene_object.rotation.z;
+
+
+			let absolute_position = Format.bone_rig &&
+				obj.parent instanceof OutlinerNode &&
+				obj.parent.getTypeBehavior('parent') &&
+				obj.parent.getTypeBehavior('use_absolute_position');
+			if (absolute_position) {
+				position_change.x += obj.parent.origin[0];
+				position_change.y += obj.parent.origin[1];
+				position_change.z += obj.parent.origin[2];
+			}
+
+			if (obj.getTypeBehavior('movable')) {
+				let arr = position_change.toArray();
+
+				if (obj.from && obj.to) {
+					arr.V3_subtract(obj.origin);
+					obj.from.V3_add(arr);
+					obj.to.V3_add(arr);
+					obj.origin.V3_add(arr);
+				} else if (obj.position) {
+					obj.position.V3_set(arr);
+				}
+			}
+			if (obj.getTypeBehavior('rotatable')) {
+				obj.rotation.V3_add(rotation_change.toArray().map(radToDeg));
+			}
+			updatePosRecursive(obj);
 		}
 	}
 	items.forEach(function(item) {
@@ -445,9 +507,6 @@ export function moveOutlinerSelectionTo(item, target, event, order) {
 				}
 			} else {
 				place(item)
-				if (Format.bone_rig) {
-					updatePosRecursive(item)
-				}
 			}
 		}
 	})
@@ -456,10 +515,21 @@ export function moveOutlinerSelectionTo(item, target, event, order) {
 	}
 	if (duplicate) {
 		updateSelection()
-		Undo.finishEdit('Duplicate selection', {elements: selected, outliner: true, selection: true})
+		Undo.finishEdit('Duplicate selection', {elements: selected, outliner: true, selection: true, groups: Group.selected})
 	} else {
 		Transformer.updateSelection()
 		Undo.finishEdit('Move elements in outliner')
+	}
+}
+export function moveOutlinerSelectionAmend(item, target, event, order) {
+	moveOutlinerSelectionTo(item, target, event, order, true);
+
+	if (target instanceof Collection == false) {
+		Undo.amendEdit({
+			adjust_position: {type: 'checkbox', value: false, label: 'Preserve World Transform'},
+		}, form => {
+			moveOutlinerSelectionTo(item, target, event, order, form.adjust_position);
+		})
 	}
 }
 export function canAddOutlinerNodesTo(selection, target) {
@@ -890,7 +960,7 @@ BARS.defineActions(function() {
 					icon: node.icon,
 					color: markerColors[node.color % markerColors.length] && markerColors[node.color % markerColors.length].standard,
 					click(event) {
-						moveOutlinerSelectionTo(element, node, event);
+						moveOutlinerSelectionAmend(element, node, event);
 						element.showInOutliner();
 					}
 				}
@@ -900,7 +970,7 @@ BARS.defineActions(function() {
 					name: 'Root',
 					icon: 'list_alt',
 					click(event) {
-						moveOutlinerSelectionTo(element, undefined, event);
+						moveOutlinerSelectionAmend(element, undefined, event);
 					}
 				});
 			}
@@ -1494,16 +1564,16 @@ Interface.definePanels(function() {
 							if (drop_target) {
 								let parent_target = order ? drop_target.parent : drop_target;
 								if (canAddOutlinerSelectionTo(parent_target, item)) {
-									moveOutlinerSelectionTo(item, drop_target, e2, order);
+									moveOutlinerSelectionAmend(item, drop_target, e2, order);
 								}
 							} else if ($('#cubes_list').is(':hover') && canAddOutlinerSelectionTo('root', item)) {
-								moveOutlinerSelectionTo(item, undefined, e2);
+								moveOutlinerSelectionAmend(item, undefined, e2);
 							} else if (document.querySelector('.collection:hover')) {
 								let collection_node = document.querySelector('.collection:hover');
 								let collection_uuid = collection_node.attributes.uuid?.value;
 								let collection = Collection.all.find(c => c.uuid == collection_uuid);
 								if (collection) {
-									moveOutlinerSelectionTo(item, collection, e2);
+									moveOutlinerSelectionAmend(item, collection, e2);
 								}
 							}
 						}
