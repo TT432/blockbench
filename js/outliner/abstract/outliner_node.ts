@@ -12,7 +12,7 @@ export abstract class OutlinerNode {
 	selected: boolean
 	declare old_name?: string
 	declare children?: OutlinerNode[]
-	declare menu: Menu
+	declare menu?: Menu
 	declare type: string
 
 	public name_regex: ((element?: OutlinerNode) => string | boolean) | undefined = undefined;
