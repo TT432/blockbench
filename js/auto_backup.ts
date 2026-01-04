@@ -1,5 +1,14 @@
+import { FormElementOptions } from "./interface/form";
 import { addStartScreenSection } from "./interface/start_screen";
 import { currentwindow } from "./native_apis";
+import { getDateDisplay } from "./util/util";
+
+type ProjectSave = {
+	uuid: UUID
+	data: string
+	name?: string
+	date?: number
+}
 
 //Backup
 export const AutoBackup = {
@@ -46,7 +55,7 @@ export const AutoBackup = {
 						{type: 'h3', text: tl('message.recover_backup.title')},
 						{type: 'p', text: tl('message.recover_backup.message')},
 						{type: 'button', text: tl('message.recover_backup.recover'), click: (e) => {
-							AutoBackup.recoverAllBackups().then(() => {
+							AutoBackup.recoverAllBackups(true).then(() => {
 								section.delete();
 							});
 						}},
@@ -67,8 +76,14 @@ export const AutoBackup = {
 		let store = transaction.objectStore('projects');
 
 		let model = Codecs.project.compile({compressed: false, backup: true, raw: true});
-		let model_json = JSON.stringify(model)
-		store.put({uuid: Project.uuid, data: model_json});
+		let model_json = JSON.stringify(model);
+		let project_save: ProjectSave = {
+			uuid: Project.uuid,
+			data: model_json,
+			name: Project.name,
+			date: Math.round(Date.now() / 1000)
+		}
+		store.put(project_save);
 		
 		await new Promise((resolve) => {
 			transaction.oncomplete = resolve;
@@ -94,13 +109,72 @@ export const AutoBackup = {
 	/**
 	 * Recover all saved backups
 	 */
-	recoverAllBackups(): Promise<void> {
+	recoverAllBackups(confirm_selection: boolean = false): Promise<void> {
 		return new Promise<void>((resolve, reject) => {
 			let transaction = AutoBackup.db.transaction('projects', 'readonly');
 			let store = transaction.objectStore('projects');
 			let request = store.getAll();
 			request.onsuccess = async function() {
-				let projects = request.result;
+				let projects = request.result as ProjectSave[];
+
+				// Confirm selection
+				if (confirm_selection && projects.length > 1) {
+					let form: Record<string, FormElementOptions | '_'> = {};
+					let keys: UUID[] = [];
+
+					projects.sort((a, b) => (b.date??0) - (a.date??0));
+					for (let project of projects) {
+						let label = project.name ?? tl('message.recover_backup.unknown_project');
+						let description: string;
+						if (project.date) {
+							let date = getDateDisplay(project.date * 1000);
+							label += ` (${date.short})`;
+							description = date.full;
+						}
+						form[project.uuid] = {
+							label,
+							description,
+							type: 'checkbox',
+							value: true
+						}
+						keys.push(project.uuid);
+					}
+					form.select_all_none = {
+						type: 'buttons',
+						buttons: ['generic.select_all', 'generic.select_none'],
+						click(index) {
+							let values = {};
+							keys.forEach(key => values[key] = (index == 0));
+							Dialog.open.setFormValues(values);
+						}
+					}
+					form.delete_others = {
+						type: 'checkbox',
+						label: 'message.recover_backup.discard_others',
+						value: false,
+					}
+					
+					projects = await new Promise<ProjectSave[]>((resolve, reject) => {
+						new Dialog({
+							id: 'recover_backup',
+							title: 'message.recover_backup.title',
+							form,
+							onConfirm(form_result) {
+								let to_open: ProjectSave[] = [];
+								for (let project of projects) {
+									if (form_result[project.uuid]) {
+										to_open.push(project);
+									} else if (form_result[project.uuid] == false && form_result.delete_others) {
+										AutoBackup.removeBackup(project.uuid);
+									}
+								}
+								resolve(to_open);
+							}
+						}).show();
+					})
+				}
+
+				projects.sort((a, b) => (a.date??0) - (b.date??0));
 				for (let project of projects) {
 					try {
 						let parsed_content = JSON.parse(project.data);

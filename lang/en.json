@@ -258,6 +258,8 @@
 	"message.recover_backup.title": "Recover Models",
 	"message.recover_backup.message": "Blockbench was closed without saving. Do you want to recover the models?",
 	"message.recover_backup.recover": "Recover",
+	"message.recover_backup.unknown_project": "Unknown project",
+	"message.recover_backup.discard_others": "Discard all others",
 	"message.screenshot.title": "Screenshot",
 	"message.screenshot.clipboard": "Clipboard",
 	"message.screenshot.right_click": "Right click or long press the screenshot to copy",
