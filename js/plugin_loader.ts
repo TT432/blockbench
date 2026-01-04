@@ -834,8 +834,8 @@ export class Plugin {
 			}
 		}
 
-		let trackDate = (input_date, key) => {
-			let date = getDateDisplay(input_date);
+		let trackDate = (input_date: number | string, key: string, display_time: boolean) => {
+			let date = getDateDisplay(input_date, display_time);
 			this.details[key] = date.short;
 			this.details[key + '_full'] = date.full;
 		}
@@ -855,16 +855,16 @@ export class Plugin {
 				if (!response) return;
 				let commits = await response.json().catch(err => console.error(err));
 				if (!commits || !commits.length) return;
-				trackDate(Date.parse(commits[0].commit.committer.date), 'last_modified');
+				trackDate(Date.parse(commits[0].commit.committer.date), 'last_modified', true);
 
 				if (!this.creation_date) {
-					trackDate(Date.parse(commits.last().commit.committer.date), 'creation_date');
+					trackDate(Date.parse(commits.last().commit.committer.date), 'creation_date', false);
 				}
 			});
 
 		}
 		if (this.creation_date) {
-			trackDate(this.creation_date, 'creation_date');
+			trackDate(this.creation_date, 'creation_date', false);
 		}
 		return this.details;
 	}
@@ -1333,7 +1333,7 @@ BARS.defineActions(function() {
 					return getDateDisplay(input_date).short;
 				},
 				printDateFull(input_date: number) {
-					return getDateDisplay(input_date).full;
+					return getDateDisplay(input_date, false).full;
 				},
 				formatChangelogLine(line) {
 					let content = [];
