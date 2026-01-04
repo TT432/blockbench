@@ -1,3 +1,4 @@
+import { AutoBackup } from "../auto_backup";
 import { changeImageEditor } from "../desktop";
 import { currentwindow } from "../native_apis";
 import { Setting, Settings, SettingsProfile } from "./settings";

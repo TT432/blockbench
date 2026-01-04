@@ -25,7 +25,7 @@ export const StartScreen = {
  * @param {number} [data.graphic.aspect_ratio] Section aspect ratio
  * @param {string} [data.graphic.description] Markdown string
  * @param {string} [data.graphic.text_color]
- * @param {Array.<{text: String, type: String, [list]: Array.String, [click]: Function}>} data.text
+ * @param {Array.<{text: String, {type}: [String], [list]: Array.String, {click}: [Function]}>} data.text
  * @param {'vertical'|'horizontal'} data.layout
  * @param {Array} data.features
  * @param {boolean} data.closable
