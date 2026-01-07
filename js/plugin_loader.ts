@@ -345,10 +345,11 @@ export class Plugin {
 			}
 			this.#runPluginFile(path).then((content) => {
 				if (cb) cb.bind(scope)()
-				if (first && scope.oninstall) {
-					scope.oninstall()
+				if (first) {
+					scope.oninstall?.()
+					Blockbench.dispatchEvent('installed_plugin', {plugin: scope});
+					Blockbench.showQuickMessage(tl('message.installed_plugin', [this.title]));
 				}
-				if (first) Blockbench.showQuickMessage(tl('message.installed_plugin', [this.title]));
 				resolve()
 			}).catch((error) => {
 				if (isApp) {
@@ -581,9 +582,8 @@ export class Plugin {
 	uninstall() {
 		try {
 			this.unload();
-			if (this.onuninstall) {
-				this.onuninstall();
-			}
+			this.onuninstall?.();
+			Blockbench.dispatchEvent('uninstalled_plugin', {plugin: this});
 		} catch (err) {
 			console.error(`Error in unload or uninstall method of "${this.id}": `, err);
 		}

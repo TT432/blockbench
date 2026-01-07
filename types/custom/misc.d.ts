@@ -37,6 +37,8 @@ type EventName =
 	| 'process_chat_message'
 	| 'loaded_plugin'
 	| 'unloaded_plugin'
+	| 'installed_plugin'
+	| 'uninstalled_plugin'
 	| 'update_settings'
 	| 'update_project_settings'
 	| 'save_project'
