@@ -2,7 +2,7 @@
 type ConditionResolvable<Context extends any = any> =
 	| undefined
 	| boolean
-	| ((context?: Context) => boolean)
+	| ((context: Context) => boolean)
 	| Partial<{
 			modes: string[]
 			formats: string[]
@@ -25,11 +25,11 @@ type ConditionResolvable<Context extends any = any> =
 				spline?: boolean
 			}
 			project: boolean
-			method(context?: Context): boolean
+			method(context: Context): boolean
 	  }>
 
 /**
- * Tests if a condition is truthy of falsy. Returns true if the condition is unspecified
+ * Tests if a condition is truthy or falsy. Returns true if the condition is unspecified
  * @param condition Boolean, function, any or anything else
  */
 declare function Condition<Context extends any = any>(condition: ConditionResolvable<Context>, context?: Context): boolean
