@@ -80,7 +80,7 @@ new Tool('weight_brush', {
 	transformerMode: 'hidden',
 	selectElements: false,
 	modes: ['edit'],
-	condition: {modes: ['edit'], method: () => Armature.all.length},
+	condition: {modes: ['edit'], method: () => !!Armature.all.length},
 	
 	onCanvasClick(data: CanvasClickData) {
 		let element = 'element' in data && data.element;

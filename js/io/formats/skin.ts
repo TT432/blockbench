@@ -419,7 +419,7 @@ export const skin_dialog = new Dialog({
 				bedrock_edition: 'Bedrock Edition',
 			},
 			condition(form: Record<string, FormResultValue>) {
-				return skin_presets[form.model as string].model_bedrock;
+				return !!skin_presets[form.model as string].model_bedrock;
 			}
 		},
 		variant: {
@@ -429,7 +429,7 @@ export const skin_dialog = new Dialog({
 				return (selected_model && skin_presets[selected_model].variants) || {}
 			},
 			condition(form) {
-				return skin_presets[form.model].variants;
+				return !!skin_presets[form.model].variants;
 			}
 		},
 		resolution: {label: 'dialog.create_texture.resolution', type: 'select', value: 1, options: {
@@ -588,7 +588,7 @@ BARS.defineActions(function() {
 	new Action('convert_minecraft_skin_variant', {
 		icon: 'compare_arrows',
 		category: 'edit',
-		condition: {formats: ['skin'], method: () => Group.all.find(g => g.name == 'Right Arm')},
+		condition: {formats: ['skin'], method: () => !!Group.all.find(g => g.name == 'Right Arm')},
 		click() {
 			let is_slim = Cube.all.find(c => c.name.match(/arm/i)).size(0) == 3;
 			new Dialog('convert_minecraft_skin_variant', {
@@ -689,7 +689,7 @@ BARS.defineActions(function() {
 	new Action('export_minecraft_skin', {
 		icon: 'icon-player',
 		category: 'file',
-		condition: () => Format == format && Texture.all[0],
+		condition: () => Format == format && !!Texture.all[0],
 		click: function () {
 			Texture.all[0].save(true);
 		}

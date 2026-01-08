@@ -583,7 +583,7 @@ export class Panel extends EventSystem {
 		let panels: Panel[] = [];
 		for (let id in Panels) {
 			let panel = Panels[id] as Panel;
-			if (panel.attached_to == this.id && Condition(panel) && panel != this) {
+			if (panel.attached_to == this.id && Condition(!!panel) && panel != this) {
 				panels.push(panel);
 			}
 		}
