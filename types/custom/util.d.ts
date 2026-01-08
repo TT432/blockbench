@@ -1,8 +1,8 @@
 /// <reference types="./blockbench"/>
-type ConditionResolvable<T = any> =
+type ConditionResolvable<Context extends any = any> =
 	| undefined
 	| boolean
-	| ((context: T) => boolean)
+	| ((context?: Context) => boolean)
 	| Partial<{
 			modes: string[]
 			formats: string[]
@@ -22,16 +22,17 @@ type ConditionResolvable<T = any> =
 				null_any?: boolean
 				texture_mesh?: boolean
 				outliner?: boolean
+				spline?: boolean
 			}
 			project: boolean
-			method(context: T): boolean
+			method(context?: Context): boolean
 	  }>
 
 /**
  * Tests if a condition is truthy of falsy. Returns true if the condition is unspecified
  * @param condition Boolean, function, any or anything else
  */
-declare function Condition<T = any>(condition: ConditionResolvable<T>, context?: T): boolean
+declare function Condition<Context extends any = any>(condition: ConditionResolvable<Context>, context?: Context): boolean
 
 /**
  * Wrapper for anys that tells the custom JSON exporter to write in one line
