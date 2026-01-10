@@ -519,6 +519,7 @@ Group.addBehaviorOverride({
 		}},
 		{icon: 'sort_by_alpha', name: 'menu.group.sort', condition: {modes: ['edit']}, click: function(group) {group.sortContent()}},
 		'apply_animation_preset',
+		'add_all_to_timeline',
 		'add_locator',
 		new MenuSeparator('manage'),
 		'resolve_group',

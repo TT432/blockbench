@@ -577,7 +577,8 @@ export class Animation extends AnimationItem {
 		} else if (!group) {
 			return;
 		}
-		var uuid = group.uuid
+		if (!group.constructor.animator) return;
+		var uuid = group.uuid;
 		if (!this.animators[uuid]) {
 			let match;
 			for (let uuid2 in this.animators) {

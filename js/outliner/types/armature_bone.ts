@@ -313,6 +313,7 @@ export class ArmatureBone extends OutlinerElement {
 		'set_element_marker_color',
 		"randomize_marker_colors",
 		'apply_animation_preset',
+		'add_all_to_timeline',
 		new MenuSeparator('manage'),
 		'rename',
 		'delete'

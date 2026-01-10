@@ -2152,6 +2152,7 @@
 	"action.bring_up_all_animations": "Bring Up All Animators",
 	"action.bring_up_all_animations.desc": "Brings all modified animators into the timeline",
 	"action.fold_all_animations": "Fold All Animators",
+	"action.add_all_to_timeline": "Add All to Timeline",
 	"action.clear_timeline": "Clear Timeline",
 	"action.clear_timeline.desc": "Clear all unselected bones from the timeline",
 	"action.select_effect_animator": "Animate Effects",
