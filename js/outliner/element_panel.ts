@@ -11,7 +11,7 @@ Interface.definePanels(function() {
 			modes: ['edit', 'pose'],
 			method: () => !(Blockbench.isMobile && Settings.get('status_bar_transform_sliders'))
 		},
-		display_condition: () => Outliner.selected.length || Group.first_selected,
+		display_condition: () => !!(Outliner.selected.length || Group.first_selected),
 		min_height: 90,
 		default_position: {
 			slot: 'right_bar',
@@ -31,7 +31,7 @@ Interface.definePanels(function() {
 	let element_properties_panel = new Panel('element', {
 		icon: 'fas.fa-cube',
 		condition: {modes: ['edit']},
-		display_condition: () => Outliner.selected.length || Group.first_selected,
+		display_condition: () => !!(Outliner.selected.length || Group.first_selected),
 		default_position: {
 			slot: 'right_bar',
 			float_position: [0, 0],

@@ -1447,7 +1447,7 @@ BARS.defineActions(function() {
 	codec.export_action = new Action('export_fbx', {
 		icon: 'icon-fbx',
 		category: 'file',
-		condition: () => Project,
+		condition: () => !!Project,
 		click: function () {
 			codec.export()
 		}
