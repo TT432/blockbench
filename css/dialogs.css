@@ -1698,6 +1698,7 @@
 	}
 	#plugin_browser_changelog > li {
 		padding: 7px 8px;
+		user-select: text;
 	}
 	#plugin_browser_changelog h3 {
 		margin-bottom: 2px;
