@@ -1913,7 +1913,9 @@ BARS.defineActions(function() {
 	})
 })
 
-
+declare global {
+	const BBPlugin: typeof Plugin;
+}
 Object.assign(window, {
 	Plugins,
 	Plugin,
