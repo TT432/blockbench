@@ -2185,6 +2185,8 @@
 	"action.bedrock_animation_mode.entity": "Entity",
 	"action.bedrock_animation_mode.attachable_first": "Item 1st Person",
 	"action.bedrock_animation_mode.attachable_third": "Item 3rd Person",
+	"action.copy_animation_pose": "Copy Animation Pose",
+	"action.copy_animation_pose.desc": "Copy all keyframes to replicate the current animation pose",
 
 	"timeline.rotation": "Rotation",
 	"timeline.position": "Position",

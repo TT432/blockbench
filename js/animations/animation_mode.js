@@ -2,7 +2,7 @@ import MolangParser from "molangjs";
 import Wintersky from 'wintersky';
 import { Mode } from "../modes";
 import { invertMolang } from "../util/molang";
-import { fs } from "../native_apis";
+import { clipboard, fs } from "../native_apis";
 import { openMolangEditor } from "./molang_editor";
 
 export const Animator = {
@@ -1368,6 +1368,43 @@ BARS.defineActions(function() {
 			Timeline.vue.onion_skin_selectable = this.value && this.tool_config.options.frames == 'select';
 			onion_skin_toggle.tool_config.options.enabled = this.value;
 			Animator.updateOnionSkin();
+		}
+	})
+	new Action('copy_animation_pose', {
+		icon: 'detection_and_zone',
+		category: 'animation',
+		condition: () => Animator.open && Animation.selected,
+		click() {
+			let new_keyframes = [];
+
+			for (let uuid in Animation.selected.animators) {
+				let animator = Animation.selected.animators[uuid];
+				if (!animator || !animator.keyframes.length || !(animator.group || animator.element)) continue;
+
+				for (let channel in animator.channels) {
+					if (!animator[channel] || !animator[channel].length) continue;
+					let kf = animator[channel].find(kf => Math.epsilon(kf.time, Timeline.time, 1e-5));
+					if (!kf) {
+						kf = animator.createKeyframe(null, Timeline.time, channel, false, false);
+						new_keyframes.push(kf)
+					}
+				}
+			}
+
+			Clipbench.keyframes = [];
+			if (new_keyframes.length == 0) return;
+
+			new_keyframes.forEach((kf) => {
+				let copy = kf.getUndoCopy();
+				copy.time_offset = 0;
+				Clipbench.keyframes.push(copy);
+			})
+			for (let kf of new_keyframes) {
+				kf.remove();
+			}
+			if (isApp) {
+				clipboard.writeHTML(JSON.stringify({type: 'keyframes', content: Clipbench.keyframes}));
+			}
 		}
 	})
 })

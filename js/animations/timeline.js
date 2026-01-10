@@ -2092,7 +2092,6 @@ BARS.defineActions(function() {
 					ba.addToTimeline();
 				}
 			}
-
 		}
 	})
 	new Action('add_all_to_timeline', {

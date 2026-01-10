@@ -371,6 +371,7 @@ export const MenuBar = {
 			new MenuSeparator('edit'),
 			'add_marker',
 			'select_effect_animator',
+			'copy_animation_pose',
 			'flip_animation',
 			'optimize_animation',
 			'retarget_animators',
