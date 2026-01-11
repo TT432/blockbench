@@ -2633,6 +2633,14 @@ Interface.definePanels(function() {
 					let grab = Toolbox.selected.id == 'move_layer_tool' ||
 							  (Toolbox.selected.id == 'selection_tool' && settings.move_with_selection_tool.value && this.texture && this.texture.selection.get(this.mouse_coords.x, this.mouse_coords.y) && BarItems.selection_tool_operation_mode.value == 'create');
 					this.$refs.frame.style.cursor = grab ? 'move' : '';
+
+					if (this.mouse_coords.line_preview) {
+						let angle = this.getLinePreviewAngle();
+						angle = (angle + 180) % 90;
+						let length = Math.sqrt(Math.pow(this.mouse_coords.x - this.last_brush_position[0], 2) + Math.pow(this.mouse_coords.y - this.last_brush_position[1], 2));
+
+						Blockbench.setStatusBarText(`${trimFloatNumber(length+1, 1)} - ${trimFloatNumber(angle, 1)}°`);
+					}
 				},
 				onScroll() {
 					UVEditor.updateUVNavigator();
@@ -2899,6 +2907,10 @@ Interface.definePanels(function() {
 				onMouseLeave(event) {
 					if (this.mode == 'paint') {
 						this.mouse_coords.active = false;
+					}
+					if (this.mouse_coords.line_preview) {
+						Blockbench.setStatusBarText();
+						this.mouse_coords.line_preview = false;
 					}
 				},
 				contextMenu(event) {
@@ -4161,21 +4173,16 @@ Interface.definePanels(function() {
 				getLinePreviewStyle() {
 					let tex = this.texture;
 					let pixel_size = this.inner_width / (tex ? tex.width : Project.texture_width);
-					let width = Math.sqrt(Math.pow(this.mouse_coords.x - this.last_brush_position[0], 2) + Math.pow(this.mouse_coords.y - this.last_brush_position[1], 2));
+					let length = Math.sqrt(Math.pow(this.mouse_coords.x - this.last_brush_position[0], 2) + Math.pow(this.mouse_coords.y - this.last_brush_position[1], 2));
 					let angle = this.getLinePreviewAngle();
 					return {
-						width: width * pixel_size + 'px',
+						width: length * pixel_size + 'px',
 						rotate: angle + 'deg'
 					};
 				},
 				getBrushPositionText() {
 					if (!this.mouse_coords.active) return '';
 					let string = trimFloatNumber(this.mouse_coords.x, 1) + ', ' + trimFloatNumber(this.mouse_coords.y, 1);
-					if (this.mouse_coords.line_preview) {
-						let angle = this.getLinePreviewAngle();
-						angle = (angle + 180) % 90;
-						string += `, ${trimFloatNumber(Math.roundTo(angle, 1))}°`;
-					}
 					return string;
 				},
 
@@ -4612,6 +4619,9 @@ Interface.definePanels(function() {
 		if (before.shift != now.shift && document.querySelector('#uv_viewport:hover')) {
 			let active = now.shift;
 			if (Painter.current.x == undefined) active = false;
+			if (UVEditor.vue.mouse_coords.line_preview && !active) {
+				Blockbench.setStatusBarText();
+			}
 			UVEditor.vue.mouse_coords.line_preview = active;
 		}
 	});

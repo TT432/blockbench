@@ -72,7 +72,7 @@ declare function convertTouchEvent(event: TouchEvent | MouseEvent): MouseEvent
 declare function guid(): string
 declare function isUUID(s: any): any
 declare function bbuid(l: any): string
-declare function trimFloatNumber(value: number): string
+declare function trimFloatNumber(value: number, decimal_places: number = 4): string
 declare function getAxisLetter(axisNumber: number): string
 declare function getAxisNumber(axisLetter: string): number
 declare function limitNumber(number: any, min: any, max: any): any

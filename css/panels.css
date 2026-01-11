@@ -2432,7 +2432,7 @@ span.controller_state_section_info {
 		width: 16px;
 	}
 	div#uv_brush_line_preview {
-		margin: calc(var(--radius) * 1px);
+		margin: calc(var(--radius) * 1px - 2px);
 		position: relative;
 		height: 2px;
 		transform-origin: left;
