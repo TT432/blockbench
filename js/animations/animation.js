@@ -1,0 +1,2075 @@
+import { Blockbench } from "../api";
+import { Filesystem } from "../file_system";
+import { openMolangEditor } from "./molang_editor";
+import { clipboard, currentwindow, dialog, fs, ipcRenderer } from "../native_apis";
+import { invertMolang } from "../util/molang";
+import { ScopeColors } from "../multi_file_editing";
+
+export class AnimationItem {
+	constructor() {}
+	getShortName() {
+		if (typeof Project.BedrockEntityManager?.client_entity?.description?.animations == 'object') {
+			let {animations} = Project.BedrockEntityManager.client_entity.description;
+			for (let key in animations) {
+				if (animations[key] == this.name) return key;
+			}
+		}
+		return this.name.split(/\./).last();
+	}
+}
+export class Animation extends AnimationItem {
+	constructor(data) {
+		super(data);
+		this.name = '';
+		this.uuid = guid()
+		this.loop = 'once';
+		this.playing = false;
+		this.override = false;
+		this.selected = false;
+		this.length = 0;
+		this.path = '';
+		this.snapping = Math.clamp(settings.animation_snap.value, 10, 500);
+		this.animators = {};
+		this.markers = [];
+		this.type = 'animation';
+		for (var key in Animation.properties) {
+			Animation.properties[key].reset(this);
+		}
+		if (typeof data === 'object') {
+			this.extend(data);
+			if (isApp && Format.animation_files && data.saved_name) {
+				this.saved_name = data.saved_name;
+			}
+		}
+		if (Project.getMultiFileRuleset() && Group.all.length) {
+			this.setScopeFromAnimators();
+		}
+	}
+	extend(data) {
+		for (var key in Animation.properties) {
+			Animation.properties[key].merge(this, data)
+		}
+		if (data.path && isApp && !PathModule.isAbsolute(data.path) && Project.save_path) {
+			this.path = PathModule.resolve(PathModule.dirname(Project.save_path), data.path);
+		}
+		Merge.string(this, data, 'name')
+		Merge.string(this, data, 'loop', val => ['once', 'loop', 'hold'].includes(val))
+		Merge.boolean(this, data, 'override')
+		Merge.number(this, data, 'length')
+		Merge.number(this, data, 'snapping')
+		this.snapping = Math.clamp(this.snapping, 10, 500);
+		if (typeof data.length == 'number') {
+			this.setLength(this.length)
+		}
+		if (data.bones && !data.animators) {
+			data.animators = data.bones;
+		}
+		if (data.animators instanceof Object) {
+			for (var key in data.animators) {
+				let animator_blueprint = data.animators[key];
+				// Update to 3.7
+				if (animator_blueprint instanceof Array) {
+					animator_blueprint = {
+						keyframes: animator_blueprint
+					}
+				}
+				var kfs = animator_blueprint.keyframes;
+				var animator;
+				if (!this.animators[key]) {
+					if (key == 'effects') {
+						// Effects
+						animator = this.animators[key] = new EffectAnimator(this);
+						animator.extend(animator_blueprint);
+					} else if (animator_blueprint.type && animator_blueprint.type !== 'bone') {
+						// Element
+						let uuid = isUUID(key) && key;
+						let element;
+						if (!uuid) {
+							let lowercase_name = key.toLowerCase();
+							element = Outliner.elements.find(element2 => element2.constructor.animator && element2.name.toLowerCase() == lowercase_name)
+							uuid = element ? element.uuid : guid();
+						}
+						if (!element) element = Outliner.elements.find(element => element.constructor.animator && element.uuid == uuid);
+						if (element) {
+							animator = this.animators[uuid] = new element.constructor.animator(uuid, this, animator_blueprint.name);
+						}
+						animator.extend(animator_blueprint);
+					} else {
+						// Bone
+						let uuid = isUUID(key) && key;
+						if (!uuid) {
+							let lowercase_bone_name = key.toLowerCase();
+							let group_match = Group.all.find(group => group.name.toLowerCase() == lowercase_bone_name)
+							uuid = group_match ? group_match.uuid : guid();
+						}
+						animator = this.animators[uuid] = new BoneAnimator(uuid, this, animator_blueprint.name);
+						animator.extend(animator_blueprint);
+					}
+				} else {
+					animator = this.animators[key];
+					for (let channel in animator.channels) {
+						animator[channel].empty()
+					}
+					animator.extend(animator_blueprint);
+				}
+				if (kfs && animator) {
+					kfs.forEach(kf_data => {
+						animator.addKeyframe(kf_data, kf_data.uuid);
+					})
+				}
+			}
+		}
+		if (data.markers instanceof Array) {
+			data.markers.forEach(marker => {
+				if (!this.markers.find(m2 => Math.epsilon(m2.time, marker.time, 0.001))) {
+					this.markers.push(new TimelineMarker(marker));
+				}
+			})
+		}
+		return this;
+	}
+	getUndoCopy(options = 0, save) {
+		let copy = {
+			uuid: this.uuid,
+			name: this.name,
+			loop: this.loop,
+			override: this.override,
+			length: this.length,
+			snapping: this.snapping,
+			selected: this.selected,
+		}
+		for (let key in Animation.properties) {
+			Animation.properties[key].copy(this, copy)
+		}
+		if (this.markers.length) {
+			copy.markers = this.markers.map(marker => marker.getUndoCopy());
+		}
+		if (Object.keys(this.animators).length) {
+			copy.animators = {}
+			for (let uuid in this.animators) {
+				let ba = this.animators[uuid]
+				copy.animators[uuid] = ba.getUndoCopy(options);
+			}
+		}
+		return copy;
+	}
+	compileBedrockAnimation() {
+		console.warn('"Animation.compileBedrockAnimation" is deprecated')
+		return AnimationCodec.codecs.bedrock.compileAnimation(this)
+	}
+	sampleIK(sample_rate = settings.animation_sample_rate.value) {
+		let interval = 1 / Math.clamp(sample_rate, 1, 144);
+		let last_time = Timeline.time;
+		let samples = {};
+
+		if (!NullObject.all.find(null_object => null_object.ik_target && this.getBoneAnimator(null_object)?.position.length)) return samples;
+
+		Timeline.time = 0;
+		while (Timeline.time <= this.length && Timeline.time <= 200) {
+			// Bones
+			Animator.showDefaultPose(true);
+			
+			Group.all.forEach(node => {
+				Animator.resetLastValues();
+				Animator.animations.forEach(animation => {
+					let multiplier = animation.blend_weight ? Math.clamp(Animator.MolangParser.parse(animation.blend_weight), 0, Infinity) : 1;
+					if (animation.playing) {
+						animation.getBoneAnimator(node)?.displayFrame(multiplier);
+					}
+				})
+			})
+			Outliner.elements.forEach(node => {
+				if (!node.constructor.animator) return;
+				Animator.resetLastValues();
+				let animator = this.getBoneAnimator(node);
+				if (!animator) return;
+				let multiplier = this.blend_weight ? Math.clamp(Animator.MolangParser.parse(this.blend_weight), 0, Infinity) : 1;
+				animator.displayPosition(animator.interpolate('position'), multiplier);
+				let bone_frame_rotation = animator.displayIK(true);
+				for (let uuid in bone_frame_rotation) {
+					if (!samples[uuid]) samples[uuid] = [];
+					samples[uuid].push(bone_frame_rotation[uuid]);
+				}
+			})
+			Animator.resetLastValues();
+			Timeline.time += interval;
+		}
+
+		Timeline.time = last_time;
+		if (Modes.animate && this.selected) {
+			Animator.preview();
+		} else {
+			Canvas.updateAllBones()
+		}
+		return samples;
+	}
+	save() {
+		AnimationCodec.getCodec(this).saveAnimation?.(this);
+		return this;
+	}
+	select() {
+		let previous_animation = Animation.selected;
+		if (this == Animation.selected) return;
+		AnimationItem.all.forEach((a) => {
+			a.selected = false;
+			if (a.playing == true) a.playing = false;
+		})
+		let animator_keys = previous_animation && Object.keys(previous_animation.animators);
+		let selected_animator_key;
+		let timeline_animator_keys = previous_animation && Timeline.animators.map(a => {
+			let key = animator_keys.find(key => previous_animation.animators[key] == a);
+			if (a.selected) selected_animator_key = key;
+			return key;
+		});
+		Timeline.clear();
+		Timeline.vue._data.markers = this.markers;
+		Timeline.vue._data.animation_length = this.length;
+		Timeline.setTime(Timeline.time % this.length);
+		Animator.MolangParser.resetVariables();
+		this.selected = true;
+		if (this.playing == false) this.playing = true;
+		AnimationItem.selected = this;
+		unselectAllElements();
+		BarItems.slider_animation_length.update();
+
+		Group.all.forEach(group => {
+			this.getBoneAnimator(group);
+		})
+		Outliner.elements.forEach(element => {
+			if (!element.constructor.animator) return;
+			this.getBoneAnimator(element);
+		})
+
+		if (timeline_animator_keys) {
+			timeline_animator_keys.forEachReverse(key => {
+				let animator = this.animators[key];
+				if (animator) {
+					animator.addToTimeline();
+					if (selected_animator_key == key) animator.select(false);
+				}
+			});
+		}
+		if (Modes.animate) {
+			Animator.preview();
+			updateInterface();
+		}
+		Blockbench.dispatchEvent('select_animation', {animation: this})
+		return this;
+	}
+	clickSelect() {
+		Undo.initSelection();
+		Prop.active_panel = 'animations';
+		this.select();
+		Undo.finishSelection('Select animation')
+	}
+	setLength(len = this.length) {
+		this.length = 0;
+		this.length = limitNumber(len, this.getMaxLength(), 1e4);
+		if (Animation.selected == this) {
+			Timeline.vue._data.animation_length = this.length;
+			BarItems.slider_animation_length.update()
+		}
+	}
+	get time() {
+		if (!this.length || this.loop == 'once') {
+			return Timeline.time;
+		} else if (this.loop === 'loop') {
+			return ((Timeline.time - 0.001) % this.length) + 0.001;
+		} else if (this.loop === 'hold') {
+			return Math.min(Timeline.time, this.length);
+		}
+	}
+	createUniqueName(arr) {
+		var others = Animator.animations.slice();
+		if (arr && arr.length) {
+			arr.forEach(g => {
+				others.safePush(g)
+			})
+		}
+		others = others.filter(a => a.path == this.path);
+		var name = this.name.replace(/\d+$/, '');
+		const check = (n) => {
+			for (var i = 0; i < others.length; i++) {
+				if (others[i] !== this && others[i].name == n) return false;
+			}
+			return true;
+		}
+		if (check(this.name)) {
+			return this.name;
+		}
+		for (var num = 2; num < 8e2; num++) {
+			if (check(name+num)) {
+				this.name = name+num;
+				return this.name;
+			}
+		}
+		return false;
+	}
+	rename() {
+		Blockbench.textPrompt('generic.rename', this.name, (name) => {
+			if (name && name !== this.name) {
+				Undo.initEdit({animations: [this]});
+				this.name = name;
+				this.createUniqueName();
+				Undo.finishEdit('Rename animation');
+			}
+		})
+		return this;
+	}
+	togglePlayingState(state) {
+		if (!this.selected) {
+			if (state !== undefined) {
+				this.playing = state;
+			} else if (this.playing == false) {
+				this.playing = true;
+			} else if (this.playing == true) {
+				this.playing = 'locked';
+			} else {
+				this.playing = false;
+			}
+			Animator.preview();
+		} else if (this.playing == 'locked') {
+			this.playing = true;
+		} else {
+			this.playing = 'locked';
+		}
+		return this.playing;
+	}
+	showContextMenu(event) {
+		this.select();
+		this.menu.open(event, this);
+		return this;
+	}
+	setScopeFromAnimators() {
+		for (let uuid in this.animators) {
+			if (!this.animators[uuid].keyframes.length) continue;
+			let group = Group.all.find(g => g.uuid == uuid);
+			if (group?.scope) {
+				this.scope = group.scope;
+				return this.scope;
+			}
+		}
+	}
+	getBoneAnimator(group) {
+		if (!group && Group.first_selected) {
+			group = Group.first_selected;
+		} else if (!group && (Outliner.selected[0] && Outliner.selected[0].constructor.animator)) {
+			group = Outliner.selected[0];
+		} else if (!group) {
+			return;
+		}
+		if (!group.constructor.animator) return;
+		if (group.scope && group.scope != this.scope && Project.getMultiFileRuleset()?.scope_isolated_animations) return;
+
+		let uuid = group.uuid;
+		if (!this.animators[uuid]) {
+			let match;
+			for (let uuid2 in this.animators) {
+				let animator = this.animators[uuid2];
+				if (
+					animator instanceof BoneAnimator &&
+					animator._name && animator._name.toLowerCase() === group.name.toLowerCase() &&
+					!animator.group
+				) {
+					match = animator;
+					match.uuid = group.uuid;
+					this.removeAnimator(uuid2);
+					break;
+				}
+			}
+			this.animators[uuid] = match || new group.constructor.animator(uuid, this);
+		}
+		return this.animators[uuid];
+	}
+	removeAnimator(id) {
+		Timeline.animators.remove(this.animators[id]);
+		if (Timeline.selected_animator == this.animators[id]) {
+			Timeline.selected_animator = null;
+		}
+		delete this.animators[id];
+		return this;
+	}
+	add(undo) {
+		if (undo) {
+			Undo.initEdit({animations: []})
+		}
+		if (!Animator.animations.includes(this)) {
+			Animator.animations.push(this)
+		}
+		this.createUniqueName();
+		if (undo) {
+			this.select()
+			Undo.finishEdit('Add animation', {animations: [this]})
+		}
+		return this;
+	}
+	remove(undo, remove_from_file = true) {
+		if (undo) {
+			Undo.initEdit({animations: [this]})
+		}
+		Animator.animations.remove(this)
+		if (undo) {
+			Undo.finishEdit('Remove animation', {animations: []})
+
+			if (isApp && Format.animation_files && remove_from_file && AnimationCodec.getCodec(this)?.deleteAnimationFromFile && this.path && fs.existsSync(this.path)) {
+				Blockbench.showMessageBox({
+					translateKey: 'delete_animation',
+					icon: 'movie',
+					buttons: ['generic.delete', 'dialog.cancel'],
+					confirm: 0,
+					cancel: 1,
+				}, (result) => {
+					if (result == 0) {
+						AnimationCodec.getCodec().deleteAnimationFromFile(this);
+					}
+				})
+			}
+		}
+		Blockbench.dispatchEvent('remove_animation', {animations: [this]})
+		if (Animation.selected === this) {
+			Animation.selected = null;
+			Timeline.clear();
+			Animator.preview();
+		}
+		return this;
+	}
+	getMaxLength() {
+		var len = this.length||0
+
+		for (var uuid in this.animators) {
+			var bone = this.animators[uuid]
+			var keyframes = bone.keyframes;
+			if (keyframes.find(kf => kf.interpolation == 'catmullrom')) {
+				keyframes = keyframes.slice().sort((a, b) => a.time - b.time);
+			}
+			keyframes.forEach((kf, i) => {
+				if (kf.interpolation == 'catmullrom' && i == keyframes.length-1) return;
+				len = Math.max(len, keyframes[i].time);
+			})
+		}
+		return len
+	}
+	setLoop(value, undo) {
+		if ((value == 'once' || value == 'loop' || value == 'hold') && value !== this.loop) {
+			if (undo) Undo.initEdit({animations: [this]})
+			this.loop = value;
+			if (undo) Undo.finishEdit('Change animation loop mode')
+		}
+	}
+	calculateSnappingFromKeyframes() {
+		let timecodes = [];
+		for (var key in this.animators) {
+			let animator = this.animators[key];
+			animator.keyframes.forEach(kf => {
+				timecodes.safePush(kf.time);
+			})
+		}
+		if (timecodes.length > 1) {
+			for (var i = 10; i <= 100; i++) {
+				let works = true;
+				for (var timecode of timecodes) {
+					let factor = (timecode * i) % 1;
+					if (factor > 0.01 && factor < 0.99) {
+						works = false;
+						break;
+					}
+				}
+				if (works) {
+					this.snapping = i;
+					return this.snapping;
+				}
+			}
+		}
+	}
+	propertiesDialog() {
+		let dialog = new Dialog({
+			id: 'animation_properties',
+			title: this.name,
+			width: 660,
+			resizable: 'x',
+			part_order: ['form', 'component'],
+			form: {
+				name: {label: 'generic.name', value: this.name},
+				path: {
+					label: 'menu.animation.file',
+					value: this.path,
+					type: 'file',
+					extensions: ['json'],
+					filetype: 'JSON Animation',
+					condition: Animation.properties.path.condition
+				},
+				scope: {
+					label: 'Scope',
+					type: 'select',
+					value: this.scope,
+					get options() {
+						let opts = {
+							0: {name: 'None'},
+						};
+						for (let collection of Collection.all) {
+							if (!collection.scope) continue;
+							opts[collection.scope] = {
+								name: collection.name,
+								color: ScopeColors[collection.scope-1 % ScopeColors.length]
+							}
+						}
+						return opts;
+					},
+					condition: !!Project.getMultiFileRuleset()
+				},
+				loop: {
+					label: 'menu.animation.loop',
+					type: 'inline_select',
+					value: this.loop,
+					options: {
+						once: 'menu.animation.loop.once',
+						hold: 'menu.animation.loop.hold',
+						loop: 'menu.animation.loop.loop',
+					},
+				},
+				override: {label: 'menu.animation.override', type: 'checkbox', value: this.override},
+				snapping: {label: 'menu.animation.snapping', type: 'number', value: this.snapping, step: 1, min: 10, max: 500},
+			},
+			component: {
+				components: {VuePrismEditor},
+				data: {
+					anim_time_update: this.anim_time_update,
+					blend_weight: this.blend_weight,
+					start_delay: this.start_delay,
+					loop_delay: this.loop_delay,
+					loop_mode: this.loop
+				},
+				methods: {
+					openMolangContextMenu(event, key, value) {
+						new Menu([
+							{
+								name: 'menu.text_edit.expression_editor',
+								icon: 'code_blocks',
+								click: () => {
+									openMolangEditor({
+										autocomplete_context: MolangAutocomplete.AnimationContext,
+										text: value
+									}, result => this[key] = result)
+								}
+							}
+						]).open(event);
+					},
+					autocomplete(text, position) {
+						if (Settings.get('autocomplete_code') == false) return [];
+						let test = MolangAutocomplete.AnimationContext.autocomplete(text, position);
+						return test;
+					}
+				},
+				template: 
+					`<div id="animation_properties_vue">
+						<div class="dialog_bar form_bar">
+							<label class="name_space_left">${tl('menu.animation.anim_time_update')}:</label>
+							<vue-prism-editor class="molang_input"
+								v-model="anim_time_update"
+								@contextmenu="openMolangContextMenu($event, 'anim_time_update', anim_time_update)"
+								language="molang"
+								:autocomplete="autocomplete" :line-numbers="false"
+							/>
+						</div>
+						<div class="dialog_bar form_bar">
+							<label class="name_space_left">${tl('menu.animation.blend_weight')}:</label>
+							<vue-prism-editor class="molang_input"
+								v-model="blend_weight"
+								@contextmenu="openMolangContextMenu($event, 'blend_weight', blend_weight)"
+								language="molang"
+								:autocomplete="autocomplete" :line-numbers="false"
+							/>
+						</div>
+						<div class="dialog_bar form_bar">
+							<label class="name_space_left">${tl('menu.animation.start_delay')}:</label>
+							<vue-prism-editor class="molang_input"
+								v-model="start_delay"
+								@contextmenu="openMolangContextMenu($event, 'start_delay', start_delay)"
+								language="molang"
+								:autocomplete="autocomplete" :line-numbers="false"
+							/>
+						</div>
+						<div class="dialog_bar form_bar" v-if="loop_mode == 'loop'">
+							<label class="name_space_left">${tl('menu.animation.loop_delay')}:</label>
+							<vue-prism-editor class="molang_input"
+								v-model="loop_delay"
+								@contextmenu="openMolangContextMenu($event, 'loop_delay', loop_delay)"
+								language="molang"
+								:autocomplete="autocomplete" :line-numbers="false"
+							/>
+						</div>
+					</div>`
+			},
+			onFormChange(form) {
+				this.component.data.loop_mode = form.loop;
+			},
+			onOpen() {
+				this.form.node.style.removeProperty('--max_label_width');
+			},
+			onConfirm: form_data => {
+				dialog.hide().delete();
+				if (
+					form_data.loop != this.loop
+					|| form_data.name != this.name
+					|| (isApp && form_data.path != this.path)
+					|| form_data.loop != this.loop
+					|| parseInt(form_data.scope) != this.scope
+					|| form_data.override != this.override
+					|| form_data.snapping != this.snapping
+					|| dialog.component.data.anim_time_update != this.anim_time_update
+					|| dialog.component.data.blend_weight != this.blend_weight
+					|| dialog.component.data.start_delay != this.start_delay
+					|| dialog.component.data.loop_delay != this.loop_delay
+				) {
+					Undo.initEdit({animations: [this]});
+
+					this.extend({
+						loop: form_data.loop,
+						name: form_data.name,
+						override: form_data.override,
+						snapping: form_data.snapping,
+						scope: parseInt(form_data.scope) ?? 0,
+						anim_time_update: dialog.component.data.anim_time_update.trim().replace(/\n/g, ''),
+						blend_weight: dialog.component.data.blend_weight.trim().replace(/\n/g, ''),
+						start_delay: dialog.component.data.start_delay.trim().replace(/\n/g, ''),
+						loop_delay: dialog.component.data.loop_delay.trim().replace(/\n/g, ''),
+					})
+					if (isApp) this.path = form_data.path;
+					this.createUniqueName();
+
+					Blockbench.dispatchEvent('edit_animation_properties', {animation: this})
+
+					Undo.finishEdit('Edit animation properties');
+					Animator.preview();
+				}
+			},
+			onCancel() {
+				dialog.hide().delete();
+			}
+		})
+		dialog.show();
+	}
+}
+	Object.defineProperty(Animation, 'all', {
+		get() {
+			return Project.animations || [];
+		},
+		set(arr) {
+			Project.animations.replace(arr);
+		}
+	})
+	Animation.selected = null;
+	Animation.prototype.menu = new Menu([
+		'copy',
+		'paste',
+		'duplicate',
+		new MenuSeparator('settings'),
+		{name: 'menu.animation.loop', icon: 'loop', children: [
+			{name: 'menu.animation.loop.once', icon: animation => (animation.loop == 'once' ? 'far.fa-dot-circle' : 'far.fa-circle'), click(animation) {animation.setLoop('once', true)}},
+			{name: 'menu.animation.loop.hold', icon: animation => (animation.loop == 'hold' ? 'far.fa-dot-circle' : 'far.fa-circle'), click(animation) {animation.setLoop('hold', true)}},
+			{name: 'menu.animation.loop.loop', icon: animation => (animation.loop == 'loop' ? 'far.fa-dot-circle' : 'far.fa-circle'), click(animation) {animation.setLoop('loop', true)}},
+		]},
+		'change_animation_speed',
+		new MenuSeparator('manage'),
+		{
+			name: 'menu.animation.save',
+			id: 'save',
+			icon: 'save',
+			condition: () => Format.animation_files,
+			click(animation) {
+				animation.save();
+			}
+		},
+		{
+			name: 'menu.animation.open_location',
+			id: 'open_location',
+			icon: 'folder',
+			condition(animation) {return isApp && Format.animation_files && animation.path && fs.existsSync(animation.path)},
+			click(animation) {
+				Filesystem.showFileInFolder(animation.path);
+			}
+		},
+		{
+			name: 'generic.edit_externally',
+			id: 'edit_externally',
+			icon: 'edit_document',
+			condition(animation) {return isApp && Format.animation_files && animation.path && fs.existsSync(animation.path)},
+			click(animation) {
+				ipcRenderer.send('open-in-default-app', animation.path);
+			}
+		},
+		'rename',
+		{
+			id: 'reload',
+			name: 'menu.animation.reload',
+			icon: 'refresh',
+			condition: (animation) => (isApp && AnimationCodec.getCodec(animation)?.reloadAnimation && animation.saved),
+			click(animation) {
+				AnimationCodec.getCodec(animation)?.reloadAnimation(animation);
+			}
+		},
+		{
+			id: 'unload',
+			name: 'menu.animation.unload',
+			icon: 'remove',
+			condition: () => Format.animation_files,
+			click(animation) {
+				Undo.initEdit({animations: [animation]})
+				animation.remove(false, false);
+				Undo.finishEdit('Unload animation', {animations: []})
+			}
+		},
+		'delete',
+		new MenuSeparator('properties'),
+		{name: 'menu.animation.properties', icon: 'list', click(animation) {
+			animation.propertiesDialog();
+		}}
+	])
+	Animation.prototype.file_menu = new Menu([
+		{name: 'menu.animation_file.unload', icon: 'remove', click(id) {
+			let animations_to_remove = Animation.all.filter(anim => anim.path == id && anim.saved);
+			let controllers_to_remove = AnimationController.all.filter(anim => anim.path == id && anim.saved);
+			if (!animations_to_remove.length && !controllers_to_remove.length) return;
+
+			Undo.initEdit({animations: animations_to_remove, animation_controllers: controllers_to_remove});
+			animations_to_remove.forEach(animation => {
+				animation.remove(false, false);
+			})
+			controllers_to_remove.forEach(animation => {
+				animation.remove(false, false);
+			})
+			Undo.finishEdit('Unload animation file', {animations: [], animation_controllers: []});
+		}},
+		{name: 'menu.animation_file.save_as', icon: 'save', click(path) {
+			let item = AnimationItem.all.find(item => item.path == path);
+			AnimationCodec.getCodec(item)?.exportFile(path, true);
+		}},
+		{name: 'menu.animation.reload', icon: 'refresh', click(id) {
+			AnimationCodec.getCodec(Animation.all.find(anim => anim.path == id))?.reloadFile(id);
+		}},
+		{name: 'menu.animation_file.import_remaining', icon: 'playlist_add', click(id) {
+			Blockbench.read([id], {}, files => {
+				AnimationCodec.getCodec()?.importFile(files[0]);
+			})
+		}}
+	])
+	Animation.prototype.group_menu = new Menu([
+		{name: 'action.rename', icon: 'text_format', click: async function(group_name) {
+			let animations_to_rename = Animation.all.filter(anim => anim.group_name == group_name);
+
+			let new_group_name = await Blockbench.textPrompt('action.rename', group_name);
+			if (animations_to_rename.length == 0 || new_group_name == group_name) return;
+
+			Undo.initEdit({animations: animations_to_rename});
+			animations_to_rename.forEach(animation => {
+				animation.group_name = new_group_name;
+			})
+			Undo.finishEdit('Unload animation file', {animations: []});
+		}}
+	])
+	new Property(Animation, 'boolean', 'saved', {default: true, condition: () => Format.animation_files})
+	new Property(Animation, 'string', 'path', {condition: () => isApp && Format.animation_files})
+	new Property(Animation, 'string', 'group_name', {condition: () => Format.animation_grouping == 'custom'})
+	new Property(Animation, 'number', 'scope');
+	new Property(Animation, 'molang', 'anim_time_update', {default: ''});
+	new Property(Animation, 'molang', 'blend_weight', {default: ''});
+	new Property(Animation, 'molang', 'start_delay', {default: ''});
+	new Property(Animation, 'molang', 'loop_delay', {default: ''});
+
+Blockbench.on('finish_edit', event => {
+	if (!Format.animation_files) return;
+	if (event.aspects.animations && event.aspects.animations.length) {
+		event.aspects.animations.forEach(animation => {
+			if (Undo.current_save && Undo.current_save.aspects.animations instanceof Array && Undo.current_save.aspects.animations.includes(animation)) {
+				animation.saved = false;
+			}
+		})
+	}
+	if (event.aspects.keyframes && event.aspects.keyframes instanceof Array && Animation.selected) {
+		Animation.selected.saved = false;
+	}
+})
+
+
+Clipbench.setAnimation = function() {
+	if (!Animation.selected && !AnimationController.selected) return;
+	Clipbench.animation = AnimationItem.selected.getUndoCopy();
+
+	if (isApp) {
+		clipboard.writeHTML(JSON.stringify({type: 'animation', content: Clipbench.animation}));
+	}
+}
+Clipbench.pasteAnimation = function() {
+	if (isApp) {
+		var raw = clipboard.readHTML()
+		try {
+			var data = JSON.parse(raw)
+			if (data.type === 'animation' && data.content) {
+				Clipbench.animation = data.content
+			}
+		} catch (err) {}
+	}
+	if (!Clipbench.animation || !Format.animation_mode) return;
+
+	if (Clipbench.animation.type == 'animation_controller') {
+		let animation_controllers = [];
+		Undo.initEdit({animation_controllers});
+		let animation_controller = new AnimationController(Clipbench.animation).add(false);
+		animation_controller.createUniqueName();
+		animation_controller.select().propertiesDialog();
+		animation_controllers.push(animation_controller);
+		Undo.finishEdit('Paste animation controller')
+
+	} else {
+		let animations = [];
+		Undo.initEdit({animations});
+		let animation = new Animation(Clipbench.animation).add(false);
+		animation.createUniqueName();
+		animation.select().propertiesDialog();
+		animations.push(animation);
+		Undo.finishEdit('Paste animation')
+	}
+}
+
+SharedActions.add('rename', {
+	condition: () => Prop.active_panel == 'animations' && AnimationItem.selected,
+	run() {
+		AnimationItem.selected.rename();
+	}
+})
+SharedActions.add('delete', {
+	condition: () => Prop.active_panel == 'animations' && AnimationItem.selected,
+	run() {
+		AnimationItem.selected.remove(true);
+	}
+})
+SharedActions.add('duplicate', {
+	condition: () => Prop.active_panel == 'animations' && Animation.selected,
+	run() {
+		let copy = Animation.selected.getUndoCopy();
+		let animation = new Animation(copy);
+		Property.resetUniqueValues(Animation, animation);
+		animation.createUniqueName();
+		Animator.animations.splice(Animator.animations.indexOf(Animation.selected)+1, 0, animation)
+		animation.saved = false;
+		animation.add(true).select();
+	}
+})
+
+Filesystem.addDragHandler('animation', {
+	extensions: ['animation.json', 'animation_controllers.json'],
+	readtype: 'text',
+	condition: {modes: ['animate']},
+}, async function(files) {
+	for (let file of files) {
+		await AnimationCodec.codecs.bedrock.importFile(file);
+	}
+})
+
+new ValidatorCheck('unused_animators', {
+	condition: { features: ['animation_mode'], selected: {animation: true} },
+	update_triggers: ['select_animation'],
+	run() {
+		let animation = Animation.selected;
+		if (!animation) return;
+		let animators = [];
+		for (let id in animation.animators) {
+			let animator = animation.animators[id];
+			if (animator instanceof BoneAnimator && animator.keyframes.length) {
+				if (!animator.getGroup()) {
+					animators.push(animator);
+				}
+			}
+		}
+		if (animators.length) {
+			let buttons = [
+				{
+					name: 'Retarget Animators',
+					icon: 'rebase',
+					click() {
+						Validator.dialog.close()
+						BarItems.retarget_animators.click();
+					},
+				},
+				{
+					name: 'Reveal in Timeline',
+					icon: 'fa-sort-amount-up',
+					click() {
+						for (let animator of animators) {
+							animator.addToTimeline();
+						}
+						Validator.dialog.close();
+					},
+				}
+			];
+			this.warn({
+				message: `The animation "${animation.name}" contains ${animators.length} animated nodes that do not exist in the current model.`,
+				buttons,
+			})
+		}
+	}
+})
+
+BARS.defineActions(function() {
+	new NumSlider('slider_animation_length', {
+		category: 'animation',
+		condition: () => Animator.open && Animation.selected,
+		getInterval(event) {
+			if ((event && event.shiftKey) || Pressing.overrides.shift) return 1;
+			return Timeline.getStep()
+		},
+		get: function() {
+			return Animation.selected.length
+		},
+		change: function(modify) {
+			Animation.selected.setLength(limitNumber(modify(Animation.selected.length), 0, 1e4))
+		},
+		onBefore: function() {
+			Undo.initEdit({animations: [Animation.selected]});
+		},
+		onAfter: function() {
+			Undo.finishEdit('Change animation length')
+		}
+	})
+	new Action('set_animation_end', {
+		icon: 'keyboard_tab',
+		category: 'animation',
+		condition: {modes: ['animate'], method: () => Animation.selected},
+		keybind: new Keybind({ctrl: true, key: 35}),
+		click: function () {
+			Undo.initEdit({animations: [Animation.selected]});
+			Animation.selected.setLength(Timeline.time);
+			Undo.finishEdit('Set animation length');
+		}
+	})
+	new Action('add_animation', {
+		icon: 'fa-plus-circle',
+		category: 'animation',
+		condition: {modes: ['animate']},
+		click: function () {
+			new Animation({
+				name: Format.id.includes('bedrock') ? 'animation.' + (Project.geometry_name||'model') + '.new' : 'animation',
+				saved: false,
+				scope: (Group.first_selected)?.scope ?? 0
+			}).add(true).propertiesDialog()
+
+		}
+	})
+	new Action('create_animation_group', {
+		icon: 'create_new_folder',
+		category: 'animation',
+		condition: {modes: ['animate'], selected: {animation: true}, method: () => Format.animation_grouping == 'custom'},
+		click: async function () {
+			let name = await Blockbench.textPrompt('Group Name', 'Animation Group');
+			if (!name) return;
+
+			Undo.initEdit({animations: [Animation.selected]});
+			Animation.selected.group_name = name;
+			Undo.finishEdit('Set animation length');
+		}
+	})
+	new Action('load_animation_file', {
+		icon: 'fa-file-video',
+		category: 'animation',
+		condition: {modes: ['animate'], features: ['animation_files'], method: () => AnimationCodec.getCodec()?.pickFile},
+		click: function () {
+			AnimationCodec.getCodec()?.pickFile();
+		}
+	})
+	new Action('export_animation_file', {
+		icon: 'movie',
+		category: 'animation',
+		condition: () => !!AnimationCodec.getCodec(),
+		click: function () {
+			let form = {};
+			let keys = [];
+			let animations = Animation.all.slice()
+			if (Condition(Animation.properties.path.condition)) {
+				animations.sort((a1, a2) => (a1.path ?? a1.name).hashCode() - (a2.path ?? a2.name).hashCode())
+			}
+			animations.forEach(animation => {
+				let key = animation.name;
+				keys.push(key)
+				form[key.hashCode()] = {label: key, type: 'checkbox', value: true};
+			})
+			let dialog = new Dialog({
+				id: 'animation_export',
+				title: 'dialog.animation_export.title',
+				form,
+				onConfirm(form_result) {
+					dialog.hide();
+					keys = keys.filter(key => form_result[key.hashCode()])
+					let animations = Animator.animations.filter((a) => keys.includes(a.name));
+					let codec = AnimationCodec.getCodec() || AnimationCodec.codecs.bedrock;
+					let content = codec.compileFile(animations);
+
+					Blockbench.export({
+						resource_id: 'animation',
+						type: 'JSON Animation',
+						extensions: ['json'],
+						name: (Project.geometry_name||'model')+'.animation',
+						content: autoStringify(content),
+					})
+				}
+			})
+			form.select_all_none = {
+				type: 'buttons',
+				buttons: ['generic.select_all', 'generic.select_none'],
+				click(index) {
+					let values = {};
+					keys.forEach(key => values[key.hashCode()] = (index == 0));
+					dialog.setFormValues(values);
+				}
+			}
+
+			dialog.show();
+		}
+	})
+	new Action('save_all_animations', {
+		icon: 'save',
+		category: 'animation',
+		condition: () => Format.animation_files && AnimationCodec.getCodec(),
+		click: function () {
+			let codec = AnimationCodec.getCodec();
+			if (codec.multiple_per_file) {
+				let paths = [];
+				Animation.all.forEach(animation => {
+					paths.safePush(animation.path);
+				})
+				paths.forEach(path => {
+					codec?.exportFile(path);
+				})
+			} else if (codec.saveAnimation) {
+				Animation.all.forEach(animation => {
+					codec.saveAnimation();
+				})
+			}
+
+			// Controllers
+			let controller_paths = [];
+			AnimationController.all.forEach(controller => {
+				controller_paths.safePush(controller.path);
+			})
+			controller_paths.forEach(path => {
+				AnimationCodec.codecs.bedrock_animation_controller.exportFile(path);
+			})
+		}
+	})
+
+	new Action('bake_ik_animation', {
+		icon: 'precision_manufacturing',
+		category: 'animation',
+		condition: () => Modes.animate && NullObject.all.findIndex(n => n.ik_target) != -1,
+		click() {
+			let animation = Animation.selected;
+			let ik_samples = animation.sampleIK(animation.snapping);
+
+			let keyframes = [];
+			Undo.initEdit({keyframes});
+			
+			for (let uuid in ik_samples) {
+				let animator = animation.animators[uuid];
+				ik_samples[uuid].forEach(({array}) => {
+					array[0] = Math.roundTo(array[0], 4);
+					array[1] = Math.roundTo(array[1], 4);
+					array[2] = Math.roundTo(array[2], 4);
+				})
+				ik_samples[uuid].forEach(({array}, i) => {
+					let before = ik_samples[uuid][i-1];
+					let after = ik_samples[uuid][i+1];
+					if ((!before || before.array.equals(array)) && (!after || after.array.equals(array))) return;
+
+					let time = Timeline.snapTime(i / animation.snapping, animation);
+					let values = {x: array[0], y: array[1], z: array[2]};
+					let kf = animator.createKeyframe(values, time, 'rotation', false, false);
+					keyframes.push(kf);
+				})
+				animator.addToTimeline();
+			}
+			
+			Undo.finishEdit('Bake IK rotations');
+		}
+	})
+	new Action('bake_animation_into_model', {
+		icon: 'directions_run',
+		category: 'animation',
+		condition: {modes: ['animate']},
+		click: function () {
+			let elements = Outliner.elements;
+			Undo.initEdit({elements, outliner: true, groups: Group.all});
+
+			let animatable_elements = Outliner.elements.filter(el => el.constructor.animator);
+			[...Group.all, ...animatable_elements].forEach(node => {
+				let offset_rotation = [0, 0, 0];
+				let offset_position = [0, 0, 0];
+				Animator.animations.forEach(animation => {
+					if (!animation.playing) return;
+					let animator = animation.getBoneAnimator(node);
+					if (!animator) return;
+					let multiplier = animation.blend_weight ? Math.clamp(Animator.MolangParser.parse(animation.blend_weight), 0, Infinity) : 1;
+					
+					if (animator.channels.rotation) {
+						let rotation = animator.interpolate('rotation');
+						if (rotation instanceof Array) offset_rotation.V3_add(rotation.map(v => v * multiplier));
+					}
+					if (animator.channels.position) {
+						let position = animator.interpolate('position');
+						if (position instanceof Array) offset_position.V3_add(position.map(v => v * multiplier));
+					}
+				})
+				// Rotation
+				if (node.getTypeBehavior('rotatable')) {
+					node.rotation[0] += offset_rotation[0];
+					node.rotation[1] += offset_rotation[1];
+					node.rotation[2] += offset_rotation[2];
+				}
+				// Position
+				function offset(node) {
+					if (node instanceof Group) {
+						node.origin.V3_add(offset_position);
+						node.children.forEach(offset);
+					} else {
+						if (node.from) node.from.V3_add(offset_position);
+						if (node.to) node.to.V3_add(offset_position);
+						if (node.origin && node.origin !== node.from) node.origin.V3_add(offset_position);
+					}
+				}
+				offset(node);
+			});
+			for (let mesh of Mesh.all) {
+				if (mesh.parent instanceof Armature) {
+					let vertex_offsets = mesh.parent.calculateVertexDeformation(mesh);
+					for (let vkey in mesh.vertices) {
+						if (vertex_offsets[vkey]) mesh.vertices[vkey].V3_add(vertex_offsets[vkey]);
+					}
+					Mesh.preview_controller.updateGeometry(mesh);
+				}
+			}
+
+			Modes.options.edit.select();
+			Canvas.updateView({elements: Outliner.elements, element_aspects: {transform: true}, groups: Group.all, group_aspects: {transform: true}});
+			Undo.finishEdit('Bake animation into model')
+		}
+	})
+	new Action('change_animation_speed', {
+		icon: 'av_timer',
+		category: 'animation',
+		condition: {modes: ['animate'], method: () => Animation.selected},
+		click() {
+			let animation = Animation.selected;
+			Undo.initEdit({animations: [animation]});
+			let keyframes = [];
+			let initial_times = {};
+			let initial_snapping = animation.snapping;
+			let initial_length = animation.length;
+			let initial_bezier_times = {};
+			for (let id in animation.animators) {
+				let animator = animation.animators[id];
+				keyframes.push(...animator.keyframes);
+			}
+			keyframes.forEach(kf => {
+				initial_times[kf.uuid] = kf.time;
+				initial_bezier_times[kf.uuid] = {
+					left: kf.bezier_left_time.slice(),
+					right: kf.bezier_right_time.slice(),
+				};
+			})
+
+			let previous_speed = 1;
+			let previous_snapping = initial_snapping;
+			let dialog = new Dialog({
+				id: 'change_animation_speed',
+				title: 'action.change_animation_speed',
+				darken: false,
+				form: {
+					speed: {label: 'dialog.change_animation_speed.speed', type: 'range', value: 1, min: 0.1, max: 4, step: 0.01, editable_range_label: true, full_width: true},
+					adjust_snapping: {label: 'dialog.change_animation_speed.adjust_snapping', type: 'checkbox', value: true},
+					snapping: {label: 'menu.animation.snapping', type: 'number', value: initial_snapping, min: 1, max: 500, condition: result => result.adjust_snapping},
+				},
+				onFormChange({speed, adjust_snapping, snapping}) {
+					if (speed != previous_speed) {
+						snapping = adjust_snapping ? Math.roundTo(initial_snapping * speed, 2) : initial_snapping
+						dialog.setFormValues({snapping}, false);
+
+					} else if (snapping != previous_snapping) {
+						speed = Math.clamp(Math.roundTo(snapping / initial_snapping, 2), 0.1, 4);
+						dialog.setFormValues({speed}, false);
+					}
+					previous_speed = speed;
+					previous_snapping = snapping;
+
+					animation.snapping = snapping;
+					keyframes.forEach(kf => {
+						kf.time = Timeline.snapTime(initial_times[kf.uuid] / speed, animation);
+						if (kf.interpolation == 'bezier') {
+							let old_bezier_time = initial_bezier_times[kf.uuid];
+							kf.bezier_left_time.V3_set(old_bezier_time.left).V3_divide(speed);
+							kf.bezier_right_time.V3_set(old_bezier_time.right).V3_divide(speed);
+						}
+					})
+					animation.setLength(initial_length / speed);
+					Animator.preview();
+				},
+				onConfirm(result) {
+					Undo.finishEdit('Change animation speed');
+				},
+				onCancel() {
+					Undo.cancelEdit();
+				}
+			}).show();
+		}
+	})
+	new Action('merge_animation', {
+		icon: 'merge_type',
+		category: 'animation',
+		condition: () => Modes.animate && Animation.all.length > 1,
+		click: async function() {
+			let source_animation = Animation.selected;
+
+			let options = await new Promise(resolve => {
+				let animation_options = {};
+				for (let animation of Animation.all) {
+					if (animation == source_animation) continue;
+					animation_options[animation.uuid] = animation.name;
+				}
+				new Dialog('merge_animation', {
+					name: 'action.merge_animation',
+					form: {
+						animation: {label: 'dialog.merge_animation.merge_target', type: 'select', options: animation_options},
+					},
+					onConfirm(result) {
+						resolve(result);
+					},
+					onCancel() {
+						resolve(false);
+					}
+				}).show();
+			})
+			if (!options) return;
+			
+			let target_animation = Animation.all.find(anim => anim.uuid == options.animation);
+			let animations = [source_animation, target_animation];
+			Undo.initEdit({animations});
+
+
+			for (let uuid in source_animation.animators) {
+				let source_animator = source_animation.animators[uuid];
+				// Get target animator
+				let target_animator;
+				if (source_animator instanceof BoneAnimator) {
+					let node = source_animator.getElement ? source_animator.getElement() : source_animator.getGroup();
+					target_animator = target_animation.getBoneAnimator(node);
+				} else if (source_animator instanceof EffectAnimator) {
+					if (!target_animation.animators.effects) {
+						target_animation.animators.effects = new EffectAnimator(target_animation);
+					}
+					target_animator = target_animation.animators.effects;
+				}
+				if (!target_animator) continue;
+				for (let channel in source_animator.channels) {
+					let channel_config = source_animator.channels[channel];
+					let source_kfs = source_animator[channel];
+					let target_kfs = target_animator[channel];
+
+					if (source_kfs.length == 0) {
+						continue;
+					} else if (target_kfs.length == 0) {
+						for (let src_kf of source_kfs) {
+							target_animator.createKeyframe(src_kf, src_kf.time, channel, false, false);
+						}
+						continue;
+					}
+
+					let timecodes = {};
+					// Save base values
+					for (let kf of source_kfs) {
+						let key = Math.roundTo(kf.time, 2);
+						if (!timecodes[key]) timecodes[key] = {};
+						timecodes[key].source_kf = kf;
+						timecodes[key].time = kf.time;
+					}
+					for (let kf of target_kfs) {
+						let key = Math.roundTo(kf.time, 2);
+						if (!timecodes[key]) timecodes[key] = {};
+						timecodes[key].target_kf = kf;
+						timecodes[key].time = kf.time;
+					}
+					if (source_animator.interpolate) {
+						// Interpolate in between values before they become affected by changes
+						for (let key in timecodes) {
+							let data = timecodes[key];
+							Timeline.time = data.time;
+							if (!data.target_kf) {
+								data.target_values = target_animator.interpolate(channel, true);
+							}
+							if (!data.source_kf) {
+								data.source_values = source_animator.interpolate(channel, true);
+							}
+						}
+					}
+					function mergeValues(a, b) {
+						if (!a) return b;
+						if (!b) return a;
+						if (typeof a == 'number' && typeof b == 'number') {
+							return a + b;
+						}
+						return a.toString() + ' + ' + b.toString();
+					}
+					let keys = Object.keys(timecodes).sort((a, b) => a.time - b.time);
+					for (let key of keys) {
+						let {source_kf, target_kf, target_values, source_values, time} = timecodes[key];
+						Timeline.time = time;
+						if ((source_kf || target_kf).transform) {
+							if (source_kf && target_kf) {
+								for (let axis of 'xyz') {
+									let source_val = source_kf.get(axis);
+									let target_val = target_kf.get(axis);
+									target_kf.set(axis, mergeValues(target_val, source_val));
+								}
+							} else if (source_kf) {
+								let target_kf = target_animator.createKeyframe(null, time, channel, false, false);
+								let i = 0;
+								for (let axis of 'xyz') {
+									let source_val = source_kf.get(axis);
+									let target_val = target_values[i] ?? 0;
+									target_kf.set(axis, mergeValues(target_val, source_val));
+									i++;
+								}
+
+							} else if (target_kf) {
+								let i = 0;
+								for (let axis of 'xyz') {
+									let source_val = source_values[i] ?? 0;
+									let target_val = target_kf.get(axis);
+									target_kf.set(axis, mergeValues(target_val, source_val));
+									i++;
+								}
+							}
+						} else if (source_animator instanceof EffectAnimator) {
+							if (source_kf && target_kf) {
+								if (channel == 'timeline' ) {
+									let source = source_kf.data_points[0].script;
+									let target = target_kf.data_points[0].script;
+									target_kf.data_points[0].script = (source && target) ? (target + '\n' + source) : (source || target);
+								} else if (channel_config?.max_data_points > 1) {
+									for (let src_kfdp of source_kf.data_points) {
+										let new_dp = new KeyframeDataPoint(target_kf);
+										new_dp.extend(src_kfdp);
+										target_kf.data_points.push(new_dp);
+									}
+								}
+								
+							} else if (source_kf) {
+								let new_kf = target_animator.createKeyframe(source_kf, source_kf.time, source_kf.channel, false, false);
+								Property.resetUniqueValues(Keyframe, new_kf);
+							}
+						}
+					}
+				}
+			}
+			animations.remove(source_animation);
+			source_animation.remove(false);
+			target_animation.select();
+			
+			Undo.finishEdit('Merge animations');
+		}
+	})
+	let optimize_animation_mode = 'selected_animation';
+	new Action('optimize_animation', {
+		icon: 'settings_slow_motion',
+		category: 'animation',
+		condition: {modes: ['animate'], method: () => Animation.selected},
+		click: async function() {
+			let response = await new Promise(resolve => {
+				new Dialog('optimize_animation', {
+					name: 'action.optimize_animation',
+					form: {
+						selection: {label: 'dialog.optimize_animation.selection', type: 'select', value: optimize_animation_mode, options: {
+							selected_keyframes: 'dialog.optimize_animation.selection.selected_keyframes',
+							selected_animation: 'dialog.optimize_animation.selection.selected_animation',
+							all_animations: 'dialog.optimize_animation.selection.all_animations',
+						}},
+						'_1': '_',
+						advanced: {label: 'dialog.advanced', type: 'checkbox', value: false},
+						'_2': '_',
+						thresholds: {type: 'info', text: 'dialog.optimize_animation.thresholds', condition: form => form.advanced},
+						threshold_rotation: {label: 'timeline.rotation', type: 'number', value: 0.05, min: 0, max: 1, condition: form => form.advanced},
+						threshold_position: {label: 'timeline.position', type: 'number', value: 0.01, min: 0, max: 1, condition: form => form.advanced},
+						threshold_scale: {label: 'timeline.scale', type: 'number', value: 0.005, min: 0, max: 1, condition: form => form.advanced},
+					},
+					onConfirm(result) {
+						resolve(result);
+					},
+					onCancel() {
+						resolve(false);
+					}
+				}).show();
+			})
+			if (!response) return;
+
+			optimize_animation_mode = response.selection;
+			let animations = [Animation.selected];
+			if (response.selection == 'all_animations') animations = Animation.all;
+			let thresholds = {
+				rotation: response.threshold_rotation,
+				position: response.threshold_position,
+				scale: response.threshold_scale
+			};
+			let remove_count = 0;
+			Undo.initEdit({animations});
+
+			for (let animation of animations) {
+				for (let id in animation.animators) {
+					let animator = animation.animators[id];
+					for (let channel in animator.channels) {
+						if (!animator[channel]?.length) continue;
+						if (!animator.channels[channel].transform) continue;
+						let first = animator[channel][0];
+						let expected = +(channel === "scale");
+						// todo: add data points
+						if (animator[channel].length == 1 && first.data_points.length == 1 && (response.selection != 'selected_keyframes' || first.selected)) {
+							let value = first.getArray();
+							if (value.allAre(v => v === expected)) {
+								first.remove();
+								continue;
+							}
+						}
+
+						let sorted_keyframes = animator[channel].slice().sort((a, b) => a.time - b.time);
+						let original_keyframes = sorted_keyframes.slice();
+						let prev;
+						let skipped = 0;
+						for (let i = 0; i < original_keyframes.length; i++) {
+							let kf = original_keyframes[i];
+							if (kf.data_points.length != 1 || (!kf.selected && response.selection == 'selected_keyframes')) {
+								prev = kf;
+								continue;
+							}
+							let next = original_keyframes[i+1];
+							let d_kf = kf.getArray();
+							let d_prev = prev && prev.getArray(1);
+							let d_next = next && next.getArray(0);
+							let remove = false;
+
+							// Same values check
+							if (
+								(prev || next) &&
+								(!prev || d_prev[0] == d_kf[0]) && (!next || d_next[0] == d_kf[0]) &&
+								(!prev || d_prev[1] == d_kf[1]) && (!next || d_next[1] == d_kf[1]) &&
+								(!prev || d_prev[2] == d_kf[2]) && (!next || d_next[2] == d_kf[2])
+							) {
+								remove = true;
+							} else if (prev && next) {
+								let alpha = Math.getLerp(prev.time, next.time, kf.time);
+								let axes = ['x', 'y', 'z'];
+								let interpolated_value;
+								if (
+									prev.interpolation === 'linear' &&
+									(next.interpolation === 'linear' || next.interpolation === 'step')
+								) {
+									interpolated_value = axes.map(axis => prev.getLerp(next, axis, alpha));
+
+								} else if (prev.interpolation === 'catmullrom' || next.interpolation === 'catmullrom') {
+
+									let prev_plus = sorted_keyframes[sorted_keyframes.indexOf(prev)-1];
+									let next_plus = sorted_keyframes[sorted_keyframes.indexOf(next)+1];
+									interpolated_value = axes.map(axis => prev.getCatmullromLerp(prev_plus, prev, next, next_plus, axis, alpha));
+
+								} else if (prev.interpolation === 'bezier' || next.interpolation === 'bezier') {
+									// Bezier
+									interpolated_value = axes.map(axis => prev.getBezierLerp(prev, next, axis, alpha));
+								}
+
+								if (interpolated_value) {
+									let threshold = thresholds[channel] ?? thresholds.position;
+									let max_diff = 0.0000001;
+									let all_axes_irrelevant = interpolated_value.allAre((val, axis) => {
+										let diff = Math.abs(val - d_kf[axis]);
+										max_diff = Math.max(max_diff, diff);
+										return diff < threshold;
+									});
+									if (all_axes_irrelevant && skipped < Math.clamp(2 * (threshold / max_diff), 0, 12)) {
+										remove = true;
+									}
+								}
+							} else if (!prev && !next) {
+								if (d_kf.allAre(val => val === expected)) {
+									remove = true;
+								} else {
+									kf.time = 0;
+								}
+							}
+
+							if (remove) {
+								kf.remove();
+								skipped++;
+								remove_count++;
+							} else {
+								skipped = 0;
+								prev = kf;
+							}
+						}
+					}
+				}
+			}
+			
+			if (remove_count) {
+				Blockbench.showQuickMessage(tl('message.optimize_animation.keyframes_removed', remove_count), 2000);
+				Undo.finishEdit('Optimize animations');
+			} else {
+				Blockbench.showQuickMessage('message.optimize_animation.nothing_to_optimize', 1800);
+				Undo.cancelEdit(false);
+			}
+		}
+	})
+	new Action('retarget_animators', {
+		icon: 'rebase',
+		category: 'animation',
+		condition: () => Animation.selected,
+		click: async function() {
+			let animation = Animation.selected;
+			let form = {};
+			let unassigned_animators = [];
+			let assigned_animators = [];
+
+			for (let id in animation.animators) {
+				let animator = animation.animators[id];
+				if (animator instanceof BoneAnimator && animator.keyframes.length) {
+					if (!animator.getGroup()) {
+						unassigned_animators.push(animator);
+					} else {
+						assigned_animators.push(animator);
+					}
+				}
+			}
+			let all_animators = unassigned_animators.slice();
+			if (unassigned_animators.length && assigned_animators.length) {
+				all_animators.push('_');
+			}
+			all_animators.push(...assigned_animators);
+
+			for (let animator of all_animators) {
+				if (animator == '_') {
+					form._ = '_';
+					continue;
+				}
+				let is_assigned = assigned_animators.includes(animator);
+				let options = {};
+				let nodes;
+				if (animator.type == 'bone') {
+					nodes = Group.all;
+				} else {
+					nodes = Outliner.all.filter(element => element.type == animator.type);
+				}
+				if (!is_assigned) options[animator.uuid] = '-';
+				for (let node of nodes) {
+					options[node.uuid] = node.name;
+				}
+				form[animator.uuid] = {
+					label: animator.name,
+					type: 'select',
+					value: animator.uuid,
+					options
+				}
+			}
+
+			let form_result = await new Promise(resolve => {
+
+				new Dialog('retarget_animators', {
+					name: 'action.retarget_animators',
+					form,
+					onConfirm(result) {
+						resolve(result);
+					},
+					onCancel() {
+						resolve(false);
+					}
+				}).show();
+			})
+			if (!form_result) return;
+			Undo.initEdit({animations: [animation]});
+
+			let temp_animators = {};
+
+			function copyAnimator(target, source) {
+				for (let channel in target.channels) {
+					target[channel].splice(0, Infinity, ...source[channel]);
+					for (let kf of target[channel]) {
+						kf.animator = target;
+					}
+				}
+				target.extend(source);
+			}
+			function resetAnimator(animator) {
+				for (let channel in animator.channels) {
+					animator[channel].empty();
+				}
+				for (let key in animator.constructor.properties) {
+					animator.constructor.properties[key].reset(animator);
+				}
+			}
+
+			for (let animator of all_animators) {
+				if (animator == '_') continue;
+
+				let target_uuid = form_result[animator.uuid];
+				if (target_uuid == animator.uuid) continue;
+				let target_animator = animation.animators[target_uuid];
+
+				if (!temp_animators[target_uuid]) {
+					temp_animators[target_uuid] = new animator.constructor(target_uuid, animation);
+					copyAnimator(temp_animators[target_uuid], target_animator);
+				}
+
+				let tempsave_current_animator = !temp_animators[animator.uuid];
+				if (tempsave_current_animator) {
+					temp_animators[animator.uuid] = new animator.constructor(animator.uuid, animation);
+					copyAnimator(temp_animators[animator.uuid], animator);
+				}
+
+				copyAnimator(target_animator, temp_animators[animator.uuid] ?? animator);
+				
+				// Reset animator
+				if (tempsave_current_animator) {
+					resetAnimator(animator)
+				}
+			}
+
+			Undo.finishEdit('Retarget animations');
+			Animator.preview();
+		}
+	})
+	new Toggle('search_animations', {
+		icon: 'search',
+		category: 'edit',
+		onChange(value) {
+			Panels.animations.inside_vue._data.search_term = '';
+			Panels.animations.inside_vue._data.search_enabled = value;
+			if (value) {
+				Vue.nextTick(() => {
+					document.getElementById('animation_search_bar').firstChild.focus();
+				});
+			}
+		}
+	})
+})
+
+
+Interface.definePanels(function() {
+
+	function eventTargetToAnim(target) {
+		let target_node = target;
+		let i = 0;
+		while (target_node && target_node.classList && !target_node.classList.contains('animation')) {
+			if (i < 3 && target_node) {
+				target_node = target_node.parentNode;
+				i++;
+			} else {
+				return [];
+			}
+		}
+		return [AnimationItem.all.find(anim => anim.uuid == target_node.attributes.anim_id.value), target_node];
+	}
+	function getOrder(loc, obj) {
+		if (!obj) {
+			return;
+		} else {
+			if (loc < 16) return -1;
+			return 1;
+		}
+		return 0;
+	}
+
+	new Panel('animations', {
+		icon: 'movie',
+		growable: true,
+		resizable: true,
+		condition: {modes: ['animate']},
+		default_position: {
+			slot: 'left_bar',
+			float_position: [0, 0],
+			float_size: [300, 400],
+			height: 400,
+			sidebar_index: 0,
+		},
+		toolbars: [
+			new Toolbar('animations', {
+				children: [
+					'add_animation',
+					'add_animation_controller',
+					'load_animation_file',
+					'create_animation_group',
+					'slider_animation_length',
+					'export_modded_animations',
+					'+',
+					'search_animations',
+				]
+			})
+		],
+		component: {
+			name: 'panel-animations',
+			data() { return {
+				animations: Animation.all,
+				animation_controllers: AnimationController.all,
+				files_folded: {},
+				animation_files: true,
+				group_animations_by_file: true,
+				search_enabled: false,
+				search_term: '',
+			}},
+			methods: {
+				openMenu(event) {
+					Interface.Panels.animations.menu.show(event)
+				},
+				toggle(key) {
+					this.files_folded[key] = !this.files_folded[key];
+					this.$forceUpdate();
+				},
+				saveFile(path, file) {
+					let codec = AnimationCodec.getCodec(file);
+					if (codec.exportFile) {
+						codec.exportFile(path);
+					}
+				},
+				addAnimation(group_name) {
+					let other_animation = AnimationItem.all.find(a => (this.group_animations_by_file ? a.path : a.group_name) == group_name);
+					if (other_animation instanceof Animation) {
+						new Animation({
+							name: other_animation && other_animation.name.replace(/\w+$/, 'new'),
+							path: this.group_animations_by_file ? group_name : undefined,
+							group_name: group_name,
+							scope: (other_animation.scope || Group.first_selected?.scope) ?? 0,
+							saved: false
+						}).add(true).propertiesDialog()
+					} else {
+						new AnimationController({
+							name: other_animation && other_animation.name.replace(/\w+$/, 'new'),
+							path: group_name,
+							saved: false
+						}).add(true);
+					}
+				},
+				getScopeColor(animation) {
+					if (!animation.scope) return '';
+					return ScopeColors[(animation.scope-1) % ScopeColors.length];
+				},
+				showFileContextMenu(event, id) {
+					if (this.group_animations_by_file) {
+						Animation.prototype.file_menu.open(event, id);
+					} else {
+						Animation.prototype.group_menu.open(event, id);
+					}
+				},
+				dragAnimation(e1) {
+					if (getFocusedTextInput()) return;
+					if (e1.button == 1 || e1.button == 2) return;
+					convertTouchEvent(e1);
+					
+					let [anim] = eventTargetToAnim(e1.target);
+					if (!anim || anim.locked) {
+						function off(e2) {
+							removeEventListeners(document, 'mouseup touchend', off);
+						}
+						addEventListeners(document, 'mouseup touchend', off);
+						return;
+					};
+
+					let active = false;
+					let helper;
+					let timeout;
+					let drop_target, drop_target_node, order;
+					let last_event = e1;
+
+					let group_name_key = this.group_animations_by_file ? 'path' : 'group_name';
+
+					function move(e2) {
+						convertTouchEvent(e2);
+						let offset = [
+							e2.clientX - e1.clientX,
+							e2.clientY - e1.clientY,
+						]
+						if (!active) {
+							let distance = Math.sqrt(Math.pow(offset[0], 2) + Math.pow(offset[1], 2))
+							if (Blockbench.isTouch) {
+								if (distance > 20 && timeout) {
+									clearTimeout(timeout);
+									timeout = null;
+								} else {
+									document.getElementById('animations_list').scrollTop += last_event.clientY - e2.clientY;
+								}
+							} else if (distance > 6) {
+								active = true;
+							}
+						} else {
+							if (e2) e2.preventDefault();
+							
+							if (open_menu) open_menu.hide();
+
+							if (!helper) {
+								helper = document.createElement('div');
+								helper.id = 'animation_drag_helper';
+								let icon = document.createElement('i');		icon.className = 'material-icons'; icon.innerText = 'movie'; helper.append(icon);
+								let span = document.createElement('span');	span.innerText = anim.name;	helper.append(span);
+								document.body.append(helper);
+							}
+							helper.style.left = `${e2.clientX}px`;
+							helper.style.top = `${e2.clientY}px`;
+
+							// drag
+							$('.drag_hover').removeClass('drag_hover');
+							$('.animation[order]').attr('order', null);
+
+							let target = document.elementFromPoint(e2.clientX, e2.clientY);
+							[drop_target, drop_target_node] = eventTargetToAnim(target);
+							if (drop_target) {
+								var location = e2.clientY - $(drop_target_node).offset().top;
+								order = getOrder(location, drop_target)
+								drop_target_node.setAttribute('order', order)
+								drop_target_node.classList.add('drag_hover');
+							}
+						}
+						last_event = e2;
+					}
+					function off(e2) {
+						if (helper) helper.remove();
+						removeEventListeners(document, 'mousemove touchmove', move);
+						removeEventListeners(document, 'mouseup touchend', off);
+						$('.drag_hover').removeClass('drag_hover');
+						$('.animation[order]').attr('order', null);
+						if (Blockbench.isTouch) clearTimeout(timeout);
+
+						if (active && !open_menu) {
+							convertTouchEvent(e2);
+							let target = document.elementFromPoint(e2.clientX, e2.clientY);
+							let [target_anim] = eventTargetToAnim(target);
+							if (!target_anim || target_anim == anim ) return;
+
+							if (anim instanceof AnimationController) {
+								let index = AnimationController.all.indexOf(target_anim);
+								if (index == -1 && target_anim[group_name_key]) return;
+								if (AnimationController.all.indexOf(anim) < index) index--;
+								if (order == 1) index++;
+								if (AnimationController.all[index] == anim && anim[group_name_key] == target_anim[group_name_key]) return;
+								
+								Undo.initEdit({animation_controllers: [anim]});
+	
+								anim[group_name_key] = target_anim[group_name_key];
+								AnimationController.all.remove(anim);
+								AnimationController.all.splice(index, 0, anim);
+								anim.createUniqueName();
+	
+								Undo.finishEdit('Reorder animation controllers');
+
+							} else {
+								let index = Animation.all.indexOf(target_anim);
+								if (index == -1 && target_anim[group_name_key]) return;
+								if (Animation.all.indexOf(anim) < index) index--;
+								if (order == 1) index++;
+								if (Animation.all[index] == anim && anim[group_name_key] == target_anim[group_name_key]) return;
+								
+								Undo.initEdit({animations: [anim]});
+	
+								anim[group_name_key] = target_anim[group_name_key];
+								Animation.all.remove(anim);
+								Animation.all.splice(index, 0, anim);
+								anim.createUniqueName();
+	
+								Undo.finishEdit('Reorder animations');
+							}
+						}
+					}
+
+					if (Blockbench.isTouch) {
+						timeout = setTimeout(() => {
+							active = true;
+							move(e1);
+						}, 320)
+					}
+
+					addEventListeners(document, 'mousemove touchmove', move, {passive: false});
+					addEventListeners(document, 'mouseup touchend', off, {passive: false});
+				},
+				updateSearch(event) {
+					if (this.search_enabled && !this.search_term && !document.querySelector('#animation_search_bar > input:focus')) {
+						this.search_enabled = false;
+						BarItems.search_animations.set(false);
+					}
+				}
+			},
+			computed: {
+				files() {
+					const search_term = this.search_enabled && this.search_term.toLowerCase()
+					const filter = (anim) => {
+						if (search_term) {
+							return anim.name.toLowerCase().includes(search_term);
+						}
+						return true;
+					}
+					const groups = {};
+					this.animations.forEach(animation => {
+						let key = (this.group_animations_by_file ? animation.path : animation.group_name) || '';
+						let name = this.group_animations_by_file ? (pathToName(key, true) || 'Unsaved') : key;
+						if (!groups[key]) {
+							groups[key] = {
+								animations: [],
+								name,
+								type: 'animation',
+								saved: true
+							};
+						}
+						if (!key && !this.group_animations_by_file) groups[key].hide_head = true;
+						if (!animation.saved) groups[key].saved = false;
+						if (!filter(animation)) return;
+						groups[key].animations.push(animation);
+					})
+					this.animation_controllers.forEach(controller => {
+						let key = controller.path || '';
+						if (!groups[key]) groups[key] = {
+							animations: [],
+							name: controller.path ? pathToName(controller.path, true) : 'Unsaved',
+							type: 'animation_controller',
+							saved: true
+						};
+						if (!controller.saved) groups[key].saved = false;
+						if (!filter(controller)) return;
+						groups[key].animations.push(controller);
+					})
+					return groups;
+				},
+				common_namespace() {
+					if (!this.animations.length) {
+						return '';
+
+					} else if (this.animations.length == 1) {
+						let match = this.animations[0].name.match(/^.*[.:]/);
+						return match ? match[0] : '';
+
+					} else {
+						let name = this.animations[0].name;
+						if (name.search(/[.:]/) == -1) return '';
+
+						for (var anim of this.animations) {
+							if (anim == this.animations[0]) continue;
+
+							let segments = anim.name.split(/[.:]/);
+							let length = 0;
+
+							for (var segment of segments) {
+								if (segment == name.substr(length, segment.length)) {
+									length += segment.length + 1;
+								} else {
+									break;
+								}
+							}
+							name = name.substr(0, length);
+							if (name.length < 8) return '';
+						}
+						return name;
+					}
+				},
+				common_controller_namespace() {
+					if (!this.animation_controllers.length) {
+						return '';
+
+					} else if (this.animation_controllers.length == 1) {
+						let match = this.animation_controllers[0].name.match(/^.*[.:]/);
+						return match ? match[0] : '';
+
+					} else {
+						let name = this.animation_controllers[0].name;
+						if (name.search(/[.:]/) == -1) return '';
+
+						for (var anim of this.animation_controllers) {
+							if (anim == this.animation_controllers[0]) continue;
+
+							let segments = anim.name.split(/[.:]/);
+							let length = 0;
+
+							for (var segment of segments) {
+								if (segment == name.substr(length, segment.length)) {
+									length += segment.length + 1;
+								} else {
+									break;
+								}
+							}
+							name = name.substr(0, length);
+							if (name.length < 8) return '';
+						}
+						return name;
+					}
+				}
+			},
+			template: `
+			<div>
+				<search-bar id="animation_search_bar" class="panel_search_bar"
+					v-if="search_enabled" v-model="search_term"
+					@input="updateSearch()" onfocusout="Panels.animations.vue.updateSearch()"
+				/>
+				<ul
+					id="animations_list"
+					class="list mobile_scrollbar"
+					@mousedown="dragAnimation($event)"
+					@touchstart="dragAnimation($event)"
+					@contextmenu.stop.prevent="openMenu($event)"
+				>
+					<li v-for="(file, key) in files" :key="key" class="animation_file" @contextmenu.prevent.stop="showFileContextMenu($event, key)">
+						<div class="animation_file_head" v-if="!file.hide_head" v-on:click.stop="toggle(key)">
+							<i v-on:click.stop="toggle(key)" class="icon-open-state fa" :class=\'{"fa-angle-right": files_folded[key], "fa-angle-down": !files_folded[key]}\'></i>
+							<label :title="key">{{ file.name }}</label>
+							<div class="in_list_button" v-if="group_animations_by_file && !file.saved" v-on:click.stop="saveFile(key, file)">
+								<i class="material-icons">save</i>
+							</div>
+							<div class="in_list_button" v-on:click.stop="addAnimation(key)">
+								<i class="material-icons">add</i>
+							</div>
+						</div>
+						<ul v-if="!files_folded[key]" :class="{indented: !file.hide_head}">
+							<li
+								v-for="animation in file.animations"
+								v-bind:class="{ selected: animation.selected }"
+								v-bind:anim_id="animation.uuid"
+								class="animation"
+								:key="animation.uuid"
+								:style="{'--color-scope': getScopeColor(animation)}"
+								@click.stop="animation.clickSelect()"
+								@dblclick.stop="animation.propertiesDialog()"
+								@contextmenu.prevent.stop="animation.showContextMenu($event)"
+							>
+								<i class="material-icons" v-if="animation.type == 'animation'">movie</i>
+								<i class="material-icons" v-else>cable</i>
+								<label :title="animation.name" v-if="animation.type == 'animation'">
+									{{ common_namespace ? animation.name.split(common_namespace).join('') : animation.name }}
+									<span v-if="common_namespace"> - {{ animation.name }}</span>
+								</label>
+								<label :title="animation.name" v-else>
+									{{ common_controller_namespace ? animation.name.split(common_controller_namespace).join('') : animation.name }}
+									<span v-if="common_controller_namespace"> - {{ animation.name }}</span>
+								</label>
+								<div v-if="animation_files" class="in_list_button" v-bind:class="{unclickable: animation.saved}" @click.stop="animation.save()" title="${tl('menu.animation.save')}">
+									<i v-if="animation.saved" class="material-icons">check_circle</i>
+									<i v-else class="material-icons">save</i>
+								</div>
+								<div class="in_list_button" @dblclick.stop @click.stop="animation.togglePlayingState()" title="${tl('menu.animation.playing')}">
+									<i v-if="animation.playing == 'locked'" class="fa_big fas fa-lock"></i>
+									<i v-else-if="animation.playing" class="fa_big far fa-play-circle"></i>
+									<i v-else class="fa_big far fa-circle"></i>
+								</div>
+							</li>
+						</ul>
+					</li>
+				</ul>
+				</div>
+			`
+		},
+		menu: new Menu([
+			'add_animation',
+			'add_animation_controller',
+			'load_animation_file',
+			'create_animation_group',
+			'paste',
+			'save_all_animations',
+		])
+	})
+})
+
+Object.assign(window, {AnimationItem, Animation});
