@@ -1,0 +1,22 @@
+sudo: required
+dist: focal
+
+language: node_js
+node:
+  - 20
+
+if: tag IS blank AND commit_message =~ ci-build
+
+jobs:
+  include:
+    - name: "Linux"
+      os: linux
+      script:
+        - sudo apt-get install rpm
+        - npm run publish-linux
+
+install:
+  - npm install
+
+notifications:
+  email: false
