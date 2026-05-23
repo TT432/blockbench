@@ -1,0 +1,68 @@
+name: Bug / Issue
+description: Use this form to report an issue that occurs when using Blockbench
+title: "Issue Summary"
+body:
+- type: markdown
+  attributes:
+    value: |
+      - Before you report an issue, check if if has already been reported.
+      - Also check if you are using the latest version of Blockbench.
+      - Please only report one issue per issue.
+      - If applicable, go to Help > Developer > Open Dev Tools. Switch to the Console tab. If there are any (red) error messages, please attach a screenshot of them.
+- type: markdown
+  attributes:
+    value: |
+      Please make sure to provide the following information:
+- type: textarea
+  id: description
+  attributes:
+    label: What are you trying to do, and what do you expect to happen?
+  validations:
+    required: true
+- type: textarea
+  id: error
+  attributes:
+    label: What happens instead?
+  validations:
+    required: true
+- type: input
+  id: format
+  attributes:
+    label: Model format in which the issue occurs
+    description: Format means which option you choose when creating a new model. Not the file extension.
+  validations:
+    required: true
+- type: dropdown
+  id: variant
+  attributes:
+    label: Blockbench variant
+    multiple: true
+    options:
+      - Website
+      - PWA
+      - Program
+  validations:
+    required: true
+- type: input
+  id: version
+  attributes:
+    label: Blockbench version
+    description: Write the version number, not just "Latest". You can find it in Help > About.
+  validations:
+    required: true
+- type: input
+  id: os
+  attributes:
+    label: Operating System
+    description: Your system, such as Windows or MacOS. When using Linux, please also specify the distro and installation method.
+  validations:
+    required: true
+- type: input
+  id: plugins
+  attributes:
+    label: Installed Blockbench plugins
+- type: textarea
+  id: log
+  attributes:
+    label: Are there any console errors?
+    description: This is particularly relevant if you expect something to happen and it does not happen, or if the UI becomes unresponsive. Click Help > Developer > Open Dev Tools and switch to the Console tab to see the log. Anything red is an error message.
