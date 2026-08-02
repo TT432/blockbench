@@ -1,0 +1,25 @@
+/*
+id: default
+name: Default (Dark)
+author: Default
+*/
+body {
+	--color-ui: #1e2127;
+	--color-back: #181b1f;
+	--color-dark: #101316;
+	--color-border: #101316;
+	--color-selected: #3b3e49;
+	--color-elevated: #272a31;
+	--color-button: #33383f;
+	--color-bright_ui: #f4f3ff;
+	--color-accent: #3e90ff;
+	--color-frame: #0f1012;
+	--color-text: #cacad4;
+	--color-light: #f4f3ff;
+	--color-accent_text: #000006;
+	--color-bright_ui_text: #000006;
+	--color-subtle_text: #848891;
+	--color-grid: #30333d;
+	--color-wireframe: #576f82;
+	--color-checkerboard: #14171b;
+}
