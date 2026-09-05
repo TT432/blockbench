@@ -1131,6 +1131,7 @@ var format = new ModelFormat('modded_entity', {
 	box_uv_float_size: true,
 	single_texture: true,
 	bone_rig: true,
+	remember_files: ['textures'],
 	centered_grid: true,
 	rotate_cubes: true,
 	integer_size: true,
