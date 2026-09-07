@@ -441,7 +441,7 @@ onVueSetup(async function() {
 					start_screen_element.style.setProperty('--start-screen-width', value + 'px');
 				},
 				reset() {
-					Interface.data.start_screen_width = Interface.default_data.start_screen_width;
+					this.set(Interface.default_data.start_screen_width, 0);
 				},
 				position() {
 					let rect = document.querySelector('#start_screen > content').getBoundingClientRect();
