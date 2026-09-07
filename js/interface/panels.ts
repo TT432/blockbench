@@ -1313,8 +1313,8 @@ export function updateInterfacePanels() {
 	if (Preview.split_screen.enabled) {
 		Preview.split_screen.updateSize()
 	}
-	for (var key in Interface.Resizers) {
-		var resizer = Interface.Resizers[key]
+	for (let key in Interface.Resizers) {
+		let resizer = Interface.Resizers[key]
 		resizer.update()
 	}
 	updateSidebarOrder();

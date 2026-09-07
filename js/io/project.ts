@@ -918,6 +918,9 @@ onVueSetup(() => {
 			Interface.tab_bar.$data.new_tab.selected = true;
 			setProjectTitle(ModelProject.all.length ? tl('projects.new_tab') : null);
 			updateInterface();
+			Vue.nextTick(() => {
+				Interface.Resizers.start_screen_width.update();
+			});
 		},
 		openSettings() {}
 	}
