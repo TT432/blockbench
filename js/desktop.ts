@@ -318,16 +318,17 @@ export function loadDataFromModelMemory() {
 	let project = Project && Project.getProjectMemory();
 	if (!project) return;
 
-	if (project.textures) {
+	let remember = Format.remember_files ?? [];
+	if (project.textures && remember.includes('textures')) {
 		Blockbench.read(project.textures, {}, files => {
 			files.forEach(f => {
 				if (!Texture.all.find(t => t.path == f.path)) {
-					new Texture({name: f.name}).fromFile(f).add(false).fillParticle();
+					new Texture({name: f.name}).fromFile(f).add(false);
 				}
 			})
 		})
 	}
-	if (project.texture_sets) {
+	if (project.texture_sets && remember.includes('texture_sets')) {
 		Blockbench.read(project.texture_sets, {}, files => {
 			files.forEach(f => {
 				if (!TextureGroup.all.find(tg => tg.material_config.getFilePath() == f.path)) {
@@ -336,7 +337,7 @@ export function loadDataFromModelMemory() {
 			})
 		})
 	}
-	if (project.animation_files && Format.animation_files) {
+	if (project.animation_files && remember.includes('animation_files')) {
 		Project.memory_animation_files_to_load = project.animation_files;
 	}
 	Blockbench.dispatchEvent('load_from_recent_project_data', {data: project});

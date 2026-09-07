@@ -219,6 +219,10 @@ export interface FormatFeatures {
 	 */
 	animation_files: boolean
 	/**
+	 * Files to reopen alongside the model, for formats that cannot reference them in the model file itself
+	 */
+	remember_files: ('textures' | 'texture_sets' | 'animation_files')[]
+	/**
 	 * Change how animations can be grouped
 	 */
 	animation_grouping: 'by_file' | 'custom' | 'disabled'
@@ -695,6 +699,7 @@ new Property(ModelFormat, 'boolean', 'select_texture_for_particles');
 new Property(ModelFormat, 'boolean', 'texture_mcmeta');
 new Property(ModelFormat, 'boolean', 'bone_binding_expression');
 new Property(ModelFormat, 'boolean', 'animation_files');
+new Property(ModelFormat, 'array', 'remember_files');
 new Property(ModelFormat, 'enum', 'animation_grouping', {default: 'by_file', values: ['by_file', 'custom', 'disabled']});
 new Property(ModelFormat, 'boolean', 'animation_controllers');
 new Property(ModelFormat, 'boolean', 'animation_loop_wrapping');
