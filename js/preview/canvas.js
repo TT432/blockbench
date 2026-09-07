@@ -709,7 +709,7 @@ export const Canvas = {
 			let copy = mesh.outline.clone();
 			copy.geometry = mesh.outline.geometry.clone();
 			copy.geometry.applyMatrix4(mesh.matrixWorld);
-			copy.position.set(0, 0, 0);
+			copy.position.copy(Canvas.scene.position).multiplyScalar(-1);
 			copy.rotation.set(0, 0, 0);
 			copy.scale.set(1, 1, 1);
 
