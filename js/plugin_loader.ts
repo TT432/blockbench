@@ -1143,11 +1143,14 @@ Plugins.loading_promise = new Promise((resolve, reject) => {
 			$.ajax({
 				cache: false,
 				url: 'https://cdn.jsdelivr.net/gh/JannisX11/blockbench-plugins/updates.json',
-				timeout: timeout_seconds,
+				timeout: 1_000 * timeout_seconds,
 				dataType: 'json',
 				success(data) {
 					Plugins.update_info = data;
 					resolve();
+				},
+				error(response, type) {
+					console.error('Failed to load plugin updates data', type, response)
 				}
 			});
 		},
