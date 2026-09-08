@@ -1863,7 +1863,7 @@
 	}
 	li.plugin_feature_entry {
 		display: flex;
-		gap: 8px;
+		flex-wrap: wrap;
 		padding-left: 4px;
 		min-height: 28px;
 		align-items: center;
@@ -1877,6 +1877,7 @@
 	li.plugin_feature_entry label {
 		white-space: nowrap;
 		cursor: inherit;
+		margin-left: 8px;
 	}
 	li.plugin_feature_entry > .description,
 	li.plugin_feature_entry > .extra_info {
