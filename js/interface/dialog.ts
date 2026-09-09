@@ -102,12 +102,6 @@ function makeDraggable(dialog: Dialog | MessageBox, handle: HTMLElement) {
 
 	let style = dialog.object.style;
 	let wrapper = Interface.page_wrapper;
-	let bounds = [
-		wrapper.offsetLeft+2,
-		wrapper.offsetTop+2,
-		wrapper.clientWidth + wrapper.offsetLeft+2,
-		wrapper.clientHeight + wrapper.offsetTop+2,
-	]
 	handle.addEventListener('pointerdown', (e1) => {
 		let start_x: number, start_y: number;
 		dragHelper(e1, {
@@ -116,6 +110,12 @@ function makeDraggable(dialog: Dialog | MessageBox, handle: HTMLElement) {
 				start_y = dialog.object.offsetTop;
 			},
 			onMove(context) {
+				let bounds = [
+					wrapper.offsetLeft+2,
+					wrapper.offsetTop+2,
+					wrapper.clientWidth + wrapper.offsetLeft+2,
+					wrapper.clientHeight + wrapper.offsetTop+2,
+				]
 				let x = Math.clamp(start_x + context.delta.x, bounds[0], bounds[2] - dialog.object.clientWidth);
 				let y = Math.clamp(start_y + context.delta.y, bounds[1], bounds[3] - dialog.object.clientHeight);
 				style.left = x + 'px';
