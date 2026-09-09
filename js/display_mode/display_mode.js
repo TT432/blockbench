@@ -182,6 +182,16 @@ display_presets = [
 			translation: [ 0, 0, 0],
 			scale:[ 0.5, 0.5, 0.5 ]
 		},
+		on_shelf: {
+			rotation: [ 0, 180, 0 ],
+			translation: [ 0, 0, 0 ],
+			scale: [ 1, 1, 1 ]
+		},
+		head: {
+			rotation: [ 0, 0, 0 ],
+			translation: [ 0, 0, 0 ],
+			scale:[ 1, 1, 1]
+		},
 		thirdperson_righthand: {
 			rotation: [ 75, 45, 0 ],
 			translation: [ 0, 2.5, 0],
