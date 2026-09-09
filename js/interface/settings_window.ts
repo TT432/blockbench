@@ -10,10 +10,10 @@ import { Setting, SettingsProfile } from "./settings";
 function rankSearchMatch(text: string, word: string, field_rank: number): number {
 	let words = text.split(/[^a-z0-9]+/).filter(part => part);
 	let is_word = (part: string) => part.startsWith(word) && part.length - word.length <= 2;
-	if (text == word) return 12 + field_rank * 4 + 4;
-	if (is_word(words[0] ?? '')) return 12 + field_rank * 4 + 3;
-	if (text.startsWith(word)) return 12 + field_rank * 4 + 2;
-	if (words.some(is_word)) return 12 + field_rank * 4 + 1;
+	if (text == word) return 20 + field_rank * 4 + 4;
+	if (is_word(words[0] ?? '')) return 20 + field_rank * 4 + 3;
+	if (text.startsWith(word)) return 20 + field_rank * 4 + 2;
+	if (words.some(is_word)) return 20 + field_rank * 4 + 1;
 	if (words.some(part => part.startsWith(word))) return field_rank * 3 + 2;
 	if (words.some(part => part.endsWith(word))) return field_rank * 3 + 1;
 	if (text.includes(word)) return field_rank * 3;
@@ -244,10 +244,13 @@ onVueSetup(function() {
 							let setting = settings[key];
 							if (!Condition(setting.condition)) continue;
 							let fields: [string, number][] = [
-								[setting.name.toLowerCase(), 3],
-								[key.replace(/_/g, ' '), 2],
+								[setting.name.toLowerCase(), 4],
+								[key.replace(/_/g, ' '), 3],
 								[setting.description.toLowerCase(), 1]
 							];
+							if (setting.plugin) {
+								fields.push([((Plugins.all.find(plugin => plugin.id == setting.plugin)?.title ?? setting.plugin) + ' plugin').toLowerCase(), 2]);
+							}
 							let ranks = keywords.map(word => {
 								return Math.max(...fields.map(([text, field_rank]) => rankSearchMatch(text, word, field_rank)));
 							});
