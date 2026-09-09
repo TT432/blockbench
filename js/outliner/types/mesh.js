@@ -1400,11 +1400,15 @@ new NodePreviewController(Mesh, {
 
 		for (let key in vertices) {
 			let vector = vertices[key];
-			point_position_array.push(...vector);
+			point_position_array.push(vector[0], vector[1], vector[2]);
 		}
 		mesh.outline.vertex_order.forEach(key => {
-			outline_positions.push(...vertices[key]);
+			let vector = vertices[key];
+			outline_positions.push(vector[0], vector[1], vector[2]);
 		})
+		if (Toolbox.selected.id == 'vertex_snap_tool') {
+			point_position_array.push(0, 0, 0); // Vertex snap pivot
+		}
 
 		
 		// Update geometry

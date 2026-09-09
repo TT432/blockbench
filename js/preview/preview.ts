@@ -41,7 +41,13 @@ export type RaycastResult = {
 	intersects?: THREE.Intersection[]
 	intersect?: THREE.Intersection
 	face?: string
+	/**
+	 * Vertex key (on meshes) or ArrayVector3
+	 */
 	vertex?: any
+	/**
+	 * Two vertex keys of a mesh edge
+	 */
 	vertices?: [string, string]
 	keyframe?: BBKeyframe
 	vertex_index?: number

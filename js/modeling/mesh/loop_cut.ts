@@ -38,7 +38,6 @@ new Action('loop_cut', {
 			cuts = 1,
 			spacing: SpacingOption = 'proportional'
 		) {
-			console.log({offset, direction, length});
 			Undo.initEdit({elements: Mesh.selected, selection: true}, amended);
 			if (offset == undefined) offset = length / (cuts+1);
 			Mesh.selected.forEach(mesh => {
