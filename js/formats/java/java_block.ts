@@ -829,9 +829,14 @@ const codec = new Codec('java_block', {
 
 			let layer0 = texture_ids[item_layers[0]];
 			if (settings.dialog_generated_item_model.value && !hasOwnElements()) {
+				let project = Project;
+				let icon: string | HTMLImageElement = 'wallpaper';
+				if (Texture.all[0]) {
+					icon = Interface.createElement('img', {src: Texture.all[0].img.src, style: 'image-rendering: crisp-edges;'}) as HTMLImageElement;
+				}
 				Blockbench.showMessageBox({
 					translateKey: 'generated_item_model',
-					icon: 'wallpaper',
+					icon,
 					width: 512,
 					commands: {
 						edit_texture: {
@@ -856,7 +861,9 @@ const codec = new Codec('java_block', {
 					if (result == 'edit_texture') {
 						layer0.openInImageEditor();
 					} else if (result == 'convert') {
-						confirmGeneratedItemConversion(placeholders);
+						project.whenNextOpen(() => {
+							confirmGeneratedItemConversion(placeholders);
+						});
 					}
 				})
 			}
