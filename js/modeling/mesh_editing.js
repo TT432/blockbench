@@ -635,6 +635,207 @@ BARS.defineActions(function() {
 			Undo.finishEdit('Convert elements to meshes', {elements: new_meshes, outliner: true});
 		}
 	})
+	new Action('convert_mesh_to_cubes', {
+		icon: 'fa-cube',
+		category: 'edit',
+		condition: {modes: ['edit'], features: ['meshes'], method: () => Mesh.selected.length},
+		click() {
+			let tolerance = 1e-4;
+			let min_plate_thickness = 1;
+			let source_meshes = Mesh.selected.slice();
+			let new_cubes = [];
+			let used_fallback = false;
+
+			// Checks whether the given vertices (relative to the mesh origin) form an
+			// axis aligned box with exactly 8 corners and all faces flat on its 6 sides
+			function matchAxisAlignedBox(mesh, vertices) {
+				let vkeys = Object.keys(vertices);
+				if (vkeys.length !== 8) return null;
+				let from = [Infinity, Infinity, Infinity];
+				let to = [-Infinity, -Infinity, -Infinity];
+				vkeys.forEach(vkey => {
+					for (let axis = 0; axis < 3; axis++) {
+						from[axis] = Math.min(from[axis], vertices[vkey][axis]);
+						to[axis] = Math.max(to[axis], vertices[vkey][axis]);
+					}
+				})
+				for (let axis = 0; axis < 3; axis++) {
+					if (to[axis] - from[axis] < tolerance) return null;
+				}
+				// Every vertex must be one of the 8 box corners, all corners present
+				let corners = new Set();
+				for (let vkey of vkeys) {
+					let corner = [];
+					for (let axis = 0; axis < 3; axis++) {
+						let value = vertices[vkey][axis];
+						if (Math.abs(value - from[axis]) <= tolerance) corner.push(0);
+						else if (Math.abs(value - to[axis]) <= tolerance) corner.push(1);
+						else return null;
+					}
+					corners.add(corner.join(''));
+				}
+				if (corners.size !== 8) return null;
+				// Every face must lie flat on one of the 6 sides
+				let side_to_direction = {
+					'0-0': 'west', '0-1': 'east',
+					'1-0': 'down', '1-1': 'up',
+					'2-0': 'north', '2-1': 'south'
+				};
+				let side_faces = {north: [], south: [], west: [], east: [], up: [], down: []};
+				for (let fkey in mesh.faces) {
+					let face = mesh.faces[fkey];
+					if (face.vertices.length < 3) return null;
+					let direction;
+					for (let axis = 0; axis < 3 && !direction; axis++) {
+						let value = vertices[face.vertices[0]][axis];
+						let side = Math.abs(value - from[axis]) <= tolerance ? 0
+							: (Math.abs(value - to[axis]) <= tolerance ? 1 : -1);
+						if (side == -1) continue;
+						if (face.vertices.every(vkey => vertices[vkey] && Math.abs(vertices[vkey][axis] - value) <= tolerance)) {
+							direction = side_to_direction[axis + '-' + side];
+						}
+					}
+					if (!direction) return null;
+					side_faces[direction].push(face);
+				}
+				// Each side needs faces covering all of its 4 corners
+				for (let direction in side_faces) {
+					if (!side_faces[direction].length) return null;
+					let used_corners = new Set();
+					side_faces[direction].forEach(face => face.vertices.forEach(vkey => used_corners.add(vkey)));
+					if (used_corners.size < 4) return null;
+				}
+				return {from, to, side_faces};
+			}
+			function getUVBounds(faces) {
+				let min = [Infinity, Infinity];
+				let max = [-Infinity, -Infinity];
+				let found = false;
+				faces.forEach(face => {
+					face.vertices.forEach(vkey => {
+						let uv = face.uv[vkey];
+						if (!uv) return;
+						found = true;
+						min[0] = Math.min(min[0], uv[0]);
+						min[1] = Math.min(min[1], uv[1]);
+						max[0] = Math.max(max[0], uv[0]);
+						max[1] = Math.max(max[1], uv[1]);
+					})
+				})
+				return found ? [min[0], min[1], max[0], max[1]] : null;
+			}
+			function convertMesh(mesh) {
+				let cubes = [];
+				let rotation = [0, 0, 0];
+				let match = matchAxisAlignedBox(mesh, mesh.vertices);
+				if (match) {
+					// Exact box: carry the element rotation over to the cube
+					let rotation_euler = new THREE.Euler(0, 0, 0, 'XYZ').fromArray(mesh.rotation.map(Math.degToRad));
+					if (Format.euler_order != 'XYZ') rotation_euler.reorder(Format.euler_order);
+					rotation = rotation_euler.toArray().slice(0, 3).map(r => Math.roundTo(Math.radToDeg(r), 4));
+				} else {
+					// Retry with the element rotation baked into the geometry
+					let rotation_euler = new THREE.Euler(0, 0, 0, 'XYZ').fromArray(mesh.rotation.map(Math.degToRad));
+					let vec = new THREE.Vector3();
+					let rotated_vertices = {};
+					for (let vkey in mesh.vertices) {
+						rotated_vertices[vkey] = vec.fromArray(mesh.vertices[vkey]).applyEuler(rotation_euler).toArray();
+					}
+					match = matchAxisAlignedBox(mesh, rotated_vertices);
+				}
+				if (match) {
+					let cube = new Cube({
+						name: mesh.name,
+						color: mesh.color,
+						box_uv: false,
+						from: match.from.map((v, axis) => Math.roundTo(v + mesh.origin[axis], 4)),
+						to: match.to.map((v, axis) => Math.roundTo(v + mesh.origin[axis], 4)),
+						origin: mesh.origin.slice(),
+						rotation,
+					});
+					for (let direction in match.side_faces) {
+						let faces = match.side_faces[direction];
+						let cube_face = cube.faces[direction];
+						let textured_face = faces.find(face => face.texture) || faces[0];
+						if (textured_face.texture !== undefined) cube_face.extend({texture: textured_face.texture});
+						if (!cube.box_uv) {
+							let uv = getUVBounds(faces);
+							if (uv) cube_face.extend({uv});
+						}
+					}
+					cubes.push(cube);
+				} else {
+					// Fallback for arbitrary meshes: one flat plate cube per polygon face
+					let rotation_euler = new THREE.Euler(0, 0, 0, 'XYZ').fromArray(mesh.rotation.map(Math.degToRad));
+					let vec = new THREE.Vector3();
+					let rotated_vertices = {};
+					for (let vkey in mesh.vertices) {
+						rotated_vertices[vkey] = vec.fromArray(mesh.vertices[vkey]).applyEuler(rotation_euler).toArray();
+					}
+					let index = 0;
+					for (let fkey in mesh.faces) {
+						let face = mesh.faces[fkey];
+						if (face.vertices.length < 3 || !face.vertices.every(vkey => rotated_vertices[vkey])) continue;
+						let from = [Infinity, Infinity, Infinity];
+						let to = [-Infinity, -Infinity, -Infinity];
+						face.vertices.forEach(vkey => {
+							let v = rotated_vertices[vkey];
+							for (let axis = 0; axis < 3; axis++) {
+								from[axis] = Math.min(from[axis], v[axis]);
+								to[axis] = Math.max(to[axis], v[axis]);
+							}
+						})
+						let sizes = to.map((v, axis) => v - from[axis]);
+						if (sizes.filter(size => size < tolerance).length >= 2) continue;
+						let thin_axis = sizes.indexOf(Math.min(...sizes));
+						if (sizes[thin_axis] < min_plate_thickness) {
+							let center = (from[thin_axis] + to[thin_axis]) / 2;
+							from[thin_axis] = center - min_plate_thickness / 2;
+							to[thin_axis] = center + min_plate_thickness / 2;
+						}
+						let cube = new Cube({
+							name: index == 0 ? mesh.name : `${mesh.name}_${index + 1}`,
+							color: mesh.color,
+							box_uv: false,
+							from: from.map((v, axis) => Math.roundTo(v + mesh.origin[axis], 4)),
+							to: to.map((v, axis) => Math.roundTo(v + mesh.origin[axis], 4)),
+							origin: mesh.origin.slice(),
+						});
+						let uv = !cube.box_uv && getUVBounds([face]);
+						for (let direction in cube.faces) {
+							if (uv) cube.faces[direction].extend({uv});
+							if (face.texture !== undefined) cube.faces[direction].extend({texture: face.texture});
+						}
+						cubes.push(cube);
+						index++;
+					}
+					used_fallback = true;
+				}
+				return cubes;
+			}
+
+			Undo.initEdit({elements: source_meshes, outliner: true});
+			source_meshes.forEach(mesh => {
+				let cubes = convertMesh(mesh);
+				if (!cubes.length) return;
+				cubes.forEach(cube => {
+					cube.sortInBefore(mesh).init();
+					new_cubes.push(cube);
+					selected.push(cube);
+				});
+				mesh.remove();
+			});
+			if (!new_cubes.length) {
+				Undo.cancelEdit();
+				return;
+			}
+			if (used_fallback) {
+				Blockbench.showQuickMessage('action.convert_mesh_to_cubes.fallback_message', 4000);
+			}
+			updateSelection();
+			Undo.finishEdit('Convert meshes to cubes', {elements: new_cubes, outliner: true});
+		}
+	})
 	new Action('apply_mesh_rotation', {
 		icon: 'published_with_changes',
 		category: 'edit',

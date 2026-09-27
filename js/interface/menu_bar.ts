@@ -531,6 +531,7 @@ export const MenuBar = {
 			new MenuSeparator('tools'),
 			'predicate_overrides',
 			'convert_to_mesh',
+			'convert_mesh_to_cubes',
 			'auto_set_cullfaces',
 			'remove_blank_faces',
 			'generate_voxel_shapes',
