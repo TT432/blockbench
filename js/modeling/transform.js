@@ -1923,15 +1923,15 @@ BARS.defineActions(function() {
 				Undo.initEdit({groups: Group.multi_selected})
 
 				for (let group of Group.multi_selected) {
-					if (group.children.length === 0) continue;
 					let position = new THREE.Vector3();
 					let amount = 0;
-					group.children.forEach(function(obj) {
+					group.forEachChild(function(obj) {
 						if (obj.getWorldCenter) {
 							position.add(obj.getWorldCenter());
 							amount++;
 						}
-					})
+					}, OutlinerElement);
+					if (amount === 0) continue;
 					position.divideScalar(amount);
 					group.mesh.parent.worldToLocal(position);
 					if (group.parent instanceof Group) {
