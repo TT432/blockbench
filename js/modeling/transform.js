@@ -626,6 +626,28 @@ export function getPivotObjects() {
 	})
 	if (elements.length) return elements;
 }
+export function getParentTransformSpace() {
+	if (Format.bone_rig && Group.first_selected && Group.first_selected.matchesSelection()) {
+		if (Group.first_selected.parent instanceof Group) {
+			return Group.first_selected.parent;
+		} else {
+			return 0;
+		}
+	}
+	let bone = 0;
+	if (Outliner.selected.length) {
+		bone = Outliner.selected[0].parent;
+	} else if (Group.first_selected && Group.first_selected.parent instanceof Group) {
+		bone = Group.first_selected.parent;
+	}
+	for (var el of Outliner.selected) {
+		if (el.parent !== bone) {
+			bone = 0;
+			break;
+		}
+	}
+	return bone instanceof OutlinerNode ? bone : 0;
+}
 export function rotateOnAxis(modify, axis, slider) {
 	var things = getRotationObjects();
 	if (!things) return;
@@ -883,28 +905,6 @@ BARS.defineActions(function() {
 		category: 'edit'
 	})
 
-	function getParentTransformSpace() {
-		if (Format.bone_rig && Group.first_selected && Group.first_selected.matchesSelection()) {
-			if (Group.first_selected.parent instanceof Group) {
-				return Group.first_selected.parent;
-			} else {
-				return 0;
-			}
-		}
-		let bone = 0;
-		if (Outliner.selected.length) {
-			bone = Outliner.selected[0].parent;
-		} else if (Group.first_selected && Group.first_selected.parent instanceof Group) {
-			bone = Group.first_selected.parent;
-		}
-		for (var el of Outliner.selected) {
-			if (el.parent !== bone) {
-				bone = 0;
-				break;
-			}
-		}
-		return bone instanceof OutlinerNode ? bone : 0;
-	}
 	function moveOnAxis(modify, axis) {
 		if (toggle_pos_per_element.value == false) {
 			let old_value = getPos(axis);
@@ -2141,6 +2141,7 @@ Object.assign(window, {
 	getRotationInterval,
 	getRotationObjects,
 	getPivotObjects,
+	getParentTransformSpace,
 	rotateOnAxis,
 	afterRotateOnAxis,
 	selectSplinePoints,

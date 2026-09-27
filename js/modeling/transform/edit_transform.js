@@ -1,5 +1,5 @@
 import { TransformerModule } from "./transform_modules";
-import { getPivotObjects, getRotationObjects, getSelectedMovingElements, moveElementsInSpace } from "../transform";
+import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, moveElementsInSpace } from "../transform";
 
 function displayDistance(number) {
 	Blockbench.setCursorTooltip(trimFloatNumber(number));
@@ -47,28 +47,9 @@ export function getEditTransformSpace() {
 		// Local Space
 		return 3;
 	}
-	if (input_space !== 'global' && Format.bone_rig) {
-		// Bone Space
-		if (Format.bone_rig && Group.first_selected && Group.first_selected.matchesSelection()) {
-			if (Group.first_selected.parent instanceof Group) {
-				return Group.first_selected.parent;
-			} else {
-				return 0;
-			}
-		}
-		let bone = 0;
-		if (Outliner.selected.length) {
-			bone = Outliner.selected[0].parent;
-		} else if (Group.first_selected && Group.first_selected.parent instanceof Group) {
-			bone = Group.first_selected.parent;
-		}
-		for (var el of Outliner.selected) {
-			if (el.parent !== bone) {
-				bone = 0;
-				break;
-			}
-		}
-		return bone instanceof OutlinerNode ? bone : 0;
+	if (input_space === 'parent' || (input_space !== 'global' && Format.bone_rig)) {
+		// Parent Space (also resolves outside bone_rig formats)
+		return getParentTransformSpace();
 	}
 	// Global Space
 	return 0;
