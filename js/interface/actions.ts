@@ -633,6 +633,28 @@ type PaintContext = {
 	 */
 	event: PointerEvent
 }
+type BrushMirrorTarget = {
+	/**
+	 * Mirrored element that the stroke also applies to
+	 */
+	element: OutlinerElement
+	/**
+	 * Mirrored X coordinate on the texture
+	 */
+	x: number
+	/**
+	 * Mirrored Y coordinate on the texture
+	 */
+	y: number
+	/**
+	 * UV bounds of the mirrored face
+	 */
+	uv_tag?: ArrayVector4
+	/**
+	 * Key of the mirrored face on the element
+	 */
+	face?: string
+}
 export interface BrushOptions {
 	/**
 	 * Enable the input for blend modes when this tool is selected
@@ -692,6 +714,7 @@ export interface BrushOptions {
 		uv?: any
 		event: PointerEvent
 		raycast_data: RaycastResult
+		mirror_targets?: BrushMirrorTarget[]
 	}): boolean
 	/**
 	 * Function that runs when a new brush stroke starts. Return false to cancel the brush stroke
@@ -704,6 +727,7 @@ export interface BrushOptions {
 		uv?: any
 		event: PointerEvent
 		raycast_data: RaycastResult
+		mirror_targets?: BrushMirrorTarget[]
 	}): boolean
 	/**
 	 * Function that runs when a new brush stroke starts.
@@ -715,6 +739,7 @@ export interface BrushOptions {
 		y: number
 		uv?: any
 		raycast_data: RaycastResult
+		mirror_targets?: BrushMirrorTarget[]
 	}): void
 	/**
 	 * Alternative way to create a custom brush, mutually exclusive with the changePixel() function. Draw runs once every time the brush starts or moves, and also along the bath on lines.
