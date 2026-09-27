@@ -737,14 +737,47 @@ export const Timeline = {
 		return samples;
 	},
 	
+	// Cache for the keyframes getter below. Rebuilding the flattened keyframe
+	// array on every access is O(total keyframes) and happens on hot paths
+	// (getMaxLength during playback, selection updates), so the result is cached
+	// and invalidated via the hooks at the bottom of this file whenever keyframe
+	// membership or the displayed animator set may have changed.
+	_keyframe_cache: null,
+	_keyframe_cache_dirty: true,
+	_keyframe_cache_animators: null,
+	_keyframe_cache_animator_count: 0,
+	_keyframe_cache_graph_state: null,
+	invalidateKeyframeCache() {
+		Timeline._keyframe_cache_dirty = true;
+	},
 	get keyframes() {
+		let vue = Timeline.vue;
+		let graph_state = null;
+		if (vue.graph_editor_open) {
+			let graph_animator = vue.graph_editor_animator;
+			graph_state = vue.graph_editor_channel + '|' + (graph_animator ? graph_animator.uuid : 'none');
+		}
+		if (Timeline._keyframe_cache && !Timeline._keyframe_cache_dirty && !Undo.current_save
+			&& Timeline._keyframe_cache_animators === Timeline.animators
+			&& Timeline._keyframe_cache_animator_count === Timeline.animators.length
+			&& Timeline._keyframe_cache_graph_state === graph_state
+		) {
+			return Timeline._keyframe_cache;
+		}
 		var keyframes = [];
-		if (!Timeline.vue.graph_editor_open) {
+		if (!vue.graph_editor_open) {
 			Timeline.animators.forEach(animator => {
 				keyframes.push(...animator.keyframes)
 			})
-		} else if (Timeline.vue.graph_editor_animator && Timeline.vue.graph_editor_animator[Timeline.vue.graph_editor_channel]) {
-			keyframes.push(...Timeline.vue.graph_editor_animator[Timeline.vue.graph_editor_channel])
+		} else if (vue.graph_editor_animator && vue.graph_editor_animator[vue.graph_editor_channel]) {
+			keyframes.push(...vue.graph_editor_animator[vue.graph_editor_channel])
+		}
+		if (!Undo.current_save) {
+			Timeline._keyframe_cache = keyframes;
+			Timeline._keyframe_cache_animators = Timeline.animators;
+			Timeline._keyframe_cache_animator_count = Timeline.animators.length;
+			Timeline._keyframe_cache_graph_state = graph_state;
+			Timeline._keyframe_cache_dirty = false;
 		}
 		return keyframes;
 	},
@@ -1217,6 +1250,8 @@ Interface.definePanels(() => {
 							if (Timeline.animators[index] == animator) return;
 							Timeline.animators.remove(animator);
 							Timeline.animators.splice(index, 0, animator);
+							// Same-length in-place reorder is not detectable by the cache key, invalidate explicitly
+							Timeline.invalidateKeyframeCache();
 							Undo.finishSelection('Rearrange animators in timeline');
 						}
 					}
@@ -2309,6 +2344,32 @@ BARS.defineActions(function() {
 		}
 	})
 })
+
+// Invalidation for the Timeline.keyframes cache. Keyframe membership changes are
+// performed in keyframe.js / timeline_animators.js / undo.js / format importers, so
+// instead of editing every call site, the shared entry points are wrapped here:
+// GeneralAnimator.addKeyframe / createKeyframe (all animator classes inherit these)
+// and Keyframe.remove. Blockbench edit events cover keyframe time/value edits,
+// undo/redo, animation switches, and animator set changes with unchanged length.
+// While an undoable edit is open (Undo.current_save), the cache is bypassed
+// entirely so live edits (keyframe drags, sliders) always see fresh data.
+for (let method of ['addKeyframe', 'createKeyframe']) {
+	let original_method = GeneralAnimator.prototype[method];
+	GeneralAnimator.prototype[method] = function(...args) {
+		let result = original_method.apply(this, args);
+		Timeline.invalidateKeyframeCache();
+		return result;
+	};
+}
+let original_keyframe_remove = Keyframe.prototype.remove;
+Keyframe.prototype.remove = function(...args) {
+	let result = original_keyframe_remove.apply(this, args);
+	Timeline.invalidateKeyframeCache();
+	return result;
+};
+for (let event_name of ['finished_edit', 'undo', 'redo', 'load_undo_save', 'select_animation', 'update_selection']) {
+	Blockbench.on(event_name, () => Timeline.invalidateKeyframeCache());
+}
 
 
 Object.assign(window, {
