@@ -84,7 +84,8 @@ function createWindow(second_instance, options = {}) {
 			webSecurity: true,
 			nodeIntegration: true,
 			contextIsolation: false,
-			enableRemoteModule: true
+			enableRemoteModule: true,
+			backgroundThrottling: false
 		}
 	};
 	if (options.position) {
