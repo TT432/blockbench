@@ -827,6 +827,8 @@
 	"dialog.create_texture.power.desc": "Lock the automatic texture size to a power-of-2, such as 64 or 128. This is required by some renderers",
 	"dialog.create_texture.double_use": "Keep Multi Texture Occupancy",
 	"dialog.create_texture.double_use.desc": "If two elements already have the same UV space assigned, keep it that way in the new map",
+	"dialog.create_texture.clear_unreferenced": "Clear Unreferenced Pixels",
+	"dialog.create_texture.clear_unreferenced.desc": "Remove pixels from the old texture that are no longer referenced by any face, e.g. leftovers from deleted elements",
 	"dialog.create_texture.padding": "Padding",
 	"dialog.create_texture.padding.desc": "Add a small padding between the individual parts of the template",
 	"dialog.create_texture.combine_polys": "Combine Islands",

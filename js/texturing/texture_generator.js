@@ -170,6 +170,7 @@ export const TextureGenerator = {
 				box_uv: 	{label: 'dialog.project.uv_mode.box_uv', type: 'checkbox', value: false, condition: (form) => (!Project.box_uv && Cube.all.length)},
 				power: 		{label: 'dialog.create_texture.power', description: 'dialog.create_texture.power.desc', type: 'checkbox', value: Math.isPowerOfTwo(texture.width)},
 				double_use: {label: 'dialog.create_texture.double_use', description: 'dialog.create_texture.double_use.desc', type: 'checkbox', value: true},
+				clear_unreferenced: {label: 'dialog.create_texture.clear_unreferenced', description: 'dialog.create_texture.clear_unreferenced.desc', type: 'checkbox', value: true},
 				combine_polys: {label: 'dialog.create_texture.combine_polys', description: 'dialog.create_texture.combine_polys.desc', type: 'checkbox', value: true, condition: (form) => (Mesh.selected.length)},
 				max_edge_angle: {label: 'dialog.create_texture.max_edge_angle', description: 'dialog.create_texture.max_edge_angle.desc', type: 'number', value: 45, condition: (form) => Mesh.selected.length},
 				max_island_angle: {label: 'dialog.create_texture.max_island_angle', description: 'dialog.create_texture.max_island_angle.desc', type: 'number', value: 45, condition: (form) => Mesh.selected.length},
@@ -956,6 +957,7 @@ export const TextureGenerator = {
 		})
 
 		// MARK: Rearrange UVs into template
+		let append_occupancy_snapshot = null;
 		if (options.rearrange_uv) {
 
 			let extend_x = 0;
@@ -989,6 +991,14 @@ export const TextureGenerator = {
 						
 					}
 				})
+				if (options.clear_unreferenced) {
+					// Snapshot the cells still referenced by faces, so pixels left behind by
+					// deleted elements can be cleared from the canvas before redrawing
+					append_occupancy_snapshot = {};
+					for (let x in fill_map) {
+						append_occupancy_snapshot[x] = Object.assign({}, fill_map[x]);
+					}
+				}
 			}
 
 			
@@ -1168,6 +1178,23 @@ export const TextureGenerator = {
 			canvas.width = Math.max(new_resolution[0] * res_multiple, makeTexture.width);
 			canvas.height = Math.max(new_resolution[1] * res_multiple, makeTexture.height);
 			ctx.drawImage(makeTexture.img, 0, 0);
+			if (append_occupancy_snapshot) {
+				// Clear pixels of the old texture that are no longer referenced by any face,
+				// so deleted elements don't leave stale pixels in the appended template
+				let old_width_uv = makeTexture.width / res_multiple;
+				let old_height_uv = makeTexture.height / res_multiple;
+				if (background_color) ctx.fillStyle = background_color;
+				for (let x = 0; x < old_width_uv; x++) {
+					for (let y = 0; y < old_height_uv; y++) {
+						if (append_occupancy_snapshot[x] && append_occupancy_snapshot[x][y]) continue;
+						if (background_color) {
+							ctx.fillRect(x * res_multiple, y * res_multiple, res_multiple, res_multiple);
+						} else {
+							ctx.clearRect(x * res_multiple, y * res_multiple, res_multiple, res_multiple);
+						}
+					}
+				}
+			}
 		} else {
 			canvas.width = new_resolution[0] * res_multiple;
 			canvas.height = new_resolution[1] * res_multiple;
