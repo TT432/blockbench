@@ -69,8 +69,8 @@ export class Group extends OutlinerNode {
 		if (!event) event = true
 		var allSelected = Group.multi_selected.length == 1 && Group.first_selected === this && Outliner.selected.length && this.matchesSelection();
 		let previous_first_selected = Project.selected_elements[0];
-		let multi_select = (event.ctrlOrCmd || Pressing.overrides.ctrl) && !Modes.animate;
-		let shift_select = (event.shiftKey || Pressing.overrides.shift) && !Modes.animate;
+		let multi_select = (event.ctrlOrCmd || Pressing.overrides.ctrl);
+		let shift_select = (event.shiftKey || Pressing.overrides.shift);
 
 		//Unselect others
 		if (!multi_select && !shift_select) {

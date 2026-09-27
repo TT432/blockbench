@@ -874,7 +874,7 @@ SharedActions.add('duplicate', {
 })
 SharedActions.add('select_all', {
 	subject: 'outliner',
-	condition: () => Modes.edit || Modes.paint,
+	condition: {modes: ['edit', 'paint', 'animate']},
 	priority: -2,
 	run() {
 		Undo.initSelection();
@@ -1750,7 +1750,7 @@ Interface.definePanels(function() {
 		}
 		if (panel == 'outliner') {
 			Interface.addSuggestedModifierKey('ctrl', 'modifier_actions.select_multiple');
-			if (!Modes.animate) Interface.addSuggestedModifierKey('shift', 'modifier_actions.select_range');
+			Interface.addSuggestedModifierKey('shift', 'modifier_actions.select_range');
 			if (Modes.edit) Interface.addSuggestedModifierKey('alt', 'modifier_actions.drag_to_duplicate');
 		}
 	})
