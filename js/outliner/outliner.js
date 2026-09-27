@@ -260,7 +260,7 @@ export class NodePreviewController extends EventSystem {
 		mesh.name = element.uuid;
 		mesh.type = element.type;
 		mesh.isElement = true;
-		mesh.visible = element.visibility;
+		mesh.visible = !!(element.visibility && !(element.parent instanceof Group && !element.parent.isVisibleInPreview()));
 		mesh.rotation.order = Format.euler_order;
 		this.updateTransform(element);
 
@@ -330,7 +330,11 @@ export class NodePreviewController extends EventSystem {
 		this.dispatchEvent('update_transform', {element});
 	}
 	updateVisibility(element) {
-		element.mesh.visible = element.visibility;
+		// A hidden group hides all descendant elements in the preview.
+		// The element's own visibility state stays untouched, so it is
+		// restored independently when the group is shown again.
+		let group_hidden = element.parent instanceof Group && !element.parent.isVisibleInPreview();
+		element.mesh.visible = !!(element.visibility && !group_hidden);
 
 		this.dispatchEvent('update_visibility', {element});
 	}
@@ -1472,7 +1476,10 @@ Interface.definePanels(function() {
 							} else if (!affected.includes(node) && (!node.locked || key == 'locked' || key == 'visibility')) {
 								let new_affected = [node];
 								if (node.forEachChild) {
-									if (toggle_config.change_children != false) {
+									// Group visibility cascades to descendants in the preview via the
+									// group's preview controller, so their own visibility flags (and the
+									// undo record) stay untouched here.
+									if (toggle_config.change_children != false && (key != 'visibility' || node instanceof Group == false)) {
 										node.forEachChild(node => {
 											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
 										});
