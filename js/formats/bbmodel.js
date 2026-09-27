@@ -11,7 +11,7 @@ function processHeader(model) {
 			translateKey: 'invalid_model',
 			icon: 'error',
 		})
-		return;
+		return false;
 	}
 	if (!model.meta.format_version) {
 		model.meta.format_version = model.meta.format;
@@ -22,8 +22,9 @@ function processHeader(model) {
 			message: tl('message.newer_project_format_version.message', [model.meta.format_version]),
 			icon: 'error',
 		})
-		return;
+		return false;
 	}
+	return true;
 }
 function processCompatibility(model) {
 
@@ -111,6 +112,7 @@ var codec = new Codec('project', {
 		if (!model || !model.meta) {
 			return Blockbench.showMessageBox({translateKey: 'invalid_model'});
 		}
+		if (processHeader(model) === false) return;
 		setupProject(Formats[model.meta.model_format] || Formats.free);
 		var name = pathToName(file.path, true);
 		Project.name = pathToName(name, false);
@@ -126,7 +128,7 @@ var codec = new Codec('project', {
 				if (Project == project) updateRecentProjectThumbnail();
 			}, 200)
 		}
-		this.parse(model, file.path)
+		if (this.parse(model, file.path) === false) return;
 
 		if (Modes.animate && !AnimationItem.selected && AnimationItem.all[0]) {
 			AnimationItem.all[0].select();
@@ -410,7 +412,7 @@ var codec = new Codec('project', {
 	},
 	parse(model, path) {
 
-		processHeader(model);
+		if (processHeader(model) === false) return false;
 		processCompatibility(model);
 
 		if (model.meta.model_format) {
@@ -631,7 +633,7 @@ var codec = new Codec('project', {
 	},
 	merge(model, path) {
 
-		processHeader(model);
+		if (processHeader(model) === false) return false;
 		processCompatibility(model);
 
 		Blockbench.dispatchEvent('merge_project', {model, path});
