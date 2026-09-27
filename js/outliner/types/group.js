@@ -457,6 +457,18 @@ export class Group extends OutlinerNode {
 			i++;
 		}
 	}
+	/**
+	 * Whether this group is effectively visible in the preview.
+	 * A group is hidden if itself or any of its ancestor groups is hidden.
+	 */
+	isVisibleInPreview() {
+		let node = this;
+		while (node instanceof Group) {
+			if (node.visibility === false) return false;
+			node = node.parent;
+		}
+		return true;
+	}
 	setAutoUV(val) {
 		this.forEachChild(function(s) {
 			s.autouv = val;
@@ -630,11 +642,27 @@ new NodePreviewController(Group, {
 		bone.isGroup = true;
 		Project.nodes_3d[group.uuid] = bone;
 		bone.rotation.order = Format.euler_order;
+		bone.visible = group.isVisibleInPreview();
 
 		this.dispatchEvent('update_transform', {group});
 	},
-	updateVisibility(element) {
-		this.dispatchEvent('update_visibility', {element});
+	updateVisibility(group) {
+		// Reflect the group's effective visibility on its bone. In formats with a
+		// bone rig, child meshes are parented to the bone, so this alone
+		// hides/shows the whole subtree in the scene graph.
+		if (group.mesh) group.mesh.visible = group.isVisibleInPreview();
+		// Cascade to descendants explicitly: without a bone rig their meshes are
+		// not parented to the group bone. Each descendant keeps its own
+		// independent visibility state, which is re-evaluated here, so showing
+		// the group again does not un-hide individually hidden children.
+		group.forEachChild(child => {
+			if (child instanceof Group) {
+				this.updateVisibility(child);
+			} else if (child.preview_controller) {
+				child.preview_controller.updateVisibility(child);
+			}
+		});
+		this.dispatchEvent('update_visibility', {element: group});
 	},
 	updateTransform(group) {
 		NodePreviewController.prototype.updateTransform.call(this, group);
