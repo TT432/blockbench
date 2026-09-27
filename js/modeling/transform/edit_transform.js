@@ -169,7 +169,7 @@ new TransformerModule('edit', {
 		let space = getEditTransformSpace();
 		//Rotation
 		if (space >= 2 || Toolbox.selected.id == 'resize_tool' || Toolbox.selected.id == 'stretch_tool') {
-			Transformer.rotation_ref = (Group.first_selected && Format.bone_rig) ? Group.first_selected.mesh : (selected[0] && selected[0].mesh);
+			Transformer.rotation_ref = rotation_object.mesh;
 			if (space === 3 && Mesh.selected[0]) {
 				let rotation = Mesh.selected[0].getSelectionRotation();
 				if (rotation && !Transformer.dragging) Transformer.rotation_selection.copy(rotation);
@@ -183,10 +183,12 @@ new TransformerModule('edit', {
 					if (rotation && !Transformer.dragging) Transformer.rotation_selection.copy(rotation);
 				}
 			}
-		
+
 		} else if (space instanceof OutlinerNode && space.getTypeBehavior('parent')) {
 			Transformer.rotation_ref = space.mesh;
 
+		} else {
+			delete Transformer.rotation_ref;
 		}
 		return true;
 	},
