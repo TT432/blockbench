@@ -418,13 +418,9 @@ var Merge = {
 	},
 	molang(obj, source, index) {
 		if (typeof source[index] == 'string') {
-			if (source[index].includes('e')) {
-				obj[index] = source[index].replace(/-?\d\.\d+e-\d\d/g, '0');
-			} else {
-				obj[index] = source[index];
-			}
+			obj[index] = source[index].replace(/(?<![\w.])-?\d+(?:\.\d+)?e[+-]?\d+(?![\w.])/gi, (match) => molangNumberToString(parseFloat(match)));
 		} else if (typeof source[index] == 'number') {
-			obj[index] = Math.roundTo(source[index], 9).toString();
+			obj[index] = molangNumberToString(source[index]);
 		}
 	},
 	boolean(obj, source, index, validate) {
@@ -506,6 +502,16 @@ Object.defineProperty(String.prototype, 'hashCode', {
 		return hash;
 	}
 });
+// Converts a number into a molang-safe string: fixed-point notation, no exponents
+export function molangNumberToString(value) {
+	if (typeof value != 'number' || !isFinite(value)) return '0';
+	if (Math.abs(value) < 1e-10) return '0';
+	if (Math.abs(value) >= 1e20) return BigInt(Math.round(value)).toString();
+	let string = value.toFixed(10).replace(/0+$/, '').replace(/\.$/, '');
+	if (string === '-0' || string === '') return '0';
+	return string;
+}
+
 export function exportMolang(input) {
 	if (!input) return 0;
 	if (typeof input == 'string') {
@@ -807,6 +813,7 @@ Object.assign(window, {
 	intToRGBA,
 	getAverageRGB,
 	rgb2lab,
+	molangNumberToString,
 	labColorDistance,
 	stringifyLargeInt,
 	intersectLines,
