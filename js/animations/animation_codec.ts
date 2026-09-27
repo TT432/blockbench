@@ -89,7 +89,7 @@ export class AnimationCodec implements SharedOptions {
 	static codecs: Record<string, AnimationCodec> = {}
 	static getCodec(animation?: AnimationItem): AnimationCodec {
 		if (animation instanceof AnimationController) {
-			return AnimationCodec.codecs.bedrock_controller;
+			return AnimationCodec.codecs.bedrock_animation_controller;
 		} else if (Format.animation_codec) {
 			return Format.animation_codec;
 		} else if (Format.animation_files) {

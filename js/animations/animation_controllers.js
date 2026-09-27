@@ -1850,7 +1850,22 @@ Interface.definePanels(() => {
 					})
 				},
 				editStateBlendTime(state) {
+					if (!blend_time_edit_state) {
+						blend_time_edit_state = state;
+						Undo.initEdit({animation_controller_state: state});
+					}
 					state.controller.saved = false;
+				},
+				finishStateBlendTime(state) {
+					if (blend_time_edit_state) {
+						blend_time_edit_state = null;
+						Undo.finishEdit('Change animation controller blend time');
+					}
+				},
+				toggleStateShortestPath(state, value) {
+					Undo.initEdit({animation_controller_state: state});
+					state.blend_via_shortest_path = value;
+					Undo.finishEdit('Toggle blend via shortest path');
 				},
 
 				updateLocatorSuggestionList() {
@@ -2194,7 +2209,7 @@ Interface.definePanels(() => {
 									</ul>
 									<div class="controller_state_input_bar">
 										<label>${tl('animation_controllers.state.blend_transition')}</label>
-										<numeric-input style="width: 70px; flex-grow: 0;" v-model.number="state.blend_transition" :min="0" :step="0.05" @input="editStateBlendTime(state)" />
+										<numeric-input style="width: 70px; flex-grow: 0;" v-model.number="state.blend_transition" :min="0" :step="0.05" @input="editStateBlendTime(state)" @change="finishStateBlendTime(state)" />
 										<div
 											class="tool blend_transition_curve_button"
 											title="${tl('animation_controllers.state.blend_transition_curve')}"
@@ -2206,7 +2221,7 @@ Interface.definePanels(() => {
 									</div>
 									<div class="controller_state_input_bar">
 										<label :for="state.uuid + '_shortest_path'">${tl('animation_controllers.state.shortest_path')}</label>
-										<input type="checkbox" :id="state.uuid + '_shortest_path'" v-model="state.blend_via_shortest_path">
+										<input type="checkbox" :id="state.uuid + '_shortest_path'" :checked="state.blend_via_shortest_path" @change="toggleStateShortestPath(state, $event.target.checked)">
 									</div>
 								</template>
 
@@ -2243,6 +2258,7 @@ Interface.definePanels(() => {
 		}
 	})
 	
+	let blend_time_edit_state = null;
 	let molang_edit_value;
 	let class_name = 'animation_controller_text_input';
 	function isTarget(target) {
