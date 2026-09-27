@@ -225,7 +225,11 @@ export class Group extends OutlinerNode {
 		}
 		Animator.animations.forEach(animation => {
 			if (animation.animators && animation.animators[this.uuid]) {
-				animation.removeAnimator(this.uuid);
+				// Keep the animator as an unbound orphan so it can re-bind by name
+				// when a group with the same name is created (see getBoneAnimator)
+				let animator = animation.animators[this.uuid];
+				animator.name = this.name;
+				animator.group = undefined;
 			}
 			if (animation.selected && Animator.open) {
 				updateKeyframeSelection();
