@@ -1134,7 +1134,7 @@ BARS.defineActions(function() {
 		click: function () {
 			let round = (input) => {
 				if (typeof input == 'number') return Math.round(input);
-				return input.replace(/\d+.\d+/g, (number) => {
+				return input.replace(/(?<![\w.])\d+\.\d+(?![\w.])/g, (number) => {
 					return Math.round(parseFloat(number));
 				})
 			}
