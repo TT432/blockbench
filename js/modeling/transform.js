@@ -1474,15 +1474,10 @@ BARS.defineActions(function() {
 		}
 	}
 	function getOrigin(axis) {
-		let node;
-		if (Format.bone_rig && Group.first_selected) {
-			node = Group.first_selected;
-		}
-		if (!node) {
-			node = Outliner.selected.find(el => {
-				return el.getTypeBehavior('rotatable') && el.origin && (Format.rotate_cubes || el instanceof Cube == false)
-			})
-		}
+		// Display the origin of the first object that the slider actually writes to,
+		// so the read and write object sets stay consistent
+		let pivot_objects = getPivotObjects();
+		let node = pivot_objects && pivot_objects[0];
 		let value = node ? node.origin[axis] : 0;
 
 		if (settings.local_position_values.value &&
