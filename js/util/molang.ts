@@ -84,6 +84,46 @@ export function invertMolang(molang: number|string): number|string {
 		return result;
 	});
 }
+
+export function negateMolang(molang: string): string
+export function negateMolang(molang: number): number
+export function negateMolang(molang: number|string): number|string {
+	if (typeof molang == 'number') {
+		return -molang;
+	}
+	if (molang == '' || molang == '0') return molang;
+	if (isStringNumber(molang)) {
+		let val = parseFloat(molang);
+		return (-val).toString();
+	}
+
+	return processMolangReturn(molang, (expression : string) => {
+		expression = expression.trim();
+		if (expression == '' || expression == '0') return expression;
+		if (isStringNumber(expression)) {
+			return (-parseFloat(expression)).toString();
+		}
+		let wrapped = expression.match(/^-\s*\(([\s\S]*)\)$/);
+		if (wrapped) {
+			let depth = 0;
+			let balanced = true;
+			let inner = wrapped[1];
+			for (let i = 0; i < inner.length; i++) {
+				if (inner[i] == '(') {
+					depth++;
+				} else if (inner[i] == ')') {
+					depth--;
+					if (depth < 0) {
+						balanced = false;
+						break;
+					}
+				}
+			}
+			if (balanced && depth == 0) return inner;
+		}
+		return `-(${expression})`;
+	});
+}
 function testInvertMolang(input: string) {
 	let positive_result = Animator.MolangParser.parse(input);
 	let inverted = invertMolang(input);

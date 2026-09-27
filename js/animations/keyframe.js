@@ -1,6 +1,6 @@
 import { markerColors } from "../marker_colors";
 import { clipboard } from "../native_apis";
-import { invertMolang, processMolangReturn } from "../util/molang";
+import { invertMolang, negateMolang, processMolangReturn } from "../util/molang";
 import { openMolangEditor } from "./molang_editor";
 
 export class KeyframeDataPoint {
@@ -150,34 +150,17 @@ export class Keyframe {
 		}
 
 		value = processMolangReturn(value, (expression) => {
-			let value = exportMolang(expression);
-			if (!value || value === '0') {
+			let trimmed = expression.trim();
+			if (!trimmed || trimmed === '0') {
 				return amount;
 			}
-			if (typeof value === 'number') {
-				return value+amount
+			if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+				return trimFloatNumber(parseFloat(trimmed) + amount);
 			}
-			var start = value.match(/^-?\s*\d+(\.\d+)?\s*(\+|-)/)
-			if (start) {
-				var number = parseFloat( start[0].substr(0, start[0].length-1) ) + amount;
-				if (number == 0) {
-					value = value.substr(start[0].length + (value[start[0].length-1] == '+' ? 0 : -1));
-					value = value.trim();
-				} else {
-					value = trimFloatNumber(number) + (start[0].substr(-2, 1) == ' ' ? ' ' : '') + value.substr(start[0].length-1);
-				}
-			} else {
-
-				var end = value.match(/(\+|-)\s*\d*(\.\d+)?\s*$/)
-				if (end) {
-					var number = (parseFloat( end[0] ) + amount)
-					value = value.substr(0, end.index) + ((number.toString()).substr(0,1)=='-'?'':'+') + trimFloatNumber(number)
-				} else {
-					value = trimFloatNumber(amount) +(value.substr(0,1)=='-'?'':'+')+ value
-				}
+			if (amount < 0) {
+				return `(${trimmed}) - ${trimFloatNumber(-amount)}`;
 			}
-			value = value.replace(/^(0\s*\+)/, '').replace(/^0\s*-/, '-');
-			return value;
+			return `(${trimmed}) + ${trimFloatNumber(amount)}`;
 		});
 
 		this.set(axis, value, data_point)
@@ -191,12 +174,12 @@ export class Keyframe {
 				for (var i = 0; i < 3; i++) {
 					if (i != axis) {
 						let l = getAxisLetter(i)
-						this.set(l, invertMolang(this.get(l, data_point_i)), data_point_i)
+						this.set(l, negateMolang(this.get(l, data_point_i)), data_point_i)
 					}
 				}
 			} else if (this.channel == 'position') {
 				let l = getAxisLetter(axis)
-				this.set(l, invertMolang(this.get(l, data_point_i)), data_point_i)
+				this.set(l, negateMolang(this.get(l, data_point_i)), data_point_i)
 			}
 		})
 		if (this.interpolation == 'bezier') {
