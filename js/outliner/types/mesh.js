@@ -1010,6 +1010,7 @@ export class Mesh extends OutlinerElement {
 		'apply_mesh_rotation',
 		'split_mesh',
 		'merge_meshes',
+		'convert_mesh_to_cubes',
 		...Outliner.control_menu_group,
 		new MenuSeparator('settings'),
 		'allow_element_mirror_modeling',
