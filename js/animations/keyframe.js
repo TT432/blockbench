@@ -1117,9 +1117,11 @@ BARS.defineActions(function() {
 		click: function () {
 			let round = (input) => {
 				if (typeof input == 'number') return Math.round(input);
-				return input.replace(/(?<![\w.])\d+\.\d+(?![\w.])/g, (number) => {
-					return Math.round(parseFloat(number));
-				})
+				let trimmed = input.trim();
+				// Only round values that are a single plain decimal literal;
+				// never touch coefficients inside expressions (e.g. x*2.5)
+				if (/^[+-]?\d+(\.\d+)?$/.test(trimmed)) return Math.round(parseFloat(trimmed));
+				return input;
 			}
 			let keyframes = Timeline.selected.filter(kf => kf.transform);
 			Undo.initEdit({keyframes})
