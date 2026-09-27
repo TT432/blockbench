@@ -4,13 +4,18 @@ import url from 'url'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
+import * as PayloadUpdater from './payload_updater.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const { autoUpdater } = require('electron-updater');
 const remote = require('@electron/remote/main')
 remote.initialize();
+
+// Resolved app entry point: external hot-update payload when present and verified,
+// otherwise the builtin index.html. Set during app startup and after applying an update.
+let current_index_path = path.join(__dirname, './../index.html');
+let current_version = null;
 
 let all_wins = [];
 let orig_win;
@@ -165,9 +170,8 @@ function createWindow(second_instance, options = {}) {
 	
 	if (options.maximize !== false) win.maximize()
 
-	let index_path = path.join(__dirname, './../index.html')
 	let url_path = url.format({
-		pathname: index_path,
+		pathname: current_index_path,
 		protocol: 'file:',
 		slashes: true
 	});
@@ -269,10 +273,65 @@ ipcMain.on('show-item-in-folder', async (event, path) => {
 ipcMain.on('open-in-default-app', async (event, path) => {
 	shell.openPath(path);
 })
+// Hot payload update IPC (community fork: manual updates, no app restart)
+ipcMain.handle('bb-update:check', async () => {
+	try {
+		return await PayloadUpdater.checkForUpdate(current_version || app.getVersion());
+	} catch (err) {
+		console.warn('[update] Update check failed:', err.message);
+		return {type: 'none'};
+	}
+})
+let active_apply = null;
+ipcMain.on('bb-update:start', (event) => {
+	if (active_apply) return;
+	const send = (channel, data) => {
+		if (!event.sender.isDestroyed()) event.sender.send(channel, data);
+	}
+	active_apply = PayloadUpdater.startApply(progress => send('bb-update:progress', progress));
+	active_apply.promise.then(result => {
+		current_index_path = result.index_path;
+		current_version = result.version;
+		console.log('[update] Payload applied:', result.version);
+		send('bb-update:done', {version: result.version});
+	}).catch(err => {
+		if (err.message !== 'cancelled') {
+			console.error('[update] Update failed:', err.message);
+			send('bb-update:error', {message: err.message});
+		}
+	}).finally(() => {
+		active_apply = null;
+	})
+})
+ipcMain.on('bb-update:cancel', () => {
+	if (active_apply) active_apply.cancel();
+})
+ipcMain.handle('bb-update:reload', () => {
+	let url_path = url.format({
+		pathname: current_index_path,
+		protocol: 'file:',
+		slashes: true
+	});
+	for (let win of all_wins) {
+		if (!win.isDestroyed()) win.loadURL(url_path);
+	}
+	return current_version;
+})
+ipcMain.handle('bb-update:take-applied', () => {
+	return PayloadUpdater.takeAppliedUpdate();
+})
 
-app.on('ready', () => {
+app.on('ready', async () => {
 
 	const dev_mode = process.execPath && process.execPath.match(/node_modules[\\\/]electron/);
+
+	const resolved = await PayloadUpdater.resolvePayloadIndex(path.join(__dirname, './../index.html'));
+	current_index_path = resolved.index_path;
+	current_version = resolved.version;
+	if (resolved.source == 'payload') {
+		console.log('[Blockbench] Loading external payload version', resolved.version);
+	}
+	PayloadUpdater.cleanupTemp();
 
 	createWindow();
 
@@ -291,38 +350,7 @@ app.on('ready', () => {
 
 		app_was_loaded = true;
 		if (dev_mode) {
-
 			console.log('[Blockbench] App launched in development mode')
-	
-		} else {
-	
-			autoUpdater.autoInstallOnAppQuit = true;
-			autoUpdater.autoDownload = false;
-			if (LaunchSettings.get('update_to_prereleases') === true) {
-				autoUpdater.allowPrerelease = true;
-				//autoUpdater.channel = 'beta';
-			}
-	
-			autoUpdater.on('update-available', (a) => {
-				console.log('update-available', a)
-				ipcMain.on('allow-auto-update', () => {
-					autoUpdater.downloadUpdate()
-				})
-				if (!orig_win.isDestroyed()) orig_win.webContents.send('update-available', a);
-			})
-			autoUpdater.on('update-downloaded', (a) => {
-				console.log('update-downloaded', a)
-				if (!orig_win.isDestroyed()) orig_win.webContents.send('update-downloaded', a)
-			})
-			autoUpdater.on('error', (a) => {
-				console.log('update-error', a)
-				if (!orig_win.isDestroyed()) orig_win.webContents.send('update-error', a)
-			})
-			autoUpdater.on('download-progress', (a) => {
-				console.log('update-progress', a)
-				if (!orig_win.isDestroyed()) orig_win.webContents.send('update-progress', a)
-			})
-			autoUpdater.checkForUpdates().catch(err => {})
 		}
 	})
 })

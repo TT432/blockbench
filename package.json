@@ -31,7 +31,9 @@
 		},
 		"publish": [
 			{
-				"provider": "github"
+				"provider": "github",
+				"owner": "TT432",
+				"repo": "blockbench"
 			}
 		],
 		"mac": {
@@ -193,7 +195,6 @@
 	},
 	"dependencies": {
 		"@electron/remote": "^2.1.2",
-		"electron-color-picker": "^0.2.0",
-		"electron-updater": "^6.7.3"
+		"electron-color-picker": "^0.2.0"
 	}
 }
