@@ -125,7 +125,7 @@ export class Keyframe {
 	}
 	set(axis, value, data_point = 0) {
 		if (data_point) data_point = Math.clamp(data_point, 0, this.data_points.length-1);
-		if (typeof value == 'number') value = Math.roundTo(value, 10).toString();
+		if (typeof value == 'number') value = molangNumberToString(value);
 		if (this.data_points[data_point]) {
 			if (this.uniform) {
 				this.data_points[data_point].x = value;
