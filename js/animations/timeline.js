@@ -596,15 +596,38 @@ export const Timeline = {
 		Timeline.setTime(0)
 	},
 	getMaxLength() {
+		// The keyframe scan below is O(total keyframes) and this runs on every
+		// Timeline.setTime (every playback frame), so the result is cached and
+		// keyed on all inputs. The keyframes reference is stable as long as the
+		// Timeline.keyframes cache is valid, so any keyframe add/remove and any
+		// invalidation via Timeline.invalidateKeyframeCache (keyframe edits,
+		// undo/redo, animation switch) implicitly invalidates this cache too.
 		let width = (document.getElementById('timeline_vue')||0).clientWidth;
-		var max_length = (width-8) / Timeline.vue._data.size;
-		if (Animation.selected) max_length = Math.max(max_length, Animation.selected.length)
-		Timeline.keyframes.forEach((kf) => {
+		let size = Timeline.vue._data.size;
+		let animation_length = Animation.selected ? Animation.selected.length : 0;
+		let keyframes = Timeline.keyframes;
+		let cache = Timeline._max_length_cache;
+		if (cache && !Undo.current_save
+			&& cache.width === width
+			&& cache.size === size
+			&& cache.animation_length === animation_length
+			&& cache.time === Timeline.time
+			&& cache.keyframes === keyframes
+		) {
+			return cache.value;
+		}
+		var max_length = (width-8) / size;
+		if (Animation.selected) max_length = Math.max(max_length, animation_length)
+		keyframes.forEach((kf) => {
 			max_length = Math.max(max_length, kf.time)
 		})
-		max_length = Math.max(max_length, Timeline.time) + width/2/Timeline.vue._data.size
+		max_length = Math.max(max_length, Timeline.time) + width/2/size
+		if (!Undo.current_save) {
+			Timeline._max_length_cache = {width, size, animation_length, time: Timeline.time, keyframes, value: max_length};
+		}
 		return max_length;
 	},
+	_max_length_cache: null,
 	updateSize() {
 		Timeline.vue.updateTimecodes();
 	},
