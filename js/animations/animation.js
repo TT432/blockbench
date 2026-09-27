@@ -1325,7 +1325,7 @@ BARS.defineActions(function() {
 						if (typeof a == 'number' && typeof b == 'number') {
 							return a + b;
 						}
-						return a.toString() + ' + ' + b.toString();
+						return '(' + a.toString() + ') + (' + b.toString() + ')';
 					}
 					let keys = Object.keys(timecodes).sort((a, b) => a.time - b.time);
 					for (let key of keys) {
