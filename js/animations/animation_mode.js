@@ -17,6 +17,9 @@ export const Animator = {
 	MolangParser: new MolangParser(),
 	motion_trail: new THREE.Object3D(),
 	onion_skin_object: new THREE.Object3D(),
+	onion_skin_pool: new Map(),
+	_onion_skin_cache_key: null,
+	_onion_skin_revision: 0,
 	motion_trail_lock: false,
 	_last_values: {},
 	global_variable_lines: {},
@@ -242,12 +245,75 @@ export const Animator = {
 		let options = BarItems.animation_onion_skin.tool_config.options;
 		let selective = options.selective;
 
-		Animator.onion_skin_object.children.forEach(object => {
-			object.geometry.dispose();
-		});
-		Animator.onion_skin_object.children.empty();
+		if (!enabled) {
+			if (Animator.onion_skin_object.children.length) {
+				Animator.clearOnionSkin();
+			}
+			Animator._onion_skin_cache_key = null;
+			return false;
+		}
 
-		if (!enabled) return false;
+		// Fingerprint every input that affects the onion skin ghosts. If it matches
+		// the last build, the existing ghost objects are still correct and the
+		// expensive pose evaluations + geometry clones can be skipped entirely.
+		// While an undoable edit is open (Undo.current_save) the cache is bypassed
+		// so live edits (keyframe drags, sliders) update the ghosts immediately.
+		let key_parts = [
+			options.frames, options.interval, options.count, selective,
+			Timeline.time, Timeline.getStep(), Timeline.vue.onion_skin_time,
+			Animator._onion_skin_revision
+		];
+		for (let animation of Animation.all) {
+			if (animation.playing) key_parts.push(animation.uuid, animation.loop, animation.length);
+		}
+		for (let variable in Animator.MolangParser.variables) {
+			key_parts.push(variable, Animator.MolangParser.variables[variable]);
+		}
+		let elements = Outliner.elements;
+		for (let obj of elements) {
+			if (!obj.mesh) continue;
+			key_parts.push(obj.uuid, obj.visibility ? 1 : 0, (selective && obj.selected) ? 1 : 0);
+		}
+		// Pose inputs: keyframes of transform channels in all stacked animations
+		let kf_hash = 0;
+		for (let animation of Animation.all) {
+			if (!animation.playing) continue;
+			for (let uuid in animation.animators) {
+				let animator = animation.animators[uuid];
+				if (!animator.channels) continue;
+				kf_hash = (kf_hash + (animator.rotation_global ? 0x51ed : 0)) | 0;
+				for (let channel in animator.channels) {
+					if (!animator.channels[channel].transform) continue;
+					if (animator.muted && animator.muted[channel]) kf_hash = (kf_hash + 0x9e37) | 0;
+					let channel_keyframes = animator[channel];
+					if (!channel_keyframes) continue;
+					for (let kf of channel_keyframes) {
+						kf_hash = Animator._hashOnionSkinValue(kf_hash, kf.time);
+						kf_hash = Animator._hashOnionSkinValue(kf_hash, kf.interpolation);
+						for (let point of kf.data_points) {
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, point.x);
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, point.y);
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, point.z);
+						}
+						if (kf.interpolation == 'bezier') {
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, kf.bezier_left_time.join(','));
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, kf.bezier_left_value.join(','));
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, kf.bezier_right_time.join(','));
+							kf_hash = Animator._hashOnionSkinValue(kf_hash, kf.bezier_right_value.join(','));
+						}
+					}
+				}
+			}
+		}
+		let cache_key = key_parts.join('|') + '#' + (kf_hash >>> 0);
+		if (!Undo.current_save
+			&& cache_key === Animator._onion_skin_cache_key
+			&& Animator.onion_skin_object.parent === scene
+		) {
+			// Nothing that affects the ghosts changed since the last build
+			return true;
+		}
+		Animator._onion_skin_cache_key = cache_key;
 
 		let times = [];
 
@@ -264,12 +330,13 @@ export const Animator = {
 			}
 		}
 
-		let elements = Outliner.elements;
 		let last_time = Timeline.time;
 
-		let i = -1;
+		for (let pool of Animator.onion_skin_pool.values()) {
+			pool.used = 0;
+		}
+
 		for (let time of times) {
-			i++;
 			Timeline.time = time;
 			Animator.showDefaultPose(true);
 			Animator.stackAnimations(Animation.all.filter(a => a.playing), false);
@@ -281,8 +348,8 @@ export const Animator = {
 				let mesh = obj.mesh;
 				if (!mesh || !mesh.geometry || !mesh.outline) return;
 
-				let copy = mesh.outline.clone();
-				copy.geometry = mesh.outline.geometry.clone();
+				// Reuse a pooled ghost object instead of cloning the geometry every frame
+				let copy = Animator._getOnionSkinCopy(obj, mesh);
 				copy.material = time < last_time ? Canvas.onionSkinEarlierMaterial : Canvas.onionSkinLaterMaterial;
 				copy.visible = true;
 
@@ -290,17 +357,104 @@ export const Animator = {
 				copy.position.sub(scene.position);
 				copy.rotation.setFromQuaternion(mesh.getWorldQuaternion(new THREE.Quaternion()));
 				mesh.getWorldScale(copy.scale);
-
-				copy.name = obj.uuid+'_onion_skin_outline';
-				Animator.onion_skin_object.add(copy);
 			})
 		}
 		Timeline.time = last_time;
 		Animator.showDefaultPose(true);
 		Animator.stackAnimations(Animation.all.filter(a => a.playing), false);
 
+		// Dispose pooled ghosts that were not needed by this build
+		for (let [uuid, pool] of Animator.onion_skin_pool) {
+			while (pool.entries.length > pool.used) {
+				let entry = pool.entries.pop();
+				entry.copy.geometry.dispose();
+				Animator.onion_skin_object.remove(entry.copy);
+			}
+			if (pool.entries.length == 0) Animator.onion_skin_pool.delete(uuid);
+		}
+
 		scene.add(Animator.onion_skin_object);
 
+		return true;
+	},
+	clearOnionSkin() {
+		for (let [uuid, pool] of Animator.onion_skin_pool) {
+			for (let entry of pool.entries) {
+				entry.copy.geometry.dispose();
+			}
+		}
+		Animator.onion_skin_pool.clear();
+		Animator.onion_skin_object.remove(...Animator.onion_skin_object.children.slice());
+		Animator._onion_skin_cache_key = null;
+	},
+	_hashOnionSkinValue(hash, value) {
+		let string = String(value);
+		for (let i = 0; i < string.length; i++) {
+			hash = (hash * 31 + string.charCodeAt(i)) | 0;
+		}
+		return hash;
+	},
+	_getOnionSkinCopy(obj, mesh) {
+		let source_geometry = mesh.outline.geometry;
+		let pool = Animator.onion_skin_pool.get(obj.uuid);
+		if (!pool) {
+			pool = {used: 0, entries: []};
+			Animator.onion_skin_pool.set(obj.uuid, pool);
+		}
+		let entry = pool.entries[pool.used];
+		if (entry && (entry.source !== source_geometry || !Animator._refreshOnionSkinGeometry(entry.copy.geometry, source_geometry))) {
+			// Source geometry was replaced or changed shape: discard the stale copy
+			entry.copy.geometry.dispose();
+			Animator.onion_skin_object.remove(entry.copy);
+			pool.entries.splice(pool.used, 1);
+			entry = null;
+		}
+		if (!entry) {
+			let copy = mesh.outline.clone();
+			copy.geometry = source_geometry.clone();
+			copy.name = obj.uuid+'_onion_skin_outline';
+			Animator.onion_skin_object.add(copy);
+			entry = {copy, source: source_geometry};
+			pool.entries.splice(pool.used, 0, entry);
+		}
+		pool.used++;
+		return entry.copy;
+	},
+	_refreshOnionSkinGeometry(target, source) {
+		for (let name in source.attributes) {
+			let source_attribute = source.attributes[name];
+			let target_attribute = target.attributes[name];
+			if (!target_attribute
+				|| target_attribute.itemSize !== source_attribute.itemSize
+				|| target_attribute.array.length !== source_attribute.array.length
+				|| target_attribute.array.constructor !== source_attribute.array.constructor
+			) {
+				return false;
+			}
+		}
+		if ((source.index == null) !== (target.index == null)) return false;
+		if (source.index && source.index.array.length !== target.index.array.length) return false;
+		for (let name in source.attributes) {
+			let target_attribute = target.attributes[name];
+			target_attribute.array.set(source.attributes[name].array);
+			target_attribute.needsUpdate = true;
+		}
+		if (source.index) {
+			target.index.array.set(source.index.array);
+			target.index.needsUpdate = true;
+		}
+		if (source.boundingSphere) {
+			if (!target.boundingSphere) target.boundingSphere = source.boundingSphere.clone();
+			else target.boundingSphere.copy(source.boundingSphere);
+		} else {
+			target.boundingSphere = null;
+		}
+		if (source.boundingBox) {
+			if (!target.boundingBox) target.boundingBox = source.boundingBox.clone();
+			else target.boundingBox.copy(source.boundingBox);
+		} else {
+			target.boundingBox = null;
+		}
 		return true;
 	},
 	displayMeshDeformation() {
@@ -534,6 +688,15 @@ export const Animator = {
 	}
 }
 Canvas.gizmos.push(Animator.motion_trail, Animator.onion_skin_object);
+
+// Bump the onion skin input revision on any model/animation change that the
+// cheap fingerprint in updateOnionSkin cannot see directly (geometry rebuilds,
+// molang edits, undo/redo, animation switches)
+for (let event_name of ['finished_edit', 'undo', 'redo', 'load_undo_save', 'select_animation']) {
+	Blockbench.on(event_name, () => {
+		Animator._onion_skin_revision++;
+	});
+}
 
 export const WinterskyScene = new Wintersky.Scene({
 	fetchTexture: function(config) {
