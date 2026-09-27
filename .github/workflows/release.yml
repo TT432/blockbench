@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  payload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build renderer bundles
+        run: npm run build-electron
+
+      - name: Extract changelog for this tag
+        run: |
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > tag_notes.md
+          if [ ! -s tag_notes.md ]; then echo "See release page." > tag_notes.md; fi
+
+      - name: Build hot-update payload
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/build_payload.js \
+            --version "$VERSION" \
+            --changelog tag_notes.md \
+            --url "https://github.com/TT432/blockbench/releases/download/${GITHUB_REF_NAME}/payload-${VERSION}.zip"
+
+      - name: Create GitHub release with payload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file tag_notes.md \
+            release-out/payload-*.zip release-out/update.json
