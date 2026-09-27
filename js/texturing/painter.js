@@ -183,7 +183,7 @@ export const Painter = {
 				}
 				Painter.current.face = data.face;
 			}
-			Painter.movePaintTool(texture, x, y, event, new_face, data.element.faces[data.face].uv)
+			Painter.movePaintTool(texture, x, y, event, new_face, data.element.faces[data.face].uv, data)
 		}
 	},
 	stopPaintToolCanvas() {
@@ -220,7 +220,8 @@ export const Painter = {
 			}
 		}
 		if (Toolbox.selected.brush && Toolbox.selected.brush.onStrokeStart) {
-			let result = Toolbox.selected.brush.onStrokeStart({texture, x, y, uv: uvTag, event, raycast_data: data});
+			let mirror_targets = Painter.getStrokeMirrorTargets(texture, x, y, uvTag, data, !!data && Toolbox.selected.brush.screen_space && BarItems.screen_space_brush_projection.value);
+			let result = Toolbox.selected.brush.onStrokeStart({texture, x, y, uv: uvTag, event, raycast_data: data, mirror_targets});
 			if (result == false) {
 				Painter.paint_stroke_canceled = true;
 				return;
@@ -292,13 +293,14 @@ export const Painter = {
 			}, {no_undo: true, use_cache: true});
 		}
 	},
-	movePaintTool(texture, x, y, event, new_face, uv) {
+	movePaintTool(texture, x, y, event, new_face, uv, data) {
 		// Called directly from movePaintToolCanvas and moveBrushUV
 		if (Painter.paint_stroke_canceled) return;
 		if (!PointerTarget.requestTarget(PointerTarget.types.paint)) return;
-		
+
 		if (Toolbox.selected.brush && Toolbox.selected.brush.onStrokeMove) {
-			let result = Toolbox.selected.brush.onStrokeMove({texture, x, y, uv, event, raycast_data: data});
+			let mirror_targets = Painter.getStrokeMirrorTargets(texture, x, y, uv, data, Painter.current.use_screen_projection);
+			let result = Toolbox.selected.brush.onStrokeMove({texture, x, y, uv, event, raycast_data: data, mirror_targets});
 			if (result == false) return;
 		}
 
@@ -339,9 +341,9 @@ export const Painter = {
 			return;
 		}
 		let texture = Painter.current.texture;
-
 		if (Toolbox.selected.brush && Toolbox.selected.brush.onStrokeEnd) {
-			let result = Toolbox.selected.brush.onStrokeEnd({texture});
+			let mirror_targets = texture ? Painter.getStrokeMirrorTargets(texture, Painter.current.x, Painter.current.y, Painter.current.element?.faces[Painter.current.face]?.uv, undefined, Painter.current.use_screen_projection) : undefined;
+			let result = Toolbox.selected.brush.onStrokeEnd({texture, mirror_targets});
 			if (result == false) return;
 		}
 		if (Painter.brushChanges) {
@@ -1095,6 +1097,19 @@ export const Painter = {
 			target.x = Math.roundTo(target.x, 8);
 			target.y = Math.roundTo(target.y, 8);
 		})
+		return targets;
+	},
+	getStrokeMirrorTargets(texture, x, y, uvTag, data, use_screen_projection) {
+		if (!Painter.mirror_painting || use_screen_projection) return;
+		let old_element = Painter.current.element;
+		let old_face = Painter.current.face;
+		if (data) {
+			Painter.current.element = data.element;
+			Painter.current.face = data.face;
+		}
+		let targets = Painter.getMirrorPaintTargets(texture, x, y, uvTag);
+		Painter.current.element = old_element;
+		Painter.current.face = old_face;
 		return targets;
 	},
 	drawBrushLine(texture, end_x, end_y, event, new_face, uv) {
