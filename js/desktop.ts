@@ -1,5 +1,3 @@
-import { UpdateInfo } from 'electron-updater';
-import { addStartScreenSection } from './interface/start_screen';
 import { electron, app, fs, PathModule, currentwindow, shell, ipcRenderer, process, nativeImage, SystemInfo } from './native_apis';
 import { separateThousands } from './util/math_util';
 import { silentReject, wait } from './util/util';
@@ -91,6 +89,8 @@ export function initializeDesktopApp() {
 		})
 		action.toElement('#update_menu');
 	}
+
+	UpdateManager.initialize();
 }
 //Load Model
 export function loadOpenWithBlockbenchFile() {
@@ -708,16 +708,6 @@ async function closeBlockbenchWindow() {
 		project.closeOnQuit();
 	}
 	AutoBackup.removeAllBackups();
-	if (Blockbench.hasFlag('update_downloaded')) {
-		await new Promise(resolve => {
-			Blockbench.showMessageBox({
-				title: 'message.installing_update.title',
-				message: tl('message.installing_update.message', '60'),
-				icon: 'update',
-				width: 534
-			}, resolve);
-		})
-	}
 	window.onbeforeunload = null;
 	Blockbench.addFlag('allow_closing');
 	Blockbench.dispatchEvent('before_closing', {});
@@ -726,65 +716,216 @@ async function closeBlockbenchWindow() {
 };
 
 
-ipcRenderer.on('update-available', (event, arg: UpdateInfo) => {
-	console.log('Found new update:', arg.version)
-	if (settings.automatic_updates.value) {
-		ipcRenderer.send('allow-auto-update');
+// Hot payload update (community fork): manual update button in the title bar,
+// progress dialog while downloading, page reload to apply, changelog afterwards.
+// No automatic downloads, no app restart, no installer.
+type UpdateCheckResult =
+	| {type: 'none'}
+	| {type: 'hot', manifest: {version: string, changelog?: string, size?: number}}
+	| {type: 'cold', version: string, url: string}
 
+export const UpdateManager = {
+	manifest: null as {version: string, changelog?: string, size?: number} | null,
+	action: null as Action | null,
+	progress_dialog: null as Dialog | null,
 
-		let icon_node = Blockbench.getIconNode('donut_large');
-		icon_node.classList.add('spinning');
-		let click_action;
+	initialize() {
+		this.showAppliedChangelog();
+		// Keep startup fast: check for updates in the background
+		setTimeout(() => this.check(false), 4000);
 
-		let action = new Action('update_status', {
-			name: tl('menu.help.updating', [0]),
-			icon: icon_node,
-			click() {
-				if (click_action) click_action()
+		new Action('check_for_updates', {
+			name: tl('menu.help.check_update'),
+			icon: 'refresh',
+			click: () => this.check(true)
+		});
+		MenuBar.menus.help.addAction('check_for_updates', '#about');
+	},
+	async showAppliedChangelog() {
+		try {
+			let applied = await ipcRenderer.invoke('bb-update:take-applied');
+			if (applied && applied.version) {
+				Blockbench.showMessageBox({
+					title: tl('update.updated_title', [applied.version]),
+					message: applied.changelog || tl('update.updated_message', [applied.version]),
+					icon: 'browser_updated',
+					width: 560
+				});
 			}
-		})
-		action.toElement('#update_menu');
-		MenuBar.menus.help.addAction('_');
-		MenuBar.menus.help.addAction(action);
-
-		ipcRenderer.on('update-progress', (event, status) => {
-			action.setName(tl('menu.help.updating', [Math.round(status.percent)]));
-		})
-		ipcRenderer.on('update-error', (event, err) => {
-			action.setName(tl('menu.help.update_failed'));
-			icon_node.textContent = 'warning';
-			icon_node.classList.remove('spinning')
-			click_action = function() {
-				currentwindow.webContents.openDevTools()
-			}
-			console.error(err);
-		})
-		ipcRenderer.on('update-downloaded', (event) => {
-			Blockbench.addFlag('update_downloaded');
-			action.setName(tl('message.update_after_restart'));
-			MenuBar.menus.help.removeAction(action);
-			icon_node.textContent = 'browser_updated';
-			icon_node.classList.remove('spinning');
+		} catch (err) {}
+	},
+	async check(manual: boolean) {
+		let result: UpdateCheckResult;
+		try {
+			result = await ipcRenderer.invoke('bb-update:check');
+		} catch (err) {
+			console.warn('[update] Update check failed', err);
+			if (manual) Blockbench.showQuickMessage('update.failed.title');
+			return;
+		}
+		if (!result || result.type == 'none') {
+			if (manual) Blockbench.showQuickMessage('update.no_update');
+			return;
+		}
+		if (this.action) return;
+		if (result.type == 'cold') {
+			// The update requires a newer main process: fall back to a full install
+			this.action = new Action('update_available', {
+				name: tl('update.cold_available', [result.version]),
+				icon: 'browser_updated',
+				click: () => shell.openExternal(result.url)
+			});
+		} else {
+			this.manifest = result.manifest;
+			let icon_node = Blockbench.getIconNode('browser_updated');
 			icon_node.style.color = 'var(--color-confirm)';
-			click_action = function() {
-				Blockbench.showQuickMessage('message.update_after_restart')
+			this.action = new Action('update_available', {
+				name: tl('update.available', [result.manifest.version]),
+				icon: icon_node,
+				click: () => this.confirmUpdate()
+			});
+		}
+		this.action.toElement('#update_menu');
+		MenuBar.menus.help.addAction('_');
+		MenuBar.menus.help.addAction(this.action);
+	},
+	confirmUpdate() {
+		if (!this.manifest) return;
+		new Dialog({
+			id: 'bb_update_confirm',
+			title: tl('update.confirm_title', [this.manifest.version]),
+			width: 600,
+			component: {
+				data: {changelog: this.manifest.changelog || ''},
+				methods: {pureMarked},
+				template: `<div class="markdown" style="max-height: 320px; overflow-y: auto; padding: 4px 8px;" v-html="pureMarked(changelog)"></div>`
+			},
+			buttons: ['update.confirm_button', 'dialog.cancel'],
+			onConfirm: () => {
+				this.startDownload();
 			}
-		})
-
-	} else {
-		addStartScreenSection('update_notification', {
-			color: 'var(--color-back)',
-			graphic: {type: 'icon', icon: 'update'},
-			text: [
-				{type: 'h3', text: tl('message.update_notification.title')},
-				{text: tl('message.update_notification.message')},
-				{type: 'button', text: tl('generic.enable'), click: () => {
-					settings.automatic_updates.set(true);
-				}}
-			]
-		})
+		}).show();
+	},
+	startDownload() {
+		this.progress_dialog = new Dialog({
+			id: 'bb_update_download',
+			title: tl('update.download_title', [this.manifest ? this.manifest.version : '']),
+			progress_bar: {},
+			cancel_on_click_outside: false,
+			buttons: ['dialog.cancel'],
+			onCancel: () => {
+				ipcRenderer.send('bb-update:cancel');
+			}
+		});
+		this.progress_dialog.show();
+		ipcRenderer.on('bb-update:progress', this.onProgress);
+		ipcRenderer.on('bb-update:done', this.onDone);
+		ipcRenderer.on('bb-update:error', this.onError);
+		ipcRenderer.send('bb-update:start');
+	},
+	removeDownloadListeners() {
+		ipcRenderer.removeListener('bb-update:progress', this.onProgress);
+		ipcRenderer.removeListener('bb-update:done', this.onDone);
+		ipcRenderer.removeListener('bb-update:error', this.onError);
+	},
+	onProgress(event, progress: {received: number, total: number, percent: number | null}) {
+		if (UpdateManager.progress_dialog && UpdateManager.progress_dialog.progress_bar) {
+			UpdateManager.progress_dialog.progress_bar.setProgress((progress.percent ?? 0) / 100);
+		}
+	},
+	onDone() {
+		UpdateManager.removeDownloadListeners();
+		if (UpdateManager.progress_dialog) {
+			UpdateManager.progress_dialog.hide();
+			UpdateManager.progress_dialog.delete();
+			UpdateManager.progress_dialog = null;
+		}
+		UpdateManager.checkUnsavedAndReload();
+	},
+	onError(event, err: {message: string}) {
+		UpdateManager.removeDownloadListeners();
+		if (UpdateManager.progress_dialog) {
+			UpdateManager.progress_dialog.hide();
+			UpdateManager.progress_dialog.delete();
+			UpdateManager.progress_dialog = null;
+		}
+		Blockbench.showMessageBox({
+			title: 'update.failed.title',
+			message: tl('update.failed.message', [err.message || 'unknown']),
+			icon: 'error'
+		});
+	},
+	getOtherWindows() {
+		return electron.BrowserWindow.getAllWindows().filter(win => !win.isDestroyed() && win.id != currentwindow.id);
+	},
+	async countUnsavedProjects(): Promise<number> {
+		let count = ModelProject.all.filter(project => !project.saved).length;
+		for (let win of this.getOtherWindows()) {
+			try {
+				count += await win.webContents.executeJavaScript(
+					`ModelProject.all.filter(project => !project.saved).length`
+				);
+			} catch (err) {}
+		}
+		return count;
+	},
+	async backupUnsavedProjects() {
+		for (let project of ModelProject.all.filter(project => !project.saved)) {
+			try {
+				await project.select();
+				await AutoBackup.backupOpenProject();
+			} catch (err) {
+				console.error('[update] Backup before update failed', err);
+			}
+		}
+		for (let win of this.getOtherWindows()) {
+			try {
+				await win.webContents.executeJavaScript(`(async () => {
+					for (let project of ModelProject.all.filter(project => !project.saved)) {
+						await project.select();
+						await AutoBackup.backupOpenProject();
+					}
+				})()`);
+			} catch (err) {
+				console.error('[update] Backup before update failed', err);
+			}
+		}
+	},
+	async checkUnsavedAndReload() {
+		let unsaved = await this.countUnsavedProjects();
+		if (unsaved) {
+			Blockbench.showMessageBox({
+				title: 'update.unsaved.title',
+				message: 'update.unsaved.message',
+				icon: 'warning',
+				buttons: ['update.backup_reload', 'update.reload_anyway', 'dialog.cancel'],
+				cancel: 2
+			}, async (button) => {
+				if (button === 0) {
+					await this.backupUnsavedProjects();
+					this.reloadAllWindows();
+				} else if (button === 1) {
+					this.reloadAllWindows();
+				}
+			});
+		} else {
+			this.reloadAllWindows();
+		}
+	},
+	async reloadAllWindows() {
+		// Bypass the unsaved-work guard in every window, then reload into the new payload
+		for (let win of this.getOtherWindows()) {
+			try {
+				await win.webContents.executeJavaScript(
+					`Blockbench.addFlag('allow_reload'); Blockbench.addFlag('allow_closing'); void 0;`
+				);
+			} catch (err) {}
+		}
+		Blockbench.addFlag('allow_reload');
+		Blockbench.addFlag('allow_closing');
+		await ipcRenderer.invoke('bb-update:reload');
 	}
-})
+}
 
 
 const global = {
@@ -799,6 +940,7 @@ const global = {
 	openDefaultTexturePath,
 	updateRecentProjectThumbnail,
 	createBackup,
+	UpdateManager,
 };
 declare global {
 	const recent_projects: RecentProjectData[]
@@ -811,5 +953,6 @@ declare global {
 	const changeImageEditor: typeof global.changeImageEditor
 	const openDefaultTexturePath: typeof global.openDefaultTexturePath
 	const createBackup: typeof global.createBackup
+	const UpdateManager: typeof global.UpdateManager
 }
 Object.assign(window, global);
