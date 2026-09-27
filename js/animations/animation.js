@@ -335,6 +335,7 @@ export class Animation extends AnimationItem {
 		return this.playing;
 	}
 	showContextMenu(event) {
+		Prop.active_panel = 'animations';
 		this.select();
 		this.menu.open(event, this);
 		return this;
@@ -728,7 +729,7 @@ export const BBAnimation = Animation;
 	])
 	Animation.prototype.file_menu = new Menu([
 		{name: 'menu.animation_file.unload', icon: 'remove', click(id) {
-			let animations_to_remove = Animation.all.filter(anim => anim.path == id && anim.saved);
+			let animations_to_remove = Animation.all.filter(anim => anim.path == id && (anim.saved || !anim.path));
 			let controllers_to_remove = AnimationController.all.filter(anim => anim.path == id && anim.saved);
 			if (!animations_to_remove.length && !controllers_to_remove.length) return;
 
