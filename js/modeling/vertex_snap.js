@@ -190,30 +190,24 @@ export const Vertexsnap = {
 		}
 
 		if (Vertexsnap.move_pivot) {
-			if (Vertexsnap.groups.length) {
-				for (let group of Vertexsnap.groups) {
-					let vec = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
-
-					if (Format.bone_rig && group.parent instanceof Group && group.mesh.parent) {
-						group.mesh.parent.worldToLocal(vec);
-					}
-					let vec_array = vec.toArray()
-					vec_array.V3_add(group.parent.origin);
-					group.transferOrigin(vec_array);
-				}
-
-			} else {
-				Vertexsnap.elements.forEach(function(element) {
-					let vec = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
-
-					if (Format.bone_rig && element.parent instanceof Group && element.mesh.parent) {
-						element.mesh.parent.worldToLocal(vec);
-					}
+			let world_pos = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
+			let pivot_targets = Vertexsnap.groups.length ? Vertexsnap.groups : Vertexsnap.elements;
+			for (let node of pivot_targets) {
+				// Transform the world-space target into the space in which the node's origin
+				// is expressed, with a single matrix transform instead of piecemeal offsets
+				let vec = new THREE.Vector3().copy(world_pos);
+				if (node.mesh.parent) {
+					node.mesh.parent.updateWorldMatrix(true, false);
+					node.mesh.parent.worldToLocal(vec);
+				} else {
 					vec.sub(Canvas.scene.position);
-					let vec_array = vec.toArray()
-					vec_array.V3_add(element.parent.origin);
-					element.transferOrigin(vec_array)
-				})
+				}
+				if (node.parent instanceof OutlinerNode && node.parent.getTypeBehavior('use_absolute_position')) {
+					vec.x += node.parent.origin[0];
+					vec.y += node.parent.origin[1];
+					vec.z += node.parent.origin[2];
+				}
+				node.transferOrigin(vec.toArray());
 			}
 		} else {
 
