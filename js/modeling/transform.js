@@ -1426,7 +1426,6 @@ BARS.defineActions(function() {
 			return modify(real_value + space_offset) - space_offset;
 		}
 
-		console.log(rotation_objects)
 		if (rotation_objects && rotation_objects[0] instanceof Group) {
 			let elements_to_update = [];
 			for (let group of rotation_objects) {
