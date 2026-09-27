@@ -236,8 +236,8 @@ export const Timeline = {
 	},
 	setTime(seconds, editing) {
 		seconds = limitNumber(seconds, 0, 1000)
-		Timeline.vue._data.playhead = seconds
 		Timeline.time = seconds
+		Timeline.updatePlayhead()
 		if (!editing) {
 			Timeline.setTimecode(seconds)
 		}
@@ -245,6 +245,31 @@ export const Timeline = {
 			Timeline.updateSize()
 		}
 		Timeline.revealTime(seconds)
+	},
+	// Writes the playhead position and timecode displays directly to the DOM
+	// instead of Vue reactive data. Both update every frame during playback and
+	// scrubbing, and reactive writes re-rendered the whole timeline component
+	// (including every keyframe element) each frame. The Vue data properties
+	// (playhead, timestamp, framenumber) still exist for the initial render;
+	// since they never change afterwards, Vue's vnode diff never touches the
+	// imperatively updated nodes.
+	updatePlayhead() {
+		let playhead_node = document.getElementById('timeline_playhead');
+		if (playhead_node) {
+			playhead_node.style.left = (Timeline.time * Timeline.vue._data.size) + 'px';
+		}
+	},
+	setTimecode(time) {
+		let second_fractions = 100;
+		let m = Math.floor(time/60)
+		let s = Math.floor(time%60)
+		let f = Math.round((time%1) * second_fractions)
+		if ((s+'').length === 1) {s = '0'+s}
+		if ((f+'').length === 1) {f = '0'+f}
+		let timestamp_node = document.getElementById('timeline_timestamp');
+		if (timestamp_node) timestamp_node.textContent = `${m}:${s}:${f}`;
+		let framenumber_node = document.getElementById('timeline_framenumber');
+		if (framenumber_node) framenumber_node.textContent = Math.round(time/Timeline.getStep()).toString();
 	},
 	playAudioStutter() {
 		if (!settings.audio_scrubbing.value) return;
@@ -285,16 +310,6 @@ export const Timeline = {
 		} else if (time == 0) {
 			body.scrollLeft = 0;
 		}
-	},
-	setTimecode(time) {
-		let second_fractions = 100;
-		let m = Math.floor(time/60)
-		let s = Math.floor(time%60)
-		let f = Math.round((time%1) * second_fractions)
-		if ((s+'').length === 1) {s = '0'+s}
-		if ((f+'').length === 1) {f = '0'+f}
-		Timeline.vue.timestamp = `${m}:${s}:${f}`;
-		Timeline.vue.framenumber = Math.round(time/Timeline.getStep());
 	},
 	snapTime(time, animation) {
 		//return time;
@@ -1746,9 +1761,15 @@ Interface.definePanels(() => {
 				getAxisLetter
 			},
 			watch: {
-				size() {this.updateTimecodes()},
+				// Zoom changes the playhead pixel position; update it imperatively
+				size() {this.updateTimecodes(); Timeline.updatePlayhead()},
 				length() {this.updateTimecodes()},
 				scroll_left() {this.updateTimecodes()},
+			},
+			mounted() {
+				// Sync the imperatively updated playhead/timecode nodes after (re)mount
+				Timeline.setTimecode(Timeline.time);
+				Timeline.updatePlayhead();
 			},
 			template: `
 				<div id="timeline_vue" :class="{graph_editor: graph_editor_open}" :style="{'--timeline-height': timeline_height + 'px'}">
