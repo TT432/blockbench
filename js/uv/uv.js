@@ -4283,9 +4283,10 @@ Interface.definePanels(function() {
 					}
 				},
 				isRotatingAvailable() {
-					/*if (this.mappable_elements[0] instanceof Cube) {
-						return UVEditor.isFaceUV();
-					}*/
+					if (this.mappable_elements[0] instanceof Cube) {
+						// Box UV faces have no rotation field; only per-face UV supports it
+						return Format.uv_rotation && UVEditor.isFaceUV();
+					}
 					if (this.mappable_elements[0] instanceof Mesh) {
 						return this.mappable_elements[0].getSelectedFaces().length > 0;
 					}
