@@ -393,7 +393,7 @@ UndoSystem.save = class {
 				scope.animations[a.uuid] = a.getUndoCopy();
 			})
 		}
-		if (aspects.keyframes && Animation.selected && Timeline.animators.length) {
+		if (aspects.keyframes && Animation.selected) {
 			this.keyframes = {
 				animation: Animation.selected.uuid
 			}
