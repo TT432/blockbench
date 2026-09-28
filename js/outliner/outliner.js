@@ -359,6 +359,10 @@ export class NodePreviewController extends EventSystem {
 			case 'in_front': element.mesh.renderOrder = 1; break;	
 			default: element.mesh.renderOrder = 0; break;	
 		}
+		// Custom render order uses per-texture material variants with modified depth behavior; refresh faces to apply.
+		if (typeof this.updateFaces === 'function') {
+			this.updateFaces(element);
+		}
 	}
 	viewportRectangleOverlap(element, {projectPoint, rect_start, rect_end}) {
 		element.mesh.getWorldPosition(Reusable.vec2);
