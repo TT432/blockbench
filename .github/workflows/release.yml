@@ -25,6 +25,12 @@ jobs:
       - name: Build renderer bundles
         run: npm run build-electron
 
+      # actions/checkout resolves the tag ref to a commit SHA and creates a local
+      # lightweight ref, losing the annotated tag object. Re-fetch it so %(contents)
+      # below yields the tag annotation (changelog), not the commit message.
+      - name: Fetch annotated tag object
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
       - name: Extract changelog for this tag
         run: |
           git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > tag_notes.md
