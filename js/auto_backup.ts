@@ -227,10 +227,17 @@ export const AutoBackup = {
 		});
 	},
 	loop_timeout: null,
+	/**
+	 * Whether the project changed since the last backup. Skipping redundant
+	 * backups matters on large projects, where compiling + stringifying the
+	 * whole model every interval stalls the UI for seconds.
+	 */
+	_backup_dirty: true,
 	backupProjectLoop(run_save: boolean = true) {
-		if (run_save && Project && (Outliner.root.length || Project.textures.length)) {
+		if (run_save && AutoBackup._backup_dirty && Project && (Outliner.root.length || Project.textures.length)) {
 			try {
 				AutoBackup.backupOpenProject();
+				AutoBackup._backup_dirty = false;
 			} catch (err) {
 				console.error('Unable to create backup. ', err)
 			}
@@ -241,6 +248,11 @@ export const AutoBackup = {
 			AutoBackup.loop_timeout = setTimeout(() => AutoBackup.backupProjectLoop(true), interval * 1000);
 		}
 	}
+}
+for (let event_name of ['finished_edit', 'undo', 'redo', 'load_undo_save', 'select_project', 'new_project']) {
+	Blockbench.on(event_name, () => {
+		AutoBackup._backup_dirty = true;
+	})
 }
 const global = {
 	AutoBackup

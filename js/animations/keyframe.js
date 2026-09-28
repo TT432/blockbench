@@ -568,6 +568,14 @@ export class Keyframe {
 		return copy;
 	}
 }
+// Keyframes exist in huge numbers (100k+ per animation on mocap-style projects).
+// Letting Vue deeply observe every keyframe and data point costs gigabytes of
+// memory and seconds of GC, so they are excluded from reactivity tracking.
+// Visual updates are instead triggered explicitly via Timeline.vue.$forceUpdate()
+// at the mutation sites (selection, drags, undo/redo, edits).
+Object.defineProperty(Keyframe.prototype, '__v_skip', {value: true, writable: false, enumerable: false, configurable: true});
+Object.defineProperty(KeyframeDataPoint.prototype, '__v_skip', {value: true, writable: false, enumerable: false, configurable: true});
+
 	Keyframe.prototype.menu = new Menu([
 		new MenuSeparator('settings'),
 		'keyframe_uniform',
@@ -624,17 +632,27 @@ export function updateKeyframeValue(axis, value, data_point) {
 		Animator.preview();
 		updateKeyframeSelection();
 	}
+	// Keyframes are not reactive; keep the graph editor in sync with panel edits
+	if (Timeline.vue && Timeline.vue.graph_editor_open) Timeline.vue.graph_revision++;
 }
 export function updateKeyframeSelection() {
+	// Hot path: runs on every selection change with potentially 100k+ keyframes.
+	// Use a Set for membership tests and an allocation-free expression check
+	// (equivalent to exportMolang: numeric strings are not expressions).
+	let selected = Timeline.selected;
+	let selected_set = selected.length > 8 ? new Set(selected) : null;
 	Timeline.keyframes.forEach(kf => {
-		if (kf.selected && !Timeline.selected.includes(kf)) {
+		let is_selected = selected_set ? selected_set.has(kf) : selected.includes(kf);
+		if (kf.selected && !is_selected) {
 			kf.selected = false;
 		}
 		let has_expressions = false;
 		if (kf.transform) {
-			has_expressions = !!kf.data_points.find((point, i) => {
-				return kf.getArray(i).find(v => typeof v == 'string');
-			})
+			has_expressions = !!kf.data_points.find(point => (
+				(typeof point.x == 'string' && isNaN(point.x)) ||
+				(typeof point.y == 'string' && isNaN(point.y)) ||
+				(typeof point.z == 'string' && isNaN(point.z))
+			));
 		}
 		if (has_expressions != kf.has_expressions) {
 			kf.has_expressions = has_expressions;
@@ -665,6 +683,8 @@ export function updateKeyframeSelection() {
 		Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.stretch_keyframes');
 	}
 	BARS.updateConditions()
+	// Keyframes are excluded from Vue reactivity (__v_skip); refresh markers imperatively
+	if (Timeline.vue) Timeline.vue.$forceUpdate();
 	Blockbench.dispatchEvent('update_keyframe_selection');
 }
 export function selectAllKeyframes() {
@@ -1005,6 +1025,7 @@ BARS.defineActions(function() {
 				kf.time = Timeline.snapTime(limitNumber(modify(kf.time), 0, 1e4))
 			})
 			Animator.preview()
+			if (Timeline.vue) Timeline.vue.$forceUpdate();
 		},
 		onBefore: function() {
 			Undo.initEdit({keyframes: Timeline.selected})
@@ -1336,6 +1357,7 @@ Interface.definePanels(function() {
 					})
 					Animator.preview()
 					Undo.finishEdit('Add keyframe data point')
+					this.$forceUpdate();
 				},
 				removeDataPoint(data_point_index) {
 					Undo.initEdit({keyframes: Timeline.selected})
@@ -1346,6 +1368,7 @@ Interface.definePanels(function() {
 					})
 					Animator.preview()
 					Undo.finishEdit('Remove keyframe data point')
+					this.$forceUpdate();
 				},
 				updateLocatorSuggestionList() {
 					Locator.updateAutocompleteList();

@@ -612,34 +612,31 @@ export const Timeline = {
 	},
 	getMaxLength() {
 		// The keyframe scan below is O(total keyframes) and this runs on every
-		// Timeline.setTime (every playback frame), so the result is cached and
-		// keyed on all inputs. The keyframes reference is stable as long as the
-		// Timeline.keyframes cache is valid, so any keyframe add/remove and any
-		// invalidation via Timeline.invalidateKeyframeCache (keyframe edits,
-		// undo/redo, animation switch) implicitly invalidates this cache too.
+		// Timeline.setTime (every playback frame). The scan result depends only on
+		// the keyframes array identity (invalidated on any keyframe edit via
+		// Timeline.invalidateKeyframeCache), so it is cached separately from the
+		// cheap viewport/time terms that change per frame.
 		let width = (document.getElementById('timeline_vue')||0).clientWidth;
 		let size = Timeline.vue._data.size;
 		let animation_length = Animation.selected ? Animation.selected.length : 0;
 		let keyframes = Timeline.keyframes;
 		let cache = Timeline._max_length_cache;
-		if (cache && !Undo.current_save
-			&& cache.width === width
-			&& cache.size === size
-			&& cache.animation_length === animation_length
-			&& cache.time === Timeline.time
-			&& cache.keyframes === keyframes
-		) {
-			return cache.value;
+		let kf_max;
+		if (cache && !Undo.current_save && cache.keyframes === keyframes) {
+			kf_max = cache.kf_max;
+		} else {
+			kf_max = 0;
+			keyframes.forEach((kf) => {
+				kf_max = Math.max(kf_max, kf.time)
+			})
+			if (!Undo.current_save) {
+				Timeline._max_length_cache = {keyframes, kf_max};
+			}
 		}
 		var max_length = (width-8) / size;
 		if (Animation.selected) max_length = Math.max(max_length, animation_length)
-		keyframes.forEach((kf) => {
-			max_length = Math.max(max_length, kf.time)
-		})
+		max_length = Math.max(max_length, kf_max)
 		max_length = Math.max(max_length, Timeline.time) + width/2/size
-		if (!Undo.current_save) {
-			Timeline._max_length_cache = {width, size, animation_length, time: Timeline.time, keyframes, value: max_length};
-		}
 		return max_length;
 	},
 	_max_length_cache: null,
@@ -787,6 +784,12 @@ export const Timeline = {
 	_keyframe_cache_graph_state: null,
 	invalidateKeyframeCache() {
 		Timeline._keyframe_cache_dirty = true;
+		// Keyframes are not reactive (__v_skip); edits/undo/redo/animation switches
+		// funnel through here, so refresh the timeline markers imperatively.
+		if (Timeline.vue) {
+			Timeline.vue.graph_revision++;
+			Timeline.vue.$forceUpdate();
+		}
 	},
 	get keyframes() {
 		let vue = Timeline.vue;
@@ -907,6 +910,7 @@ Interface.definePanels(() => {
 			Timeline.updateSize();
 			if (this.inside_vue.$el) {
 				this.inside_vue.timeline_height = this.inside_vue.$el.clientHeight;
+				this.inside_vue.updateScroll();
 			}
 		},
 		component: {
@@ -918,6 +922,12 @@ Interface.definePanels(() => {
 				animation_length: 0,
 				scroll_left: 0,
 				scroll_top: 0,
+				body_width: 1200,
+				body_height: 400,
+				// Bumped imperatively when keyframe values change outside Vue reactivity
+				// (keyframes carry __v_skip); graph editor computeds depend on this.
+				row_height: 24,
+				graph_revision: 0,
 				head_width: Blockbench.isMobile ? 108 : Interface.data.timeline_head,
 				timecodes: [],
 				animators: Timeline.animators,
@@ -948,6 +958,51 @@ Interface.definePanels(() => {
 			computed: {
 				graph_editor_animator() {
 					return this.animators.find(animator => animator.selected && animator instanceof BoneAnimator);
+				},
+				windowed_animators() {
+					// Vertical windowing: with hundreds of animators the full row list
+					// produces an unbounded amount of DOM. Only rows near the vertical
+					// viewport are rendered; spacers preserve the scrollable height.
+					// Row heights are uniform, so offsets are computed from the
+					// measured row_height and the same visibility conditions as the
+					// channel bar template below.
+					let row_height = this.row_height;
+					let scroll_top = this.scroll_top;
+					let view_bottom = scroll_top + this.body_height;
+					let buffer = row_height * 12;
+					let items = [];
+					let offset = 0;
+					let padding_top = 0;
+					let visible_bottom = 0;
+					for (let animator of this.animators) {
+						let height = row_height;
+						if (animator.expanded) {
+							for (let channel in animator.channels) {
+								if (this.channels[channel] != false
+									&& Condition(animator.channels[channel].condition, animator)
+									&& (!this.channels.hide_empty || animator[channel].length)
+								) {
+									height += row_height;
+								}
+							}
+						}
+						let bottom = offset + height;
+						if (bottom >= scroll_top - buffer && offset <= view_bottom + buffer) {
+							items.push(animator);
+							visible_bottom = bottom;
+						} else if (bottom < scroll_top - buffer) {
+							padding_top = bottom;
+						}
+						offset = bottom;
+					}
+					if (items.length == 0) {
+						padding_top = 0;
+					}
+					return {
+						items,
+						padding_top,
+						padding_bottom: Math.max(0, offset - visible_bottom)
+					};
 				},
 				zero_line() {
 					let height = this.graph_offset;
@@ -992,6 +1047,7 @@ Interface.definePanels(() => {
 					return lines;
 				},
 				graphs() {
+					this.graph_revision; // keyframe values change outside Vue reactivity; recompute when bumped
 					let ba = this.graph_editor_animator;
 					if (!ba || !ba[this.graph_editor_channel] || !ba[this.graph_editor_channel].length) {
 						this.loop_graphs.empty();
@@ -1198,8 +1254,52 @@ Interface.definePanels(() => {
 					return points.join(' ');
 				},
 				updateScroll() {
-					this.scroll_left = this.$refs.timeline_body ? this.$refs.timeline_body.scrollLeft : 0;
-					this.scroll_top = this.$refs.timeline_body ? this.$refs.timeline_body.scrollTop : 0;
+					let body = this.$refs.timeline_body;
+					this.scroll_left = body ? body.scrollLeft : 0;
+					this.scroll_top = body ? body.scrollTop : 0;
+					if (body) {
+						this.body_width = body.clientWidth;
+						this.body_height = body.clientHeight;
+					}
+				},
+				getVisibleKeyframes(animator, channel) {
+					let keyframes = animator[channel];
+					if (!keyframes || keyframes.length == 0) return keyframes;
+					let size = this.size;
+					if (!size || !isFinite(size)) return keyframes;
+					// Horizontal windowing + density culling: only render markers
+					// inside the viewport, and skip markers that would land within
+					// a few pixels of the previous one (visually indistinguishable).
+					// Selected keyframes always render; while dragging, selected
+					// keyframes outside the viewport render as well.
+					let start_time = (this.scroll_left - 40) / size;
+					let end_time = (this.scroll_left + this.body_width + 40) / size;
+					let min_gap = 4 / size;
+					let include_offscreen_selected = !!(Timeline.dragging_keyframes && Timeline.selected.length);
+					let result = [];
+					let last_time = -Infinity;
+					for (let i = 0; i < keyframes.length; i++) {
+						let kf = keyframes[i];
+						if (kf.time < start_time || kf.time > end_time) {
+							if (include_offscreen_selected && kf.selected) result.push(kf);
+							continue;
+						}
+						if (!kf.selected && kf.time - last_time < min_gap) continue;
+						last_time = kf.time;
+						result.push(kf);
+					}
+					return result;
+				},
+				measureRowHeight() {
+					Vue.nextTick(() => {
+						let node = this.$el && this.$el.querySelector('#timeline_body li.animator .animator_head_bar');
+						if (node) {
+							let height = node.getBoundingClientRect().height;
+							if (height && Math.abs(height - this.row_height) > 0.5) {
+								this.row_height = height;
+							}
+						}
+					});
 				},
 				openContextMenu(event) {
 					if (event.target.nodeName == 'KEYFRAME' || event.target.parentElement.nodeName == 'KEYFRAME') return;
@@ -1464,6 +1564,9 @@ Interface.definePanels(() => {
 						BarItems.slider_keyframe_time.update()
 						Animator.showMotionTrail(null, true)
 						Animator.preview()
+						// Keyframes are not reactive; move markers/update graphs imperatively
+						if (Timeline.vue.graph_editor_open) Timeline.vue.graph_revision++;
+						Timeline.vue.$forceUpdate();
 
 					}
 					function off() {
@@ -1674,6 +1777,8 @@ Interface.definePanels(() => {
 						Blockbench.setStatusBarText(text);
 						Animator.showMotionTrail(null, true)
 						Animator.preview()
+						Timeline.vue.graph_revision++;
+						Timeline.vue.$forceUpdate();
 
 					}
 					function off() {
@@ -1765,11 +1870,14 @@ Interface.definePanels(() => {
 				size() {this.updateTimecodes(); Timeline.updatePlayhead()},
 				length() {this.updateTimecodes()},
 				scroll_left() {this.updateTimecodes()},
+				// Calibrate the virtualized row height once rows exist
+				'animators.length'(count) {if (count) this.measureRowHeight()},
 			},
 			mounted() {
 				// Sync the imperatively updated playhead/timecode nodes after (re)mount
 				Timeline.setTimecode(Timeline.time);
 				Timeline.updatePlayhead();
+				this.updateScroll();
 			},
 			template: `
 				<div id="timeline_vue" :class="{graph_editor: graph_editor_open}" :style="{'--timeline-height': timeline_height + 'px'}">
@@ -1830,7 +1938,8 @@ Interface.definePanels(() => {
 					</div>
 					<div id="timeline_body" ref="timeline_body" @scroll="updateScroll($event)">
 						<div id="timeline_body_inner" v-bind:style="{width: (size*length + head_width)+'px'}" @contextmenu.stop="openContextMenu($event)">
-							<li v-for="animator in animators" class="animator" :class="{selected: animator.selected, boneless: animator.displayPosition && !animator.node}" :uuid="animator.uuid" v-on:click="animator.clickSelect();">
+							<div v-if="windowed_animators.padding_top" :style="{height: windowed_animators.padding_top + 'px'}"></div>
+							<li v-for="animator in windowed_animators.items" class="animator" :class="{selected: animator.selected, boneless: animator.displayPosition && !animator.node}" :uuid="animator.uuid" v-on:click="animator.clickSelect();">
 								<div class="animator_head_bar">
 									<div class="channel_head" v-bind:style="{left: '0px', width: head_width+'px'}" v-on:dblclick.stop="toggleAnimator(animator)" @contextmenu.stop="animator.showContextMenu($event)">
 										<div class="text_button" v-on:click.stop="toggleAnimator(animator)">
@@ -1849,7 +1958,7 @@ Interface.definePanels(() => {
 									<div class="keyframe_section" v-if="!graph_editor_open">
 										<template v-for="(channel_options, channel) in animator.channels" v-if="!(animator.expanded && channels[channel] != false && (!channels.hide_empty || animator[channel].length))">
 											<div
-												v-for="keyframe in animator[channel]"
+												v-for="keyframe in getVisibleKeyframes(animator, channel)"
 												v-bind:style="{left: (8 + keyframe.time * size) + 'px'}"
 												class="keyframe"
 												v-bind:id="'_'+keyframe.uuid"
@@ -1891,7 +2000,7 @@ Interface.definePanels(() => {
 									</div>
 									<div class="keyframe_section" v-if="!graph_editor_open">
 										<div
-											v-for="keyframe in animator[channel]"
+											v-for="keyframe in getVisibleKeyframes(animator, channel)"
 											v-bind:style="{left: (8 + keyframe.time * size) + 'px', color: getColor(keyframe.color)}"
 											class="keyframe"
 											v-bind:class="{[keyframe.channel]: true, selected: keyframe.selected, has_expressions: keyframe.has_expressions}"
@@ -1913,6 +2022,7 @@ Interface.definePanels(() => {
 									</div>
 								</div>
 							</li>
+							<div v-if="windowed_animators.padding_bottom" :style="{height: windowed_animators.padding_bottom + 'px'}"></div>
 							<div id="timeline_empty_head" class="channel_head" v-bind:style="{width: head_width+'px'}">
 							</div>
 							<div id="timeline_selector" class="selection_rectangle"></div>
@@ -1949,7 +2059,7 @@ Interface.definePanels(() => {
 								</svg>
 								<template v-if="graph_editor_animator">
 									<div
-										v-for="keyframe in graph_editor_animator[graph_editor_channel]"
+										v-for="keyframe in getVisibleKeyframes(graph_editor_animator, graph_editor_channel)"
 										v-bind:style="{left: (10 + keyframe.time * size) + 'px', top: (graph_offset - keyframe.display_value * graph_size - 8) + 'px', color: getColor(keyframe.color)}"
 										class="keyframe graph_keyframe"
 										v-bind:class="[keyframe.channel, keyframe.selected?'selected':'']"
