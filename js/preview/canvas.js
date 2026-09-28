@@ -659,6 +659,8 @@ export const Canvas = {
 				var mat = tex.getMaterial();
 				if (!mat) return;
 				mat.side = Canvas.getRenderSide(tex);
+				if (tex.material_in_front) tex.material_in_front.side = mat.side;
+				if (tex.material_behind) tex.material_behind.side = mat.side;
 			})
 		})
 		if (Canvas.layered_material) {

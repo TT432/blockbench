@@ -1274,7 +1274,7 @@ new NodePreviewController(Cube, {
 
 		} else if (Format.single_texture && !Project.getMultiFileRuleset()) {
 			let tex = Texture.getDefault();
-			mesh.material = tex ? tex.getMaterial() : Canvas.getEmptyMaterial(element.color);
+			mesh.material = tex ? tex.getMaterial(element.render_order) : Canvas.getEmptyMaterial(element.color);
 
 		} else {
 			let materials = [];
@@ -1282,7 +1282,7 @@ new NodePreviewController(Cube, {
 				if (element.faces[face].texture !== null) {
 					let tex = element.faces[face].getTexture();
 					if (tex && tex.uuid) {
-						materials.push(tex.getMaterial())
+						materials.push(tex.getMaterial(element.render_order))
 					} else {
 						materials.push(Canvas.getEmptyMaterial(element.color))
 					}

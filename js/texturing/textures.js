@@ -84,12 +84,11 @@ export class Texture {
 			},
 			vertexShader: prepareShader(VertShader),
 			fragmentShader: prepareShader(FragShader),
-			blending: this.render_mode == 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending,
-			side: Canvas.getRenderSide(this),
-			transparent: true,
-			depthWrite: false,
-			clipping: true
-		});
+		blending: this.render_mode == 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending,
+		side: Canvas.getRenderSide(this),
+		transparent: true,
+		clipping: true
+	});
 		mat.map = tex;
 		mat.name = this.name;
 		this.material = mat;
@@ -726,7 +725,11 @@ export class Texture {
 		mat.side = this.render_sides == 'auto' ? Canvas.getRenderSide() : (this.render_sides == 'front' ? THREE.FrontSide : THREE.DoubleSide);
 		let wrap = this.wrap_mode == 'repeat' ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
 		mat.map.wrapS = mat.map.wrapT = wrap;
-
+		[this.material_in_front, this.material_behind].forEach(variant => {
+			if (!variant) return;
+			variant.side = mat.side;
+			variant.blending = mat.blending;
+		});
 		// Map
 		mat.map.needsUpdate = true;
 
@@ -881,10 +884,29 @@ export class Texture {
 		}
 		return this;
 	}
-	getMaterial() {
+	getMaterial(render_order = 'default') {
 		let group = this.getGroup();
 		if (group?.is_material && BarItems.view_mode.value == 'material') {
 			return group.getMaterial();
+		}
+		if (render_order !== 'default') {
+			// Elements with a custom render order rely on draw order instead of the depth buffer,
+			// so they use per-texture material variants with modified depth behavior:
+			// - behind: no depth write; everything drawn afterwards covers it.
+			// - in_front: no depth test/write; drawn last and covers everything.
+			let key = render_order == 'in_front' ? 'material_in_front' : 'material_behind';
+			let mat = this[key];
+			if (!mat) {
+				mat = this.material.clone();
+				mat.uniforms = this.material.uniforms;
+				mat.depthWrite = false;
+				if (render_order == 'in_front') mat.depthTest = false;
+				this[key] = mat;
+			}
+			mat.name = this.material.name;
+			mat.blending = this.material.blending;
+			mat.side = this.material.side;
+			return mat;
 		}
 		return this.material;
 	}

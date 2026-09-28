@@ -1940,13 +1940,13 @@ new NodePreviewController(SplineMesh, {
             mesh.material = Canvas.getLayeredMaterial();
         else if (Format.single_texture) {
             let tex = Texture.getDefault();
-            mesh.material = tex ? tex.getMaterial() : Canvas.emptyMaterials[element.color];
+            mesh.material = tex ? tex.getMaterial(element.render_order) : Canvas.emptyMaterials[element.color];
         }
         else {
 			var material;
             var tex = element.getTexture();
             if (tex && tex.uuid) {
-                material = tex.getMaterial();
+                material = tex.getMaterial(element.render_order);
             } else {
                 material = Canvas.emptyMaterials[element.color];
             }
