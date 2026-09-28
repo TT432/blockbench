@@ -17,7 +17,7 @@ export const recent_projects = (function() {
 })() as RecentProjectData[];
 
 
-app.setAppUserModelId('blockbench');
+app.setAppUserModelId('blockbench-community');
 
 
 export function initializeDesktopApp() {

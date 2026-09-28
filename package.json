@@ -1,7 +1,7 @@
 {
-	"name": "Blockbench",
+	"name": "blockbench-community",
 	"description": "Low-poly modeling and animation software",
-	"desktopName": "net.blockbench.blockbench",
+	"desktopName": "blockbench-community",
 	"version": "5.2.2",
 	"license": "GPL-3.0-or-later",
 	"author": {
@@ -23,9 +23,9 @@
 	},
 	"build": {
 		"afterSign": "scripts/notarize.js",
-		"appId": "blockbench",
-		"productName": "Blockbench",
-		"artifactName": "${productName}_${version}.${ext}",
+		"appId": "blockbench-community",
+		"productName": "βlockβench",
+		"artifactName": "Blockbench-Community_${version}.${ext}",
 		"directories": {
 			"output": "dist-electron"
 		},
@@ -44,7 +44,7 @@
 					"x64"
 				]
 			},
-			"artifactName": "${productName}_${arch}_${version}.${ext}",
+			"artifactName": "Blockbench-Community_${arch}_${version}.${ext}",
 			"category": "macOS.application",
 			"hardenedRuntime": true,
 			"entitlements": "build/entitlements.mac.plist",
@@ -69,7 +69,7 @@
 			"icon.png"
 		],
 		"dmg": {
-			"artifactName": "${productName}_${arch}_${version}.${ext}",
+			"artifactName": "Blockbench-Community_${arch}_${version}.${ext}",
 			"window": {
 				"x": 200,
 				"y": 100,
@@ -90,7 +90,7 @@
 			]
 		},
 		"win": {
-			"artifactName": "${productName}_${arch}_${version}.${ext}",
+			"artifactName": "Blockbench-Community_${arch}_${version}.${ext}",
 			"target": {
 				"target": "nsis",
 				"arch": [
@@ -106,7 +106,7 @@
 			"license": "LICENSE.MD"
 		},
 		"linux": {
-			"artifactName": "${productName}_${version}.${ext}",
+			"artifactName": "Blockbench-Community_${version}.${ext}",
 			"target": [
 				"deb",
 				"rpm",

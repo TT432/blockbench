@@ -12,6 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const remote = require('@electron/remote/main')
 remote.initialize();
 
+
+// Community edition uses its own app identity (separate userData, install dir, shortcuts)
+// so it never interferes with an official Blockbench installation.
+app.setName('blockbench-community');
 // Resolved app entry point: external hot-update payload when present and verified,
 // otherwise the builtin index.html. Set during app startup and after applying an update.
 let current_index_path = path.join(__dirname, './../index.html');
@@ -102,7 +106,7 @@ function createWindow(second_instance, options = {}) {
 
 		let template = [
 			{
-				"label": "Blockbench",
+				"label": "βlockβench",
 				"submenu": [
 					{
 						"role": "hide"
