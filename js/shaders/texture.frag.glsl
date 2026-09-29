@@ -20,6 +20,18 @@ void main(void)
 	
 	if (color.a < 0.01) discard;
 
+#ifdef RENDER_ORDER_OPAQUE_PASS
+	// Opaque pass of a split render-order element: only fully opaque texels
+	// participate in the regular depth buffer.
+	if (color.a < 0.999) discard;
+#endif
+#ifdef RENDER_ORDER_TRANSLUCENT_PASS
+	// Translucent pass of a split render-order element: only genuinely
+	// semi-transparent texels use painter ordering; opaque texels were already
+	// drawn by the opaque pass with regular depth behavior.
+	if (color.a >= 0.999) discard;
+#endif
+
 	if (EMISSIVE == false) {
 		vec4 lit_color = vec4(lift + color.rgb * light, color.a);
 		gl_FragColor = lit_color;

@@ -1520,6 +1520,8 @@ new NodePreviewController(Mesh, {
 			if (!mesh.material) mesh.material = Canvas.transparentMaterial;
 		}
 
+		Texture.splitRenderOrderPasses(mesh);
+
 		this.dispatchEvent('update_faces', {element});
 	},
 	updateUV(element) {

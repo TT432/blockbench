@@ -1291,6 +1291,8 @@ new NodePreviewController(Cube, {
 			if (materials.allEqual(materials[0])) materials = materials[0];
 			mesh.material = materials;
 		}
+		Texture.splitRenderOrderPasses(mesh);
+
 		if (!mesh.material) mesh.material = Canvas.transparentMaterial;
 
 		Cube.preview_controller.dispatchEvent('update_faces', {element});
