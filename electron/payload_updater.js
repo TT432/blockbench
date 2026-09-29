@@ -112,21 +112,49 @@ function fetchJSON(url_string) {
 	});
 }
 
+const DOWNLOAD_MAX_ATTEMPTS = 5;
+const DOWNLOAD_STALL_TIMEOUT = 30000;
+
+function interruptibleSleep(ms, token) {
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			if (token && token.wakeers) token.wakeers.delete(done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		if (token) (token.wakeers ||= new Set()).add(done);
+	});
+}
+
 /**
- * Stream-download a URL to a file, reporting progress. Aborts as 'cancelled'
- * when token.cancelled is set (via token.request.abort()).
+ * Download a URL to a file. A single attempt; retries are handled by
+ * downloadWithRetries. Resumes from an existing partial file via HTTP Range
+ * when the server supports it (status 206), otherwise restarts from scratch.
+ * Fails on: non-2xx status, mid-body abort, stall (no data for 30s) or a
+ * truncated body (fewer bytes than announced). Aborts as 'cancelled' when
+ * token.cancelled is set (via token.request.abort()).
  */
-function downloadFile(url_string, dest_path, token, onProgress) {
+function downloadFile(url_string, dest_path, token, onProgress, expected_size) {
 	return new Promise((resolve, reject) => {
 		let settled = false;
 		let out = null;
+		let stall_timer = null;
 		const fail = (err) => {
+			clearTimeout(stall_timer);
 			if (out) out.destroy();
 			if (!settled) { settled = true; reject(err); }
 		};
-		const succeed = () => { if (!settled) { settled = true; resolve(); } };
+		const succeed = () => {
+			clearTimeout(stall_timer);
+			if (!settled) { settled = true; resolve(); }
+		};
+		let resumed_from = 0;
+		try { resumed_from = fs.statSync(dest_path).size; } catch (err) {}
 		const request = net.request({ url: url_string });
 		token.request = request;
+		if (resumed_from > 0) request.setHeader('Range', 'bytes=' + resumed_from + '-');
+		request.setHeader('Cache-Control', 'no-cache');
 		request.on('redirect', () => request.followRedirect());
 		request.on('response', (response) => {
 			if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -134,33 +162,97 @@ function downloadFile(url_string, dest_path, token, onProgress) {
 				request.abort();
 				return;
 			}
-			const total = parseInt(response.headers['content-length']) || 0;
-			let received = 0;
-			out = fs.createWriteStream(dest_path);
+			const resumed = resumed_from > 0 && response.statusCode === 206;
+			const base = resumed ? resumed_from : 0;
+			const body_total = parseInt(response.headers['content-length']) || 0;
+			const total = body_total ? base + body_total : (expected_size || 0);
+			let received = base;
+			out = fs.createWriteStream(dest_path, { flags: resumed ? 'a' : 'w' });
 			out.on('error', fail);
+			const armStallTimer = () => {
+				clearTimeout(stall_timer);
+				stall_timer = setTimeout(() => {
+					fail(new Error('download_stalled'));
+					request.abort();
+				}, DOWNLOAD_STALL_TIMEOUT);
+			};
+			armStallTimer();
 			response.on('data', (chunk) => {
 				received += chunk.length;
 				out.write(chunk);
+				armStallTimer();
 				if (onProgress) {
 					onProgress({
 						received,
 						total,
-						percent: total ? (received / total * 100) : null
+						percent: total ? Math.min(received / total * 100, 100) : null
 					});
 				}
 			});
 			response.on('end', () => {
 				out.end(() => {
 					if (token.cancelled) fail(new Error('cancelled'));
+					else if (total && received !== total) fail(new Error('download_truncated'));
 					else succeed();
 				});
 			});
+			response.on('aborted', () => fail(new Error('download_aborted')));
 			response.on('error', fail);
 		});
-		request.on('abort', () => fail(new Error('cancelled')));
+		request.on('abort', () => fail(new Error(token.cancelled ? 'cancelled' : 'download_aborted')));
 		request.on('error', (err) => fail(token.cancelled ? new Error('cancelled') : err));
 		request.end();
 	});
+}
+
+/**
+ * Download with automatic retries. Transient network failures (reset, stall,
+ * truncated body) resume from the partial file via HTTP Range. Corruption at
+ * the byte level is caught afterwards by the caller's sha512 check. Progress
+ * events gain attempt/max_attempts fields so the UI can signal retries.
+ */
+async function downloadWithRetries(url_string, dest_path, expected_size, token, onProgress) {
+	let last_err = new Error('download_failed');
+	for (let attempt = 1; attempt <= DOWNLOAD_MAX_ATTEMPTS; attempt++) {
+		if (token.cancelled) throw new Error('cancelled');
+		try {
+			await downloadFile(url_string, dest_path, token, (progress) => {
+				if (onProgress) {
+					onProgress(Object.assign({ attempt, max_attempts: DOWNLOAD_MAX_ATTEMPTS }, progress));
+				}
+			}, expected_size);
+			return;
+		} catch (err) {
+			if (token.cancelled || err.message === 'cancelled') throw new Error('cancelled');
+			last_err = err;
+			if (err.message === 'download_http_416') {
+				// Partial file at or beyond the remote size: restart from scratch
+				try { fs.rmSync(dest_path, { force: true }); } catch (e) {}
+			}
+			console.warn(`[update] Download attempt ${attempt}/${DOWNLOAD_MAX_ATTEMPTS} failed:`, err.message);
+			if (attempt < DOWNLOAD_MAX_ATTEMPTS) await interruptibleSleep(Math.min(1000 * attempt, 4000), token);
+		}
+	}
+	throw last_err;
+}
+
+/**
+ * Move a directory into place, retrying transient Windows EPERM/EBUSY errors
+ * (antivirus scans holding files), with a copy+delete fallback when rename
+ * never succeeds.
+ */
+async function moveDir(source, target) {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		try {
+			fs.rmSync(target, { recursive: true, force: true });
+			fs.renameSync(source, target);
+			return;
+		} catch (err) {
+			if (attempt < 4) await interruptibleSleep(300 * (attempt + 1), null);
+		}
+	}
+	fs.cpSync(source, target, { recursive: true });
+	fs.rmSync(source, { recursive: true, force: true });
 }
 
 /**
@@ -332,12 +424,21 @@ async function applyUpdate(manifest, onProgress, token) {
 	const extract_dir = path.join(root, `.tmp-payload-${version}`);
 	const final_dir = path.join(root, version);
 	try {
-		await downloadFile(manifest.payload.url, zip_path, token, onProgress);
-		if (token.cancelled) throw new Error('cancelled');
-
-		const zip_sha = await sha512File(zip_path);
-		if (zip_sha !== String(manifest.payload.sha512).toLowerCase()) {
-			throw new Error('hash_mismatch');
+		// Download + integrity check. A hash mismatch after a complete download
+		// means byte-level corruption (proxy/cache poisoning): discard the file
+		// and re-download from scratch once before giving up.
+		let verified = false;
+		for (let hash_attempt = 1; hash_attempt <= 2 && !verified; hash_attempt++) {
+			await downloadWithRetries(manifest.payload.url, zip_path, manifest.payload.size || 0, token, onProgress);
+			if (token.cancelled) throw new Error('cancelled');
+			const zip_sha = await sha512File(zip_path);
+			if (zip_sha === String(manifest.payload.sha512).toLowerCase()) {
+				verified = true;
+			} else {
+				console.warn('[update] Payload hash mismatch (attempt ' + hash_attempt + '/2), re-downloading');
+				try { fs.rmSync(zip_path, { force: true }); } catch (e) {}
+				if (hash_attempt === 2) throw new Error('hash_mismatch');
+			}
 		}
 		if (token.cancelled) throw new Error('cancelled');
 
@@ -347,8 +448,7 @@ async function applyUpdate(manifest, onProgress, token) {
 
 		await verifyPayloadDir(extract_dir);
 
-		fs.rmSync(final_dir, { recursive: true, force: true });
-		fs.renameSync(extract_dir, final_dir);
+		await moveDir(extract_dir, final_dir);
 
 		const manifest_file_sha = await sha512File(path.join(final_dir, 'payload-manifest.json'));
 		writeJSONAtomic(pointerPath(), { version, verified: true, manifest_sha: manifest_file_sha });
@@ -378,6 +478,7 @@ export function startApply(onProgress) {
 		cancel() {
 			token.cancelled = true;
 			if (token.request) token.request.abort();
+			if (token.wakeers) token.wakeers.forEach(wake => wake());
 		}
 	};
 	promise.finally(() => { active_apply = null; }).catch(() => {});
@@ -396,4 +497,12 @@ export function takeAppliedUpdate() {
 	} catch (err) {
 		return null;
 	}
+}
+
+/**
+ * Forget the external payload pointer so the next startup (or reload) falls
+ * back to the builtin version. Used when an applied payload fails to load.
+ */
+export function invalidatePayload() {
+	try { fs.rmSync(pointerPath(), { force: true }); } catch (err) {}
 }

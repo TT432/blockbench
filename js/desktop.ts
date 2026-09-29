@@ -728,6 +728,7 @@ export const UpdateManager = {
 	manifest: null as {version: string, changelog?: string, size?: number} | null,
 	action: null as Action | null,
 	progress_dialog: null as Dialog | null,
+	last_retry_notice: 0,
 
 	initialize() {
 		this.showAppliedChangelog();
@@ -807,8 +808,8 @@ export const UpdateManager = {
 		}).show();
 	},
 	startDownload() {
+		this.last_retry_notice = 0;
 		this.progress_dialog = new Dialog({
-			id: 'bb_update_download',
 			title: tl('update.download_title', [this.manifest ? this.manifest.version : '']),
 			progress_bar: {},
 			cancel_on_click_outside: false,
@@ -828,9 +829,13 @@ export const UpdateManager = {
 		ipcRenderer.removeListener('bb-update:done', this.onDone);
 		ipcRenderer.removeListener('bb-update:error', this.onError);
 	},
-	onProgress(event, progress: {received: number, total: number, percent: number | null}) {
+	onProgress(event, progress: {received: number, total: number, percent: number | null, attempt?: number, max_attempts?: number}) {
 		if (UpdateManager.progress_dialog && UpdateManager.progress_dialog.progress_bar) {
 			UpdateManager.progress_dialog.progress_bar.setProgress((progress.percent ?? 0) / 100);
+		}
+		if (progress.attempt && progress.attempt > 1 && progress.attempt != UpdateManager.last_retry_notice) {
+			UpdateManager.last_retry_notice = progress.attempt;
+			Blockbench.showQuickMessage(tl('update.retrying', [progress.attempt, progress.max_attempts || 5]));
 		}
 	},
 	onDone() {
@@ -849,9 +854,18 @@ export const UpdateManager = {
 			UpdateManager.progress_dialog.delete();
 			UpdateManager.progress_dialog = null;
 		}
+		let message_key = 'update.failed.message';
+		let detail = err.message || 'unknown';
+		if (detail == 'hash_mismatch') {
+			message_key = 'update.failed.hash_mismatch';
+		} else if (detail.startsWith('download_') || detail.startsWith('manifest_http_')) {
+			message_key = 'update.failed.network';
+		} else if (detail.startsWith('extract_failed') || detail.startsWith('payload_')) {
+			message_key = 'update.failed.extract';
+		}
 		Blockbench.showMessageBox({
 			title: 'update.failed.title',
-			message: tl('update.failed.message', [err.message || 'unknown']),
+			message: tl(message_key, [detail]),
 			icon: 'error'
 		});
 	},
