@@ -13,6 +13,7 @@ export class Group extends OutlinerNode {
 		this.shade = true;
 		this.mirror_uv = false;
 		this.selected = false;
+		this.directly_selected = false;
 		this.locked = false;
 		this.visibility = true;
 		this.export = true;
@@ -77,6 +78,7 @@ export class Group extends OutlinerNode {
 			unselectAllElements();
 			Project.groups.forEach(function(s) {
 				s.selected = false;
+				s.directly_selected = false;
 			})
 		}
 
@@ -102,6 +104,7 @@ export class Group extends OutlinerNode {
 		} else {
 			//Select This Group
 			this.selected = true;
+			this.directly_selected = true;
 			Group.multi_selected.safePush(this);
 		}
 
@@ -140,6 +143,7 @@ export class Group extends OutlinerNode {
 	multiSelect() {
 		if (this.locked) return this;
 		this.selected = true;
+		this.directly_selected = true;
 		Group.multi_selected.safePush(this);
 		this.children.forEach(function(s) {
 			s.markAsSelected()
@@ -166,6 +170,7 @@ export class Group extends OutlinerNode {
 			}
 		}
 		Group.multi_selected.remove(this);
+		this.directly_selected = false;
 		this.selected = false;
 		if (unselect_parent && this.parent.selected) {
 			this.parent.unselect(unselect_parent);
@@ -548,6 +553,12 @@ Group.addBehaviorOverride({
 		'rename',
 		'delete'
 	]);
+	function syncDirectlySelectedFlags() {
+		let multi = (typeof Project !== 'undefined' && Project && Project.selected_groups) || [];
+		for (let group of Group.all) {
+			group.directly_selected = multi.includes(group);
+		}
+	}
 	Object.defineProperty(Group, 'all', {
 		get() {
 			return Project.groups || [];
@@ -565,6 +576,7 @@ Group.addBehaviorOverride({
 				console.warn('Not an array!')
 			}
 			Project.selected_groups.replace(arr)
+			syncDirectlySelectedFlags()
 		}
 	})
 	Object.defineProperty(Group, 'selected', {
@@ -576,6 +588,7 @@ Group.addBehaviorOverride({
 				console.warn('Not an array!')
 			}
 			Project.selected_groups.replace(arr)
+			syncDirectlySelectedFlags()
 		}
 	})
 	Object.defineProperty(Group, 'first_selected', {
@@ -584,8 +597,12 @@ Group.addBehaviorOverride({
 		},
 		set(group) {
 			Project.selected_groups.replace([group]);
+			syncDirectlySelectedFlags()
 		}
 	})
+	// Re-sync per-group directly_selected flags after bulk mutation of Group.multi_selected (e.g. .empty()).
+	// Keeps the outliner line-guide check O(1) per row without a shared reactive dependency.
+	Group.syncDirectlySelectedFlags = syncDirectlySelectedFlags;
 
 new Property(Group, 'vector', 'origin', {default() {
 	return Format.centered_grid ? [0, 0, 0] : [8, 8, 8]

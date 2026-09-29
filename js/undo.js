@@ -492,6 +492,7 @@ UndoSystem.save = class {
 
 		if (this.groups) {
 			Group.multi_selected.empty();
+			Group.syncDirectlySelectedFlags();
 			for (let saved_group of this.groups) {
 				let group = OutlinerNode.uuids[saved_group.uuid];
 				if (group) {
