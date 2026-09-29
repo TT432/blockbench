@@ -733,28 +733,38 @@ export class Preview {
 	}
 	render() {
 		this.controls.update();
-		let background = Canvas.scene.background as THREE.CubeTexture;
-		if (this.isOrtho && background?.isCubeTexture) {
-			Canvas.scene.background = null;
-			background_scene.background = background;
-			background_camera.aspect = this.width / this.height;
-			background_camera.fov = this.camPers.fov;
-			background_camera.updateProjectionMatrix();
-			background_camera.quaternion.copy(this.camera.quaternion);
-			try {
-				this.renderer.render(background_scene, background_camera);
-				this.renderer.autoClear = false;
-				this.renderer.render(Canvas.scene, this.camera);
-			} finally {
-				this.renderer.autoClear = true;
-				background_scene.background = null;
-				Canvas.scene.background = background;
-			}
-		} else {
-			this.renderer.render(Canvas.scene, this.camera);
+		// Animator.preview() this frame already ran Canvas.scene.updateMatrixWorld(); skip the duplicate traversal inside renderer.render
+		let skip_matrix_update = Animator._scene_matrices_fresh === true;
+		if (skip_matrix_update) {
+			Animator._scene_matrices_fresh = false;
+			Canvas.scene.autoUpdate = false;
 		}
-		if (this.css_renderer) {
-			this.css_renderer.render(Canvas.scene, this.camera, this == Preview.selected);
+		try {
+			let background = Canvas.scene.background as THREE.CubeTexture;
+			if (this.isOrtho && background?.isCubeTexture) {
+				Canvas.scene.background = null;
+				background_scene.background = background;
+				background_camera.aspect = this.width / this.height;
+				background_camera.fov = this.camPers.fov;
+				background_camera.updateProjectionMatrix();
+				background_camera.quaternion.copy(this.camera.quaternion);
+				try {
+					this.renderer.render(background_scene, background_camera);
+					this.renderer.autoClear = false;
+					this.renderer.render(Canvas.scene, this.camera);
+				} finally {
+					this.renderer.autoClear = true;
+					background_scene.background = null;
+					Canvas.scene.background = background;
+				}
+			} else {
+				this.renderer.render(Canvas.scene, this.camera);
+			}
+			if (this.css_renderer) {
+				this.css_renderer.render(Canvas.scene, this.camera, this == Preview.selected);
+			}
+		} finally {
+			if (skip_matrix_update) Canvas.scene.autoUpdate = true;
 		}
 	}
 	// MARK: Camera
@@ -2555,6 +2565,7 @@ export function animate() {
 	if (performance.now() < last_animation_timestamp + 1000 / (settings.fps_limit.value as number) - 1) return;
 
 	last_animation_timestamp = performance.now();
+	Animator._scene_matrices_fresh = false;
 
 	TickUpdates.Run();
 
