@@ -126,6 +126,7 @@ declare namespace Animator {
 	const animations: BBAnimation[]
 	const selected: BBAnimation | undefined
 	const _last_values: Record<string, ArrayVector3>
+	let _scene_matrices_fresh: boolean
 	function join(): void
 	function leave(): void
 	function showDefaultPose(no_matrix_update?: boolean): void

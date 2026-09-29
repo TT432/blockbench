@@ -22,10 +22,17 @@ export const Animator = {
 	_onion_skin_revision: 0,
 	motion_trail_lock: false,
 	_last_values: {},
+	_scene_matrices_fresh: false,
 	global_variable_lines: {},
 	resetLastValues() {
 		for (let channel in BoneAnimator.prototype.channels) {
-			if (BoneAnimator.prototype.channels[channel].transform) Animator._last_values[channel] = [0, 0, 0];
+			if (!BoneAnimator.prototype.channels[channel].transform) continue;
+			let arr = Animator._last_values[channel];
+			if (arr) {
+				arr[0] = arr[1] = arr[2] = 0;
+			} else {
+				Animator._last_values[channel] = [0, 0, 0];
+			}
 		}
 	},
 	join() {
@@ -466,7 +473,7 @@ export const Animator = {
 			}
 		}
 	},
-	stackAnimations(animations, in_loop, controller_blend_values = 0) {
+	stackAnimations(animations, in_loop, controller_blend_values = 0, update_matrices = true) {
 		if (animations.length > 1 && Animation.selected && animations.includes(Animation.selected)) {
 			// Ensure selected animation is applied last so that transform gizmo gets correct pre rotation
 			animations = animations.slice();
@@ -504,7 +511,7 @@ export const Animator = {
 			})
 		})
 
-		Canvas.scene.updateMatrixWorld();
+		if (update_matrices) Canvas.scene.updateMatrixWorld();
 
 		Animator.resetLastValues();
 
@@ -542,7 +549,7 @@ export const Animator = {
 				controller_blend_values[animation.uuid] = user_blend_value * blend_value;
 				animations_to_play.push(animation);
 			})
-			Animator.stackAnimations(animations_to_play, in_loop, controller_blend_values);
+			Animator.stackAnimations(animations_to_play, in_loop, controller_blend_values, false);
 
 			// Last State
 			if (blend_value < 1 && last_state) {
@@ -558,10 +565,10 @@ export const Animator = {
 					controller_blend_values[animation.uuid] += user_blend_value * (1-blend_value);
 					animations_to_play.push(animation);
 				})
-				Animator.stackAnimations(animations_to_play, in_loop, controller_blend_values);
+				Animator.stackAnimations(animations_to_play, in_loop, controller_blend_values, false);
 			}
 		} else {
-			Animator.stackAnimations(Animation.all.filter(a => a.playing), in_loop);
+			Animator.stackAnimations(Animation.all.filter(a => a.playing), in_loop, 0, false);
 		}
 
 
@@ -579,7 +586,7 @@ export const Animator = {
 
 		Animator.updateOnionSkin();
 
-		Animator.displayMeshDeformation();
+
 
 		Billboard.all.forEach(billboard => {
 			Billboard.preview_controller.updateFacingCamera(billboard);
@@ -619,6 +626,12 @@ export const Animator = {
 		if (Group.first_selected || (Outliner.selected[0] && Outliner.selected[0].constructor.animator)) {
 			Transformer.updateSelection()
 		}
+
+		Canvas.scene.updateMatrixWorld();
+		Animator._scene_matrices_fresh = true;
+
+		Animator.displayMeshDeformation();
+
 		Blockbench.dispatchEvent('display_animation_frame', {in_loop});
 	},
 	particle_effects: {},
