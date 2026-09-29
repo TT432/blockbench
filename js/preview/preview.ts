@@ -1046,6 +1046,7 @@ export class Preview {
 
 			function unselectOtherNodes() {
 				Group.multi_selected.empty();
+				Group.syncDirectlySelectedFlags();
 				Outliner.elements.forEach(el => {
 					if (el !== data.element) Outliner.selected.remove(el);
 				})

@@ -106,8 +106,9 @@ export function updateNslideValues() {
 //Selections
 export function updateSelection(options = {}) {
 	if (!Project) return;
+	let selected_elements_set = new Set(Project.selected_elements);
 	Project.elements.forEach(obj => {
-		let included = Project.selected_elements.includes(obj);
+		let included = selected_elements_set.has(obj);
 		if (included && !obj.selected && !obj.locked) {
 			obj.markAsSelected()
 		} else if ((!included || obj.locked) && obj.selected) {
@@ -246,9 +247,10 @@ export function unselectAllElements(exceptions) {
 	for (let group of Group.multi_selected) {
 		group.unselect();
 	}
-	Group.all.forEach(function(s) {
-		s.selected = false
-	})
+	for (let group of Group.all) {
+		group.selected = false;
+		group.directly_selected = false;
+	}
 	Group.multi_selected.empty();
 	for (let key in Project.mesh_selection) {
 		if (exceptions && exceptions.some(ex => ex.uuid == key)) continue;

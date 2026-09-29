@@ -778,6 +778,7 @@ SharedActions.add('duplicate', {
 		Group.multi_selected.empty();
 		for (let group of Group.all) {
 			if (group.selected) group.selected = false;
+			if (group.directly_selected) group.directly_selected = false;
 		}
 		for (let group of groups_to_duplicate) {
 			let new_group = group.duplicate();
@@ -1281,7 +1282,7 @@ Interface.definePanels(function() {
 			//Other Entries
 			'<ul v-if="node.children && node.isOpen">' +
 				'<vue-tree-item v-for="item in visible_children" :node="item" :depth="depth + 1" :options="options" :key="item.uuid"></vue-tree-item>' +
-				`<div class="outliner_line_guide" v-if="node.children && (node.type == 'group' ? node.constructor.selected.includes(node) : (node.selected && !node.parent.selected))"></div>` +
+				`<div class="outliner_line_guide" v-if="node.children && (node.type == 'group' ? node.directly_selected : (node.selected && !node.parent.selected))"></div>` +
 			'</ul>' +
 		'</li>',
 		props: {
