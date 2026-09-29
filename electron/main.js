@@ -311,14 +311,35 @@ ipcMain.on('bb-update:start', (event) => {
 ipcMain.on('bb-update:cancel', () => {
 	if (active_apply) active_apply.cancel();
 })
-ipcMain.handle('bb-update:reload', () => {
+ipcMain.handle('bb-update:reload', async () => {
 	let url_path = url.format({
 		pathname: current_index_path,
 		protocol: 'file:',
 		slashes: true
 	});
+	const fallback = async (win, err) => {
+		// The applied payload failed to load (corrupt/missing files, AV
+		// interference): drop the pointer and load the builtin version instead
+		// of leaving the window blank.
+		console.error('[update] Failed to load updated payload, falling back to builtin:', err && err.message);
+		PayloadUpdater.invalidatePayload();
+		current_index_path = path.join(__dirname, './../index.html');
+		current_version = null;
+		try {
+			await win.loadURL(url.format({
+				pathname: current_index_path,
+				protocol: 'file:',
+				slashes: true
+			}));
+		} catch (e) {}
+	};
 	for (let win of all_wins) {
-		if (!win.isDestroyed()) win.loadURL(url_path);
+		if (win.isDestroyed()) continue;
+		try {
+			await win.loadURL(url_path);
+		} catch (err) {
+			await fallback(win, err);
+		}
 	}
 	return current_version;
 })
