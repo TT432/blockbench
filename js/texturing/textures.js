@@ -726,7 +726,7 @@ export class Texture {
 		mat.side = this.render_sides == 'auto' ? Canvas.getRenderSide() : (this.render_sides == 'front' ? THREE.FrontSide : THREE.DoubleSide);
 		let wrap = this.wrap_mode == 'repeat' ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
 		mat.map.wrapS = mat.map.wrapT = wrap;
-		[this.material_in_front, this.material_behind].forEach(variant => {
+		[this.material_in_front, this.material_behind, this.material_opaque_pass].forEach(variant => {
 			if (!variant) return;
 			variant.side = mat.side;
 			variant.blending = mat.blending;
@@ -910,6 +910,15 @@ export class Texture {
 					mat.uniforms = this.material.uniforms;
 					mat.depthWrite = false;
 					if (render_order == 'in_front') mat.depthTest = false;
+					if (this.render_mode != 'additive') {
+						// Semi-transparent texels only; opaque texels of the same element are
+						// rendered by the opaque pass (see Texture.splitRenderOrderPasses) so
+						// they keep regular depth behavior (community feedback 2026-09-29).
+						mat.defines = {RENDER_ORDER_TRANSLUCENT_PASS: 1};
+						mat._render_order_translucent_pass = true;
+						mat._opaque_pass = this.getRenderOrderOpaqueMaterial();
+					}
+					mat.needsUpdate = true;
 					this[key] = mat;
 				}
 				mat.name = this.material.name;
@@ -919,6 +928,56 @@ export class Texture {
 			}
 		}
 		return this.material;
+	}
+	getRenderOrderOpaqueMaterial() {
+		// Companion pass for translucent render-order variants: renders only fully opaque
+		// texels with regular depth test/write, so the opaque parts of a mixed element
+		// behave exactly like default-render-order geometry.
+		let mat = this.material_opaque_pass;
+		if (!mat) {
+			mat = this.material.clone();
+			mat.uniforms = this.material.uniforms;
+			mat.defines = {RENDER_ORDER_OPAQUE_PASS: 1};
+			mat.transparent = false;
+			mat.depthWrite = true;
+			mat.depthTest = true;
+			mat.needsUpdate = true;
+			this.material_opaque_pass = mat;
+		}
+		mat.name = this.material.name;
+		mat.blending = this.material.blending;
+		mat.side = this.material.side;
+		return mat;
+	}
+	static splitRenderOrderPasses(mesh) {
+		// Turns translucent render-order material slots into two draw passes (opaque cutout
+		// + translucent overlay) by duplicating the affected geometry groups. No-op unless
+		// a slot holds a translucent render-order variant.
+		let materials = Array.isArray(mesh.material) ? mesh.material.slice() : [mesh.material];
+		let split_slots = materials.map(mat => mat instanceof THREE.ShaderMaterial && mat._render_order_translucent_pass);
+		if (!split_slots.includes(true)) return;
+		let base_count = materials.length;
+		if (mesh.geometry.groups.length === 0) {
+			// Meshes without explicit material groups (e.g. splines) need one covering the
+			// full draw range before a second pass can be addressed by material index.
+			let count = mesh.geometry.index ? mesh.geometry.index.count : (mesh.geometry.attributes.position?.count || 0);
+			if (!count) return;
+			mesh.geometry.addGroup(0, count, 0);
+		}
+		let extra_materials = [];
+		mesh.geometry.groups.slice().forEach(group => {
+			let slot = base_count === 1 ? 0 : group.materialIndex;
+			if (!split_slots[slot]) return;
+			if (!extra_materials[slot]) {
+				extra_materials[slot] = materials[slot];
+				materials[slot] = extra_materials[slot]._opaque_pass;
+			}
+			mesh.geometry.addGroup(group.start, group.count, base_count + slot);
+		});
+		split_slots.forEach((split, slot) => {
+			if (split) materials[base_count + slot] = extra_materials[slot];
+		});
+		mesh.material = materials.length == 1 ? materials[0] : materials;
 	}
 	getAlphaData() {
 		if (!this._alpha_data) {

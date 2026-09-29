@@ -1957,6 +1957,8 @@ new NodePreviewController(SplineMesh, {
 			if (!mesh.material) mesh.material = Canvas.transparentMaterial;
 		}
 
+        Texture.splitRenderOrderPasses(mesh);
+
         this.dispatchEvent('update_faces', { element });
     },
     // Aza assumption: tell preview to display white overlay when hovered
