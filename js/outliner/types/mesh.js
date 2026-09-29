@@ -1466,7 +1466,7 @@ new NodePreviewController(Mesh, {
 
 		} else if (Format.single_texture) {
 			let tex = Texture.getDefault();
-			mesh.material = tex ? tex.getMaterial(element.render_order) : Canvas.getEmptyMaterial(element.color);
+			mesh.material = tex ? tex.getMaterial(element.render_order, element) : Canvas.getEmptyMaterial(element.color);
 
 		} else {
 			let faces = element.faces;
@@ -1475,7 +1475,7 @@ new NodePreviewController(Mesh, {
 				if (faces[key].vertices.length < 3) continue;
 				var tex = faces[key].getTexture()
 				if (tex && tex.uuid) {
-					materials.push(tex.getMaterial(element.render_order))
+					materials.push(tex.getMaterial(element.render_order, element))
 				} else {
 					materials.push(Canvas.getEmptyMaterial(element.color));
 				}
