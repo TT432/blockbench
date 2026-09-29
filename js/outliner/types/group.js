@@ -672,9 +672,14 @@ new NodePreviewController(Group, {
 		// not parented to the group bone. Each descendant keeps its own
 		// independent visibility state, which is re-evaluated here, so showing
 		// the group again does not un-hide individually hidden children.
+		// NOTE: forEachChild already visits every descendant exactly once.
+		// Apply per-node updates inline instead of recursing into
+		// updateVisibility — recursing re-walks every subtree once per
+		// ancestor and grows exponentially on deep rigs (2^depth).
 		group.forEachChild(child => {
 			if (child instanceof Group) {
-				this.updateVisibility(child);
+				if (child.mesh) child.mesh.visible = child.isVisibleInPreview();
+				this.dispatchEvent('update_visibility', {element: child});
 			} else if (child.preview_controller) {
 				child.preview_controller.updateVisibility(child);
 			}
