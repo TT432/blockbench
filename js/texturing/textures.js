@@ -126,6 +126,7 @@ export class Texture {
 				self.canvas.width = self.width;
 				self.canvas.height = self.height;
 				self.ctx.drawImage(img, 0, 0);
+				self.refreshTranslucency();
 				if (UVEditor.vue.texture == this) UVEditor.updateOverlayCanvas();
 			}
 
@@ -730,6 +731,7 @@ export class Texture {
 			variant.side = mat.side;
 			variant.blending = mat.blending;
 		});
+		this.refreshTranslucency();
 		// Map
 		mat.map.needsUpdate = true;
 
@@ -884,31 +886,134 @@ export class Texture {
 		}
 		return this;
 	}
-	getMaterial(render_order = 'default') {
+	getMaterial(render_order = 'default', element = null) {
 		let group = this.getGroup();
 		if (group?.is_material && BarItems.view_mode.value == 'material') {
 			return group.getMaterial();
 		}
 		if (render_order !== 'default') {
+			this._used_with_render_order = true;
 			// Elements with a custom render order rely on draw order instead of the depth buffer,
 			// so they use per-texture material variants with modified depth behavior:
 			// - behind: no depth write; everything drawn afterwards covers it.
 			// - in_front: no depth test/write; drawn last and covers everything.
-			let key = render_order == 'in_front' ? 'material_in_front' : 'material_behind';
-			let mat = this[key];
-			if (!mat) {
-				mat = this.material.clone();
-				mat.uniforms = this.material.uniforms;
-				mat.depthWrite = false;
-				if (render_order == 'in_front') mat.depthTest = false;
-				this[key] = mat;
+			// This only engages for elements that actually display semi-transparent texels
+			// (0 < alpha < 255). Elements showing only opaque or cutout texels keep default
+			// depth behavior, otherwise they would incorrectly see through / get covered by
+			// unrelated geometry (community feedback: render order must not affect opaque materials).
+			let translucent = element ? this.elementHasTranslucency(element) : this.hasTranslucency();
+			if (translucent) {
+				let key = render_order == 'in_front' ? 'material_in_front' : 'material_behind';
+				let mat = this[key];
+				if (!mat) {
+					mat = this.material.clone();
+					mat.uniforms = this.material.uniforms;
+					mat.depthWrite = false;
+					if (render_order == 'in_front') mat.depthTest = false;
+					this[key] = mat;
+				}
+				mat.name = this.material.name;
+				mat.blending = this.material.blending;
+				mat.side = this.material.side;
+				return mat;
 			}
-			mat.name = this.material.name;
-			mat.blending = this.material.blending;
-			mat.side = this.material.side;
-			return mat;
 		}
 		return this.material;
+	}
+	getAlphaData() {
+		if (!this._alpha_data) {
+			let image_data = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+			let plane = new Uint8Array(this.canvas.width * this.canvas.height);
+			for (let i = 0, j = 3; j < image_data.data.length; i++, j += 4) {
+				plane[i] = image_data.data[j];
+			}
+			this._alpha_data = {data: plane, width: this.canvas.width, height: this.canvas.height};
+		}
+		return this._alpha_data;
+	}
+	hasTranslucency() {
+		if (this._has_translucency === undefined) {
+			// Only genuinely semi-transparent texels (0 < alpha < 255) need painter-style
+			// draw ordering. Cutout textures (alpha 0/255 only) stay on the depth buffer,
+			// matching the official renderer. Additive blending glows through black opaque
+			// texels, so it always counts as translucent.
+			this._has_translucency = this.render_mode == 'additive';
+			if (!this._has_translucency) {
+				let {data} = this.getAlphaData();
+				for (let i = 0; i < data.length; i++) {
+					if (data[i] > 0 && data[i] < 255) {
+						this._has_translucency = true;
+						break;
+					}
+				}
+			}
+		}
+		return this._has_translucency;
+	}
+	uvAreaHasTranslucency(u0, v0, u1, v1) {
+		if (this.render_mode == 'additive') return true;
+		let {data, width, height} = this.getAlphaData();
+		// UV units map to texels isotropically; for flipbook strips this covers the
+		// first frame only (later frames unscanned -> conservative default behavior).
+		let factor = width / (this.uv_width || width);
+		let x0 = Math.max(0, Math.floor(Math.min(u0, u1) * factor));
+		let x1 = Math.min(width, Math.ceil(Math.max(u0, u1) * factor));
+		let y0 = Math.max(0, Math.floor(Math.min(v0, v1) * factor));
+		let y1 = Math.min(height, Math.ceil(Math.max(v0, v1) * factor));
+		for (let y = y0; y < y1; y++) {
+			let row = y * width;
+			for (let x = x0; x < x1; x++) {
+				let a = data[row + x];
+				if (a > 0 && a < 255) return true;
+			}
+		}
+		return false;
+	}
+	elementHasTranslucency(element) {
+		if (this.render_mode == 'additive') return true;
+		if (!this.hasTranslucency() || !element.faces) return false;
+		let scanned_face = false;
+		for (let key in element.faces) {
+			let face = element.faces[key];
+			if (!face || face.getTexture?.() !== this) continue;
+			let uv = face.uv;
+			if (Array.isArray(uv) && uv.length >= 4) {
+				scanned_face = true;
+				if (this.uvAreaHasTranslucency(uv[0], uv[1], uv[2], uv[3])) return true;
+			} else if (uv && typeof uv == 'object') {
+				// Mesh faces store uv per vertex key; use the bounding rect
+				let us = [], vs = [];
+				for (let vkey in uv) {
+					if (Array.isArray(uv[vkey])) {
+						us.push(uv[vkey][0]);
+						vs.push(uv[vkey][1]);
+					}
+				}
+				if (us.length) {
+					scanned_face = true;
+					if (this.uvAreaHasTranslucency(Math.min(...us), Math.min(...vs), Math.max(...us), Math.max(...vs))) return true;
+				}
+			}
+		}
+		// Faces with an unknown uv structure fall back to the texture-level decision
+		return scanned_face ? false : this.hasTranslucency();
+	}
+	refreshTranslucency() {
+		// Texture pixels changed: drop cached alpha data and reassign the materials of
+		// render-order elements using this texture, since their translucency
+		// classification (and therefore their depth behavior) may have flipped.
+		delete this._alpha_data;
+		delete this._has_translucency;
+		if (!this._used_with_render_order || typeof Outliner == 'undefined') return;
+		Outliner.elements.forEach(element => {
+			if (!element.faces || element.render_order === undefined || element.render_order === 'default') return;
+			for (let key in element.faces) {
+				if (element.faces[key].getTexture?.() === this) {
+					element.preview_controller?.updateFaces(element);
+					break;
+				}
+			}
+		});
 	}
 	getOwnMaterial() {
 		return this.material;
@@ -1870,6 +1975,7 @@ export class Texture {
 			this.updateImageFromCanvas();
 		}
 		if (UVEditor.vue.texture == this) UVEditor.updateOverlayCanvas();
+		this.refreshTranslucency();
 	}
 	updateChangesAfterEdit() {
 		if (this.layers_enabled) {
@@ -1881,6 +1987,7 @@ export class Texture {
 			}
 			this.source = this.canvas.toDataURL('image/png', 1);
 			this.updateImageFromCanvas();
+			this.refreshTranslucency();
 		}
 		if ((this.pbr_channel == 'mer' || this.pbr_channel == 'height') && this.getGroup()?.is_material && BarItems.view_mode.value == 'material') {
 			this.getGroup().updateMaterial();
