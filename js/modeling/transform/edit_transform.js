@@ -1,5 +1,5 @@
 import { TransformerModule } from "./transform_modules";
-import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, moveElementsInSpace } from "../transform";
+import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, moveElementsInSpace } from "../transform";
 
 function displayDistance(number) {
 	Blockbench.setCursorTooltip(trimFloatNumber(number));
@@ -265,7 +265,9 @@ new TransformerModule('edit', {
 		if (rotate_group) {
 			Undo.initEdit({groups: Group.multi_selected})
 		} else {
-			Undo.initEdit({elements: getSelectedMovingElements(), groups: Group.all.filter(g => g.selected)});
+			let transfer_undo_nodes = getGroupTransferOriginUndoNodes(Group.all.filter(g => g.selected));
+			transfer_undo_nodes.elements.safePush(...getSelectedMovingElements());
+			Undo.initEdit({elements: transfer_undo_nodes.elements, groups: transfer_undo_nodes.groups});
 		}
 	},
 	onMove(context) {

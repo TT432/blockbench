@@ -1,5 +1,6 @@
 import { Canvas } from "../preview/canvas";
 import { autoFixMeshEdit } from "./mesh/auto_fix";
+import { getGroupTransferOriginUndoNodes } from "./transform";
 
 export const Vertexsnap = {
 	step1: true,
@@ -173,13 +174,9 @@ export const Vertexsnap = {
 		return vector;
 	},
 	snap(data, options = 0, amended) {
-		let elements = Vertexsnap.elements.slice();
-		if (Vertexsnap.groups.length) {
-			for (let group of Vertexsnap.groups) {
-				group.forEachChild(child => elements.safePush(child), OutlinerElement);
-			}
-		}
-		Undo.initEdit({elements, groups: Vertexsnap.groups}, amended);
+		let transfer_undo_nodes = getGroupTransferOriginUndoNodes(Vertexsnap.groups);
+		transfer_undo_nodes.elements.safePush(...Vertexsnap.elements);
+		Undo.initEdit({elements: transfer_undo_nodes.elements, groups: transfer_undo_nodes.groups}, amended);
 
 		let mode = BarItems.vertex_snap_mode.get();
 

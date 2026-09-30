@@ -592,6 +592,28 @@ export function getSelectedMovingElements() {
 	return selection;
 }
 
+/**
+ * Collects everything that Group.transferOrigin mutates besides the passed groups
+ * themselves: all descendant elements (from/to/origin) and nested groups (origin).
+ * Undo snapshots of transferOrigin edits must include these nodes, otherwise undoing
+ * restores only the selected group's origin and leaves the compensation offsets on
+ * its children, visibly displacing the model whenever the group has a rotation.
+ */
+export function getGroupTransferOriginUndoNodes(selected_groups) {
+	let groups = selected_groups.slice();
+	let elements = [];
+	for (let group of selected_groups) {
+		group.forEachChild(child => {
+			if (child instanceof Group) {
+				groups.safePush(child);
+			} else {
+				elements.safePush(child);
+			}
+		});
+	}
+	return {elements, groups};
+}
+
 export function getSpatialInterval(event = 0) {
 	return canvasGridSize(event.shiftKey || Pressing.overrides.shift, event.ctrlOrCmd || Pressing.overrides.ctrl);
 }
@@ -1492,7 +1514,9 @@ BARS.defineActions(function() {
 		condition: () => (Modes.edit || Modes.animate || Modes.pose) && getPivotObjects() && (Group.first_selected || Outliner.selected.length > Locator.selected.length),
 		getInterval: getSpatialInterval,
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)})
+			let transfer_undo_nodes = getGroupTransferOriginUndoNodes(Group.all.filter(g => g.selected));
+			transfer_undo_nodes.elements.safePush(...Outliner.selected);
+			Undo.initEdit({elements: transfer_undo_nodes.elements, groups: transfer_undo_nodes.groups})
 		},
 		onAfter: function() {
 			Undo.finishEdit('Change pivot point')
@@ -1914,7 +1938,8 @@ BARS.defineActions(function() {
 		condition: {modes: ['edit', 'animate'], selected: {outliner: true}},
 		click() {
 			if (Format.bone_rig && Group.first_selected) {
-				Undo.initEdit({groups: Group.multi_selected})
+				let {elements, groups} = getGroupTransferOriginUndoNodes(Group.multi_selected);
+				Undo.initEdit({elements, groups})
 
 				for (let group of Group.multi_selected) {
 					let position = new THREE.Vector3();
@@ -1971,7 +1996,9 @@ BARS.defineActions(function() {
 		category: 'transform',
 		condition: {modes: ['edit', 'animate'], selected: {outliner: true}},
 		click() {
-			Undo.initEdit({outliner: true, elements: Outliner.selected})
+			let transfer_undo_nodes = getGroupTransferOriginUndoNodes(Group.all.filter(group => group.selected));
+			transfer_undo_nodes.elements.safePush(...Outliner.selected);
+			Undo.initEdit({outliner: true, elements: transfer_undo_nodes.elements, groups: transfer_undo_nodes.groups})
 			for (let group of Group.all) {
 				if (!group.selected) continue;
 				let position = new THREE.Vector3();
