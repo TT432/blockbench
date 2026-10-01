@@ -893,10 +893,13 @@ export class Texture {
 		}
 		if (render_order !== 'default') {
 			this._used_with_render_order = true;
-			// Elements with a custom render order rely on draw order instead of the depth buffer,
-			// so they use per-texture material variants with modified depth behavior:
-			// - behind: no depth write; everything drawn afterwards covers it.
-			// - in_front: no depth test/write; drawn last and covers everything.
+			// Elements with a custom render order use per-texture material variants that
+			// combine draw order with the depth buffer:
+			// - behind: no depth write; drawn first, everything drawn afterwards covers it.
+			// - in_front: no depth write; drawn last and covers other translucent layers.
+			// Both keep depth testing on, so occlusion always follows spatial position;
+			// render order only arbitrates between translucent layers that write no depth
+			// (community feedback 2026-10-01: translucent pixels must not be locked on top).
 			// This only engages for elements that actually display semi-transparent texels
 			// (0 < alpha < 255). Elements showing only opaque or cutout texels keep default
 			// depth behavior, otherwise they would incorrectly see through / get covered by
@@ -909,7 +912,6 @@ export class Texture {
 					mat = this.material.clone();
 					mat.uniforms = this.material.uniforms;
 					mat.depthWrite = false;
-					if (render_order == 'in_front') mat.depthTest = false;
 					if (this.render_mode != 'additive') {
 						// Semi-transparent texels only; opaque texels of the same element are
 						// rendered by the opaque pass (see Texture.splitRenderOrderPasses) so
