@@ -1481,10 +1481,7 @@ Interface.definePanels(function() {
 							} else if (!affected.includes(node) && (!node.locked || key == 'locked' || key == 'visibility')) {
 								let new_affected = [node];
 								if (node.forEachChild) {
-									// Group visibility cascades to descendants in the preview via the
-									// group's preview controller, so their own visibility flags (and the
-									// undo record) stay untouched here.
-									if (toggle_config.change_children != false && (key != 'visibility' || node instanceof Group == false)) {
+									if (toggle_config.change_children != false) {
 										node.forEachChild(node => {
 											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
 										});
