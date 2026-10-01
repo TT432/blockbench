@@ -669,9 +669,10 @@ new NodePreviewController(Group, {
 		// hides/shows the whole subtree in the scene graph.
 		if (group.mesh) group.mesh.visible = group.isVisibleInPreview();
 		// Cascade to descendants explicitly: without a bone rig their meshes are
-		// not parented to the group bone. Each descendant keeps its own
-		// independent visibility state, which is re-evaluated here, so showing
-		// the group again does not un-hide individually hidden children.
+		// not parented to the group bone. Each descendant's effective visibility
+		// is re-evaluated here from its own flag and the ancestor chain. The
+		// outliner toggle itself cascades flag writes to descendants (upstream
+		// semantics), so this controller only mirrors the resulting state.
 		// NOTE: forEachChild already visits every descendant exactly once.
 		// Apply per-node updates inline instead of recursing into
 		// updateVisibility — recursing re-walks every subtree once per
