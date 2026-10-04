@@ -220,6 +220,19 @@ export const Timeline = {
 					updateKeyframeSelection();
 					Undo.finishSelection('Unselect keyframes');
 				}
+				// 单击 channel 行空白（未触发框选）：播放头移到点击位置（功能反馈）
+				// 与标尺拖动同一规则：默认吸附 snapTime，按住 Ctrl 不吸附
+				let start_target = Timeline.selector.start_event.target;
+				if (start_target && start_target.classList && start_target.classList.contains('keyframe_section')) {
+					let rect = start_target.getBoundingClientRect();
+					let seek_time = Math.max((e.clientX - rect.left - 8) / Timeline.vue._data.size, 0);
+					if (!e.ctrlOrCmd && !Pressing.overrides.ctrl) {
+						seek_time = Timeline.snapTime(seek_time);
+					}
+					Timeline.setTime(seek_time);
+					Animator.preview();
+					Timeline.playAudioStutter();
+				}
 				Timeline.vue.clickGraphEditor(e);
 				return false;
 			} else {
@@ -1831,6 +1844,16 @@ Interface.definePanels(() => {
 				createKeyframeAt(animator, channel, event) {
 					if (!Animation.selected) return;
 					let time = Math.max((event.offsetX - 8) / this.size, 0);
+					// 吸附位置已有关键帧时选中它而不是新建：createKeyframe 的
+					// replaceOthers 会静默删除同时间关键帧并按点击处插值重建，
+					// 用户感知为"关键帧被吸走/值被改写"（反馈问题16）
+					let snapped = Timeline.snapTime(time);
+					let existing = animator[channel].find(kf => Math.abs(kf.time - snapped) < 1e-4);
+					if (existing) {
+						existing.select();
+						updateKeyframeSelection();
+						return;
+					}
 					animator.createKeyframe(null, time, channel, true);
 				},
 				getBezierHandleStyle(keyframe, side) {
