@@ -23,6 +23,14 @@ export const Animator = {
 	motion_trail_lock: false,
 	_last_values: {},
 	_scene_matrices_fresh: false,
+	// Static controller-pose fast path: when the playing controller state has no
+	// animations (and no other per-frame pose inputs), the displayed pose is the
+	// default pose on every frame. After one full Animator.preview() run the
+	// scene is clean and later frames only need transition evaluation.
+	// Holds the selected_state the clean pose was computed for, or false.
+	_controller_static_pose_clean: false,
+	_static_path_camera_position: new THREE.Vector3(),
+	_static_path_camera_quaternion: new THREE.Quaternion(),
 	global_variable_lines: {},
 	resetLastValues() {
 		for (let channel in BoneAnimator.prototype.channels) {
@@ -523,7 +531,45 @@ export const Animator = {
 			}
 		})
 	},
+	canReuseStaticControllerPose(controller) {
+		let state = controller.selected_state;
+		if (!state || state.animations.length || state.particles.length) return false;
+		// Blending from the previous state still evaluates its animations
+		let last = controller.last_state;
+		if (last) {
+			let progress = last.blend_transition ? Math.clamp(state.getStateTime() / last.blend_transition, 0, 1) : 1;
+			if (progress < 1) return false;
+		}
+		if (Animation.all.find(a => a.playing)) return false;
+		if (Undo.current_save) return false;
+		// preview.* placeholder lines can change pose/texture/model scale per frame
+		if (/^\s*preview\.\w+\s*=/m.test(Interface.Panels.variable_placeholders.inside_vue.text)) return false;
+		// Ground-plane shift animation depends on mouse-driven molang values
+		if (Canvas.ground_plane.visible && Animation.selected && Animation.selected.anim_time_update.includes('modified_distance_moved')) return false;
+		// Billboards follow the camera; reusable only while the camera is static
+		if (Billboard.all.length && Preview.selected) {
+			let cam = Preview.selected.camera;
+			if (!cam.position.equals(Animator._static_path_camera_position) ||
+				!cam.quaternion.equals(Animator._static_path_camera_quaternion)) {
+				return false;
+			}
+		}
+		// Plugins may mutate the scene from per-frame events. Counts above the
+		// internal baselines (display_animation_frame: reference_images video sync
+		// + texture_flipbook = 2; pre_stack_node_animations: bedrock_multi_file
+		// attachable default pose = 1; the rest: 0) indicate plugin listeners.
+		let ev = Blockbench.events;
+		if (ev.display_animation_frame && ev.display_animation_frame.length > 2) return false;
+		if (ev.pre_stack_node_animations && ev.pre_stack_node_animations.length > 1) return false;
+		if (ev.display_default_pose && ev.display_default_pose.length > 0) return false;
+		if (ev.render_frame && ev.render_frame.length > 0) return false;
+		return true;
+	},
 	preview(in_loop) {
+		// Any full pose pipeline run outside the controller fast path invalidates
+		// the cached clean pose (timeline playback, scrubbing, edits, UI events).
+		// The controller fast path re-marks the state right after calling this.
+		Animator._controller_static_pose_clean = false;
 		// Reset
 		Animator.showDefaultPose(true);
 		if (!Project) return;
@@ -1502,6 +1548,14 @@ function processVariablePlaceholderText(text) {
 		Animator.global_variable_lines[key] = val.trim()
 	}
 }
+
+// Any edit/selection/project change can alter the scene outside the pose
+// pipeline; force one full Animator.preview() run on the next controller frame.
+['finished_edit', 'undo', 'redo', 'load_undo_save', 'update_selection', 'select_project', 'new_project', 'load_project'].forEach(event_name => {
+	Blockbench.on(event_name, () => {
+		Animator._controller_static_pose_clean = false;
+	})
+})
 
 Object.assign(window, {
 	MolangParser,
