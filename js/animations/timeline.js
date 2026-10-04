@@ -1828,6 +1828,11 @@ Interface.definePanels(() => {
 					}
 					Timeline.time = original_time;
 				},
+				createKeyframeAt(animator, channel, event) {
+					if (!Animation.selected) return;
+					let time = Math.max((event.offsetX - 8) / this.size, 0);
+					animator.createKeyframe(null, time, channel, true);
+				},
 				getBezierHandleStyle(keyframe, side) {
 					let axis_number = getAxisNumber(this.graph_editor_axis);
 					let x_offset = -keyframe[`bezier_${side}_time`][axis_number] * this.size;
@@ -1998,7 +2003,7 @@ Interface.definePanels(() => {
 											<i class="material-icons">add</i>
 										</div>
 									</div>
-									<div class="keyframe_section" v-if="!graph_editor_open">
+									<div class="keyframe_section" v-if="!graph_editor_open" @dblclick.self="createKeyframeAt(animator, channel, $event)">
 										<div
 											v-for="keyframe in getVisibleKeyframes(animator, channel)"
 											v-bind:style="{left: (8 + keyframe.time * size) + 'px', color: getColor(keyframe.color)}"
