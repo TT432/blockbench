@@ -1,6 +1,7 @@
 import { BoundingBox } from "../outliner/types/bounding_box"
 
 let raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0));
+raycaster.layers.enableAll(); // 合批后的 cube mesh 在专用层（见 bone_batch.js），体素化需命中全部层
 function getAllParents(element: OutlinerElement): OutlinerNode[] {
 	let list = [];
 	let parent = element.parent;
