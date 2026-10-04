@@ -1118,8 +1118,25 @@ export class AnimationController extends AnimationItem {
 	}
 	updatePreview() {
 		let mode = BarItems.animation_controller_preview_mode.value;
-		if (mode == 'paused') return;
-		Animator.preview();
+		if (mode == 'paused') {
+			Animator._controller_static_pose_clean = false;
+			return;
+		}
+		// Static-pose fast path: a state without animations shows the default
+		// pose every frame, so after one full preview() the pose pipeline can be
+		// skipped until something invalidates it (transition, edit, camera move
+		// with billboards, plugin listeners, ...). Only transitions are checked.
+		let static_state = mode == 'play' && this.selected_state && Animator.canReuseStaticControllerPose(this);
+		if (static_state && Animator._controller_static_pose_clean === this.selected_state) {
+			Animator._scene_matrices_fresh = true;
+		} else {
+			Animator.preview();
+			if (Preview.selected) {
+				Animator._static_path_camera_position.copy(Preview.selected.camera.position);
+				Animator._static_path_camera_quaternion.copy(Preview.selected.camera.quaternion);
+			}
+			Animator._controller_static_pose_clean = static_state ? this.selected_state : false;
+		}
 
 		// Transitions
 		if (mode == 'play' && this.selected_state) {
