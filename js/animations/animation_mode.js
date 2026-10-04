@@ -3,6 +3,7 @@ import Wintersky from 'wintersky';
 import { Mode } from "../modes";
 import { clipboard, fs } from "../native_apis";
 import { openMolangEditor } from "./molang_editor";
+import { BoneBatcher } from "../preview/bone_batch";
 import './mirror_animating'
 
 export const Animator = {
@@ -677,6 +678,11 @@ export const Animator = {
 		Animator._scene_matrices_fresh = true;
 
 		Animator.displayMeshDeformation();
+
+		// 姿态管线完整跑过一帧（拖动时间轴/编辑关键帧值/播放等所有路径汇聚于此），
+		// 合并网格需重烘焙，否则批量代理网格停在旧姿态形成"影分身"。
+		// 状态机静态姿态快速路径不调用本函数，不受影响。
+		BoneBatcher.requestRebake();
 
 		Blockbench.dispatchEvent('display_animation_frame', {in_loop});
 	},
