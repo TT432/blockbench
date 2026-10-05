@@ -1,4 +1,4 @@
-import MolangParser from "molangjs";
+import MolangParser from "../lib/molangjs_vendored.esm.js";
 import Wintersky from 'wintersky';
 import { Mode } from "../modes";
 import { clipboard, fs } from "../native_apis";
@@ -31,6 +31,17 @@ export const Animator = {
 	// Holds the selected_state the clean pose was computed for, or false.
 	_controller_static_pose_clean: false,
 	_static_path_camera_position: new THREE.Vector3(),
+	// Cached uuid -> Animation lookup; Animation.all.find() scans 500+ entries
+	// through Vue-reactive getters and runs per controller state ref per frame.
+	_animation_uuid_map: null,
+	getAnimationByUuid(uuid) {
+		let map = Animator._animation_uuid_map;
+		if (!map) {
+			map = Animator._animation_uuid_map = new Map();
+			for (let anim of Animation.all) map.set(anim.uuid, anim);
+		}
+		return map.get(uuid);
+	},
 	_static_path_camera_quaternion: new THREE.Quaternion(),
 	global_variable_lines: {},
 	resetLastValues() {
@@ -590,7 +601,7 @@ export const Animator = {
 			animations_to_play = [];
 
 			selected_state.animations.forEach(a => {
-				let animation = Animation.all.find(anim => a.animation == anim.uuid);
+				let animation = Animator.getAnimationByUuid(a.animation);
 				if (!animation) return;
 				let user_blend_value = a.blend_value.trim() ? Animator.MolangParser.parse(a.blend_value) : 1;
 				controller_blend_values[animation.uuid] = user_blend_value * blend_value;
@@ -605,7 +616,7 @@ export const Animator = {
 				animations_to_play = [];
 
 				last_state.animations.forEach(a => {
-					let animation = Animation.all.find(anim => a.animation == anim.uuid);
+					let animation = Animator.getAnimationByUuid(a.animation);
 					if (!animation) return;
 					let user_blend_value = a.blend_value.trim() ? Animator.MolangParser.parse(a.blend_value) : 1;
 					if (!controller_blend_values[animation.uuid]) controller_blend_values[animation.uuid] = 0;
@@ -1560,6 +1571,13 @@ function processVariablePlaceholderText(text) {
 ['finished_edit', 'undo', 'redo', 'load_undo_save', 'update_selection', 'select_project', 'new_project', 'load_project'].forEach(event_name => {
 	Blockbench.on(event_name, () => {
 		Animator._controller_static_pose_clean = false;
+	})
+})
+
+// Invalidate the uuid -> Animation lookup cache on membership/project changes.
+;['add_animation', 'remove_animation', 'undo', 'redo', 'load_undo_save', 'select_project', 'new_project', 'load_project'].forEach(event_name => {
+	Blockbench.on(event_name, () => {
+		Animator._animation_uuid_map = null;
 	})
 })
 

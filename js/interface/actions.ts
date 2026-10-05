@@ -1,4 +1,4 @@
-import MolangParser from "molangjs";
+import MolangParser from "../lib/molangjs_vendored.esm.js";
 import { isMac, Keybinds } from "./keyboard";
 import tinycolor from "tinycolor2";
 import { RaycastResult } from "../preview/preview";
