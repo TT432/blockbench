@@ -1178,6 +1178,10 @@
 	.animation.selected {
 		background: var(--color-selected);
 	}
+	.animation.multi_selected:not(.selected) {
+		color: var(--color-light);
+		background-color: var(--color-button);
+	}
 	ul.indented .animation {
 		padding-left: 16px;
 	}

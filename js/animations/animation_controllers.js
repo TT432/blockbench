@@ -833,6 +833,7 @@ export class AnimationController extends AnimationItem {
 		this.uuid = guid()
 		this.playing = false;
 		this.selected = false;
+		this.multi_selected = false;
 		this.states = [];
 		this.selected_state = null;
 
@@ -1159,7 +1160,11 @@ export class AnimationController extends AnimationItem {
 		return this.playing;
 	}
 	showContextMenu(event) {
-		this.select();
+		if (!this.selected && !this.multi_selected) {
+			AnimationItem.all.forEach(a => { if (a.multi_selected) a.multi_selected = false; });
+			AnimationItem.last_selected = this;
+			this.select();
+		}
 		this.menu.open(event, this);
 		return this;
 	}
@@ -1316,9 +1321,14 @@ export class AnimationController extends AnimationItem {
 			icon: 'remove',
 			condition: () => Format.animation_files,
 			click(controller) {
-				Undo.initEdit({animation_controllers: [controller]})
-				controller.remove(false, false);
-				Undo.finishEdit('Unload animation controller', {animation_controllers: []})
+				let items = AnimationItem.getMultiSelected();
+				if (items.length > 1 && items.includes(controller)) {
+					AnimationItem.removeMultiSelected(items, false);
+				} else {
+					Undo.initEdit({animation_controllers: [controller]})
+					controller.remove(false, false);
+					Undo.finishEdit('Unload animation controller', {animation_controllers: []})
+				}
 			}
 		},
 		'delete',

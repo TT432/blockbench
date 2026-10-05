@@ -27,6 +27,7 @@ export class Animation extends AnimationItem {
 		this.playing = false;
 		this.override = false;
 		this.selected = false;
+		this.multi_selected = false;
 		this.length = 0;
 		this.path = '';
 		this.snapping = Math.clamp(settings.animation_snap.value, 10, 500);
@@ -336,7 +337,11 @@ export class Animation extends AnimationItem {
 	}
 	showContextMenu(event) {
 		Prop.active_panel = 'animations';
-		this.select();
+		if (!this.selected && !this.multi_selected) {
+			AnimationItem.all.forEach(a => { if (a.multi_selected) a.multi_selected = false; });
+			AnimationItem.last_selected = this;
+			this.select();
+		}
 		this.menu.open(event, this);
 		return this;
 	}
@@ -661,6 +666,35 @@ export const BBAnimation = Animation;
 		}
 	})
 	Animation.selected = null;
+	AnimationItem.last_selected = null;
+	AnimationItem.getMultiSelected = function() {
+		return AnimationItem.all.filter(a => a.selected || a.multi_selected);
+	}
+	AnimationItem.removeMultiSelected = function(items, prompt_delete_from_file) {
+		if (!items || !items.length) return;
+		let animations = items.filter(a => a instanceof Animation);
+		let controllers = items.filter(a => !(a instanceof Animation));
+		Undo.initEdit({animations, animation_controllers: controllers});
+		animations.forEach(animation => animation.remove(false, false));
+		controllers.forEach(controller => controller.remove(false, false));
+		Undo.finishEdit(prompt_delete_from_file ? 'Remove animations' : 'Unload animations', {animations: [], animation_controllers: []});
+		if (prompt_delete_from_file && isApp && Format.animation_files) {
+			let file_deletable = items.filter(a => AnimationCodec.getCodec(a)?.deleteAnimationFromFile && a.path && fs.existsSync(a.path));
+			if (file_deletable.length) {
+				Blockbench.showMessageBox({
+					translateKey: 'delete_animation',
+					icon: 'movie',
+					buttons: ['generic.delete', 'dialog.cancel'],
+					confirm: 0,
+					cancel: 1,
+				}, (result) => {
+					if (result == 0) {
+						file_deletable.forEach(a => AnimationCodec.getCodec(a).deleteAnimationFromFile(a));
+					}
+				})
+			}
+		}
+	}
 	Animation.prototype.menu = new Menu([
 		'copy',
 		'paste',
@@ -716,9 +750,14 @@ export const BBAnimation = Animation;
 			icon: 'remove',
 			condition: () => Format.animation_files,
 			click(animation) {
-				Undo.initEdit({animations: [animation]})
-				animation.remove(false, false);
-				Undo.finishEdit('Unload animation', {animations: []})
+				let items = AnimationItem.getMultiSelected();
+				if (items.length > 1 && items.includes(animation)) {
+					AnimationItem.removeMultiSelected(items, false);
+				} else {
+					Undo.initEdit({animations: [animation]})
+					animation.remove(false, false);
+					Undo.finishEdit('Unload animation', {animations: []})
+				}
 			}
 		},
 		'delete',
@@ -842,7 +881,12 @@ SharedActions.add('rename', {
 SharedActions.add('delete', {
 	condition: () => Prop.active_panel == 'animations' && AnimationItem.selected,
 	run() {
-		AnimationItem.selected.remove(true);
+		let items = AnimationItem.getMultiSelected();
+		if (items.length > 1) {
+			AnimationItem.removeMultiSelected(items, true);
+		} else {
+			AnimationItem.selected.remove(true);
+		}
 	}
 })
 SharedActions.add('duplicate', {
@@ -1751,6 +1795,31 @@ Interface.definePanels(function() {
 					this.files_folded[key] = !this.files_folded[key];
 					this.$forceUpdate();
 				},
+				clickAnimation(animation, event) {
+					if (event && (event.shiftKey || event.ctrlOrCmd || Pressing.overrides.ctrl || Pressing.overrides.shift)) {
+						if (event.shiftKey || Pressing.overrides.shift) {
+							let visible = Array.from(this.$el.querySelectorAll('#animations_list .animation'))
+								.map(node => AnimationItem.all.find(a => a.uuid == node.getAttribute('anim_id')))
+								.filter(a => a);
+							let start_i = visible.indexOf(AnimationItem.last_selected);
+							let end_i = visible.indexOf(animation);
+							animation.multi_selected = true;
+							if (start_i != -1 && end_i != -1) {
+								if (start_i > end_i) [start_i, end_i] = [end_i, start_i];
+								for (let i = start_i+1; i < end_i; i++) {
+									visible[i].multi_selected = true;
+								}
+							}
+						} else {
+							animation.multi_selected = !animation.multi_selected;
+						}
+						AnimationItem.last_selected = animation;
+						return;
+					}
+					AnimationItem.all.forEach(a => { if (a.multi_selected) a.multi_selected = false; });
+					AnimationItem.last_selected = animation;
+					animation.clickSelect();
+				},
 				saveFile(path, file) {
 					let codec = AnimationCodec.getCodec(file);
 					if (codec.exportFile) {
@@ -1884,6 +1953,13 @@ Interface.definePanels(function() {
 
 					let group_name_key = this.group_animations_by_file ? 'path' : 'group_name';
 
+					let drag_items = [anim];
+					if (anim.multi_selected) {
+						let all_of_type = (anim instanceof AnimationController) ? AnimationController.all : Animation.all;
+						let selected_set = all_of_type.filter(a => a.selected || a.multi_selected);
+						if (selected_set.length > 1) drag_items = selected_set;
+					}
+
 					function move(e2) {
 						convertTouchEvent(e2);
 						let offset = [
@@ -1911,7 +1987,7 @@ Interface.definePanels(function() {
 								helper = document.createElement('div');
 								helper.id = 'animation_drag_helper';
 								let icon = document.createElement('i');		icon.className = 'material-icons'; icon.innerText = 'movie'; helper.append(icon);
-								let span = document.createElement('span');	span.innerText = anim.name;	helper.append(span);
+								let span = document.createElement('span');	span.innerText = drag_items.length > 1 ? `${anim.name} (+${drag_items.length-1})` : anim.name;	helper.append(span);
 								document.body.append(helper);
 							}
 							helper.style.left = `${e2.clientX}px`;
@@ -1944,7 +2020,30 @@ Interface.definePanels(function() {
 							convertTouchEvent(e2);
 							let target = document.elementFromPoint(e2.clientX, e2.clientY);
 							let [target_anim] = eventTargetToAnim(target);
-							if (!target_anim || target_anim == anim ) return;
+							if (!target_anim || drag_items.includes(target_anim)) return;
+
+							if (drag_items.length > 1) {
+								let all = (anim instanceof AnimationController) ? AnimationController.all : Animation.all;
+								let remaining = all.filter(a => !drag_items.includes(a));
+								let insert_at = remaining.indexOf(target_anim);
+								if (insert_at == -1) return;
+								if (order == 1) insert_at++;
+								let new_order = remaining.slice();
+								new_order.splice(insert_at, 0, ...drag_items);
+								if (new_order.every((a, i) => a === all[i]) && drag_items.every(item => item[group_name_key] == target_anim[group_name_key])) return;
+
+								Undo.initEdit(anim instanceof AnimationController ? {animation_controllers: drag_items} : {animations: drag_items});
+
+								all.empty();
+								all.push(...new_order);
+								drag_items.forEach(item => {
+									item[group_name_key] = target_anim[group_name_key];
+									item.createUniqueName();
+								});
+
+								Undo.finishEdit(anim instanceof AnimationController ? 'Reorder animation controllers' : 'Reorder animations');
+								return;
+							}
 
 							if (anim instanceof AnimationController) {
 								let index = AnimationController.all.indexOf(target_anim);
@@ -2128,12 +2227,12 @@ Interface.definePanels(function() {
 						<ul v-if="!files_folded[key]" :class="{indented: !file.hide_head}">
 							<li
 								v-for="animation in file.animations"
-								v-bind:class="{ selected: animation.selected }"
+								v-bind:class="{ selected: animation.selected, multi_selected: animation.multi_selected }"
 								v-bind:anim_id="animation.uuid"
 								class="animation"
 								:key="animation.uuid"
 								:style="{'--color-scope': getScopeColor(animation)}"
-								@click.stop="animation.clickSelect()"
+								@click.stop="clickAnimation(animation, $event)"
 								@dblclick.stop="animation.propertiesDialog()"
 								@contextmenu.prevent.stop="animation.showContextMenu($event)"
 							>
