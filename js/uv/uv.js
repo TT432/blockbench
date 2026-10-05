@@ -738,6 +738,46 @@ export const UVEditor = {
 	forElements(cb) {
 		this.getMappableElements().forEach(cb);
 	},
+	// UV 数值（face.uv / uv_offset）经数组下标写入，Vue 2 无法观测；uv-editor-element
+	// 子组件因此不会因 UV 数据变化重渲染，父级 $forceUpdate 对 props 未变的子组件无效。
+	// loadData 是所有 UV 变更路径的汇聚刷新点，在此按元素计算 UV 签名，变化时提升
+	// 该元素子组件的 revision prop，精确触发对应子组件重渲染（不影响其余子组件）。
+	_uv_signatures: {},
+	getElementUVSignature(element) {
+		let h = 0;
+		const mix = v => { h = (Math.imul(h, 31) + (Math.round(Number(v) * 1024) | 0)) | 0; };
+		const mix_str = s => { if (typeof s === 'string') for (let i = 0; i < s.length; i += 4) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0; };
+		if (element.box_uv) {
+			mix(element.uv_offset[0]); mix(element.uv_offset[1]);
+			mix(element.size(0, 'box_uv')); mix(element.size(1, 'box_uv')); mix(element.size(2, 'box_uv'));
+		} else if (element.faces) {
+			for (let fkey in element.faces) {
+				let face = element.faces[fkey];
+				mix(face.texture === null ? 1 : 0);
+				mix_str(face.texture);
+				if (element.type == 'mesh') {
+					for (let vkey of face.vertices) {
+						let uv = face.uv[vkey];
+						if (uv) { mix(uv[0]); mix(uv[1]); }
+					}
+				} else {
+					mix(face.uv[0]); mix(face.uv[1]); mix(face.uv[2]); mix(face.uv[3]);
+					mix(face.rotation || 0);
+				}
+			}
+		}
+		return h;
+	},
+	updateUVRevisions() {
+		if (!this.vue || !this.vue.getDisplayedUVElements) return;
+		for (let element of this.vue.getDisplayedUVElements()) {
+			let sig = this.getElementUVSignature(element);
+			if (this._uv_signatures[element.uuid] !== sig) {
+				this._uv_signatures[element.uuid] = sig;
+				Vue.set(this.vue.uv_revisions, element.uuid, (this.vue.uv_revisions[element.uuid] || 0) + 1);
+			}
+		}
+	},
 	//Load
 	loadData() {
 		if (this.panel.folded) return this;
@@ -750,6 +790,7 @@ export const UVEditor = {
 		if (this.vue.uv_resolution[0] != uv_width || this.vue.uv_resolution[1] != uv_height) {
 			this.vue.uv_resolution.splice(0, 2, uv_width, uv_height);
 		}
+		this.updateUVRevisions();
 		this.updateUVNavigator();
 		this.vue.$forceUpdate();
 		return this;
@@ -2767,10 +2808,10 @@ Interface.definePanels(function() {
 	}
 	const UVEditorElement = {
 		name: 'uv-editor-element',
-		props: ['element', 'texture', 'mode', 'display_uv', 'cube_uv_rotation', 'face_names', 'mappable'],
+		props: ['element', 'texture', 'mode', 'display_uv', 'cube_uv_rotation', 'face_names', 'mappable', 'revision'],
 		methods: uv_editor_element_methods,
 		template: `
-			<span class="uv_element_wrapper" style="display: contents;">
+			<span class="uv_element_wrapper" style="display: contents;" :data-uv_revision="revision">
 
 				<template v-if="element.getTypeBehavior('cube_faces') && !element.box_uv">
 					<div class="cube_uv_face uv_face"
@@ -2939,6 +2980,7 @@ Interface.definePanels(function() {
 				texture_selection_polygon: [],
 
 				uv_resolution: [16, 16],
+				uv_revisions: {},
 				elements: [],
 				all_elements: [],
 				display_uv: settings.display_uv.value,
@@ -5183,6 +5225,7 @@ Interface.definePanels(function() {
 								:cube_uv_rotation="cube_uv_rotation"
 								:face_names="face_names"
 								:mappable="mappable_elements_set.has(element)"
+								:revision="uv_revisions[element.uuid]"
 							></uv-editor-element>
 
 							<div id="uv_selection_frame" v-if="mode == 'uv' && isScalingAvailable()" :style="getUVSelectionFrameStyle()">
