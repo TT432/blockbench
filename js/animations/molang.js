@@ -1,6 +1,31 @@
 import { isStringNumber } from "../util/math_util"
 import { EffectAnimator } from "./timeline_animators"
 
+// Per-frame memoization for query.all/any_animations_finished: every keyframe
+// molang evaluation re-evaluates these, and each evaluation used to rescan
+// Animation.all through Vue-reactive getters (O(refs x animations) per call).
+// The result only depends on (selected_state, state_time, ref animation
+// lengths), so resolve lengths once per state/epoch and compare numerically.
+// Epoch bumps (listeners at the bottom) cover edits while time is paused.
+const finished_query_cache = {
+	epoch: 0,
+	state: null,
+	state_epoch: -1,
+	lengths: null, // per state.animations ref: animation.length, or -1 when the ref is missing
+	all_time: -1,
+	any_time: -1,
+	all: 0,
+	any: 0,
+};
+function resolveFinishedQueryLengths(state) {
+	finished_query_cache.lengths = state.animations.map(ref => {
+		let animation = Animation.all.find(anim => anim.uuid == ref.animation);
+		return animation ? animation.length : -1;
+	});
+	finished_query_cache.state = state;
+	finished_query_cache.state_epoch = finished_query_cache.epoch;
+	finished_query_cache.all_time = finished_query_cache.any_time = -1;
+}
 Animator.MolangParser.context = {}
 Animator.MolangParser.global_variables = {
 	true: 1,
@@ -22,16 +47,16 @@ Animator.MolangParser.global_variables = {
 		return Math.floor(Timeline.time * 20);
 	},
 	get 'query.all_animations_finished'() {
-		if (AnimationController.selected?.selected_state) {
-			let state = AnimationController.selected?.selected_state
-			let state_time = state.getStateTime()
-			let all_finished = state.animations.allAre((a) => {
-				let animation = Animation.all.find((anim) => anim.uuid == a.animation)
-				return !animation || state_time > animation.length
-			})
-			return all_finished ? 1 : 0
+		let state = AnimationController.selected?.selected_state;
+		if (!state) return 0;
+		let state_time = state.getStateTime();
+		let c = finished_query_cache;
+		if (c.state !== state || c.state_epoch !== c.epoch) resolveFinishedQueryLengths(state);
+		if (c.all_time !== state_time) {
+			c.all = c.lengths.every(len => len < 0 || state_time > len) ? 1 : 0;
+			c.all_time = state_time;
 		}
-		return 0
+		return c.all;
 	},
 	get 'query.state_time'() {
 		if (AnimationController.selected?.selected_state) {
@@ -40,16 +65,16 @@ Animator.MolangParser.global_variables = {
 		return Timeline.time
 	},
 	get 'query.any_animation_finished'() {
-		if (AnimationController.selected?.selected_state) {
-			let state = AnimationController.selected?.selected_state
-			let state_time = state.getStateTime()
-			let finished_anim = state.animations.find((a) => {
-				let animation = Animation.all.find((anim) => anim.uuid == a.animation)
-				return animation && state_time > animation.length
-			})
-			return finished_anim ? 1 : 0
+		let state = AnimationController.selected?.selected_state;
+		if (!state) return 0;
+		let state_time = state.getStateTime();
+		let c = finished_query_cache;
+		if (c.state !== state || c.state_epoch !== c.epoch) resolveFinishedQueryLengths(state);
+		if (c.any_time !== state_time) {
+			c.any = c.lengths.some(len => len >= 0 && state_time > len) ? 1 : 0;
+			c.any_time = state_time;
 		}
-		return 0
+		return c.any;
 	},
 	'query.camera_rotation'(axis) {
 		let val = cameraTargetToRotation(
@@ -1968,6 +1993,14 @@ export function sortAutocompleteResults(results, incomplete) {
 		inheritedContext: MolangAutocomplete.DefaultContext,
 	})
 })()
+
+// Invalidate the finished-query memoization when edits/project changes can
+// alter animation lengths or set membership while time is paused.
+;['finished_edit', 'undo', 'redo', 'load_undo_save', 'select_project', 'new_project', 'load_project', 'add_animation', 'remove_animation'].forEach(event_name => {
+	Blockbench.on(event_name, () => {
+		finished_query_cache.epoch++;
+	});
+});
 
 Object.assign(window, {
 	getAllMolangExpressions,
