@@ -1907,6 +1907,15 @@ Interface.definePanels(() => {
 				Timeline.updatePlayhead();
 				this.updateScroll();
 			},
+			updated() {
+				// Repair the imperatively maintained playhead/timecode displays after
+				// every re-render. Vue's child diff can mis-pair sibling vnodes and
+				// clobber imperative style/text writes with stale binding values
+				// (fork regression: playhead/timestamp data are write-once initial
+				// values, so a stale write never self-corrects).
+				Timeline.setTimecode(Timeline.time);
+				Timeline.updatePlayhead();
+			},
 			template: `
 				<div id="timeline_vue" :class="{graph_editor: graph_editor_open}" :style="{'--timeline-height': timeline_height + 'px'}">
 					<div id="timeline_header">
@@ -1922,30 +1931,34 @@ Interface.definePanels(() => {
 						</div>
 						<div id="timeline_time_wrapper">
 						<div id="timeline_time" v-bind:style="{width: (size*length)+'px', left: -scroll_left+'px'}">
-								<div id="timeline_custom_range_indicator" v-if="custom_range[1]"
-									v-bind:style="{left: (custom_range[0] * size) + 'px', width: ((custom_range[1] - custom_range[0]) * size) + 'px'}"
-								/>
+							<div id="timeline_custom_range_indicator" v-if="custom_range[1]" key="timeline_custom_range_indicator"
+								v-bind:style="{left: (custom_range[0] * size) + 'px', width: ((custom_range[1] - custom_range[0]) * size) + 'px'}"
+							/>
 								<div v-for="t in timecodes" class="timeline_timecode" :key="t.text" :style="{left: (t.time * size) + 'px', width: (t.width * size) + 'px'}">
 									<span>{{ t.text }}</span>
 									<div class="substeps">
 										<div v-for="n in Math.ceil(t.substeps)" :key="t.text + '-' + n"></div>
 									</div>
 								</div>
-								<div id="timeline_playhead"
-									v-bind:style="{left: (playhead * size) + 'px'}"
-								/>
-								<div id="timeline_onion_skin_point"
-									v-if="onion_skin_selectable"
-									v-bind:style="{left: (onion_skin_time * size) + 'px'}"
-								/>
-								<div id="timeline_endbracket"
-									v-bind:style="{left: (animation_length * size) + 'px'}"
-								/>
-								<div
-									v-for="marker in markers"
-									class="timeline_marker tool"
-									:style="{left: (marker.time * size) + 'px', '--color': getColor(marker.color)}"
-									:uuid="marker.uuid"
+							<div id="timeline_playhead"
+								key="timeline_playhead"
+								v-bind:style="{left: (playhead * size) + 'px'}"
+							/>
+							<div id="timeline_onion_skin_point"
+								key="timeline_onion_skin_point"
+								v-if="onion_skin_selectable"
+								v-bind:style="{left: (onion_skin_time * size) + 'px'}"
+							/>
+							<div id="timeline_endbracket"
+								key="timeline_endbracket"
+								v-bind:style="{left: (animation_length * size) + 'px'}"
+							/>
+							<div
+								v-for="marker in markers"
+								:key="marker.uuid"
+								class="timeline_marker tool"
+								:style="{left: (marker.time * size) + 'px', '--color': getColor(marker.color)}"
+								:uuid="marker.uuid"
 									@contextmenu.prevent="marker.showContextMenu($event)"
 									@dblclick.prevent="marker.propertiesDialog()"
 									v-on:click="marker.callPlayhead()"
