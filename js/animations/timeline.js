@@ -85,6 +85,8 @@ export const Timeline = {
 	playing: false,
 	custom_range: [0, 0],
 	graph_editor_limit: 10_000,
+	// Shift+拖动标尺的范围选择状态（{start_time, start_x, active}，激活后置真）
+	ruler_range_select: null,
 	selector: {
 		start: [0, 0],
 		selecting: false,
@@ -215,15 +217,17 @@ export const Timeline = {
 			clearInterval(Timeline.selector.interval);
 
 			if (!Timeline.selector.selecting) {
-				if (settings.canvas_unselect.value) {
+				// 单击 channel 行空白（未触发框选）：取消当前关键帧选中 + 播放头移到点击位置
+				// （MI 式交互，反馈问题28）。取消选中在此区域不依赖 canvas_unselect 设置。
+				let start_target = Timeline.selector.start_event.target;
+				let is_section_click = !!(start_target && start_target.classList && start_target.classList.contains('keyframe_section'));
+				if (settings.canvas_unselect.value || is_section_click) {
 					Timeline.selected.empty();
 					updateKeyframeSelection();
 					Undo.finishSelection('Unselect keyframes');
 				}
-				// 单击 channel 行空白（未触发框选）：播放头移到点击位置（功能反馈）
 				// 与标尺拖动同一规则：默认吸附 snapTime，按住 Ctrl 不吸附
-				let start_target = Timeline.selector.start_event.target;
-				if (start_target && start_target.classList && start_target.classList.contains('keyframe_section')) {
+				if (is_section_click) {
 					let rect = start_target.getBoundingClientRect();
 					let seek_time = Math.max((e.clientX - rect.left - 8) / Timeline.vue._data.size, 0);
 					if (!e.ctrlOrCmd && !Pressing.overrides.ctrl) {
@@ -418,22 +422,29 @@ export const Timeline = {
 					Timeline.playAudioStutter();
 				}
 				Interface.addSuggestedModifierKey('ctrl', 'modifier_actions.drag_without_snapping');
-				if (e.shiftKey || Pressing.overrides.shift) {
-					time = Timeline.snapTime(time);
+			if (e.shiftKey || Pressing.overrides.shift) {
+				time = Timeline.snapTime(time);
 
-					for (let i = 0; i < Timeline.animators.length; i++) {
-						let animator = Timeline.animators[i];
-						for (let channel in animator.channels) {
-							if (Timeline.vue.channels[channel] !== false) {
-								let match = animator[channel].find(kf => Math.epsilon(kf.time, time, 0.01));
-								if (match && !match.selected) {
-									match.selected = true;
-									Timeline.selected.push(match);
-								}
+				for (let i = 0; i < Timeline.animators.length; i++) {
+					let animator = Timeline.animators[i];
+					for (let channel in animator.channels) {
+						if (Timeline.vue.channels[channel] !== false) {
+							let match = animator[channel].find(kf => Math.epsilon(kf.time, time, 0.01));
+							if (match && !match.selected) {
+								match.selected = true;
+								Timeline.selected.push(match);
 							}
 						}
 					}
-					updateKeyframeSelection();
+				}
+				updateKeyframeSelection();
+				// Shift+拖动 → 范围选择模式（功能反馈：全选时间范围内所有骨骼关键帧）
+				// 超过阈值后由 mousemove 激活；未超过则保持原有 shift+单击行为
+				Timeline.ruler_range_select = {
+					start_time: time,
+					start_x: e.clientX,
+					active: false,
+				};
 				}
 			}
 		})
@@ -445,26 +456,62 @@ export const Timeline = {
 			}
 			Blockbench.setCursorTooltip(time);
 		}
-		addEventListeners(document, 'mousemove touchmove', e => {
-			if (Timeline.dragging_playhead) {
+	addEventListeners(document, 'mousemove touchmove', e => {
+		if (Timeline.dragging_playhead) {
 
-				convertTouchEvent(e);
-				let offset = e.clientX - $('#timeline_time').offset().left;
-				let time = Math.clamp(offset / Timeline.vue._data.size, 0, Infinity);
-				let rounded = false;
-				if (!e.ctrlOrCmd && !Pressing.overrides.ctrl) {
-					time = Timeline.snapTime(time);
-					rounded = true;
+			convertTouchEvent(e);
+			let offset = e.clientX - $('#timeline_time').offset().left;
+			let time = Math.clamp(offset / Timeline.vue._data.size, 0, Infinity);
+			let rounded = false;
+			if (!e.ctrlOrCmd && !Pressing.overrides.ctrl) {
+				time = Timeline.snapTime(time);
+				rounded = true;
+			}
+			// Shift+拖动范围选择：超过 5px 阈值激活，激活后代替播放头拖动
+			let rrs = Timeline.ruler_range_select;
+			if (rrs) {
+				if (!rrs.active && Math.abs(e.clientX - rrs.start_x) > 5) {
+					rrs.active = true;
+					Undo.initSelection({timeline: true});
+					$('#timeline_range_selector').show();
 				}
-				if (Timeline.time != time) {
-					Timeline.setTime(time)
-					Animator.preview()
-					if (rounded) {
-						Timeline.playAudioStutter();
+				if (rrs.active) {
+					let min = Math.min(rrs.start_time, time);
+					let max = Math.max(rrs.start_time, time);
+					let {channels} = Timeline.vue._data;
+					Timeline.selected.empty();
+					for (let animator of Timeline.animators) {
+						for (let channel in animator.channels) {
+							if (channels[channel] === false) continue;
+							if (channels.hide_empty && !animator[channel].length) continue;
+							for (let kf of animator[channel]) {
+								let sel = kf.time >= min - 1e-6 && kf.time <= max + 1e-6;
+								kf.selected = sel;
+								if (sel) Timeline.selected.push(kf);
+							}
+						}
 					}
+					let size = Timeline.vue._data.size;
+					let body_inner = $('#timeline_body_inner').get(0);
+					$('#timeline_range_selector')
+						.css('left', (Timeline.vue._data.head_width + 8 + min * size) + 'px')
+						.css('width', ((max - min) * size) + 'px')
+						.css('top', '0px')
+						.css('height', (body_inner ? body_inner.offsetHeight : 0) + 'px');
+					updateKeyframeSelection();
 					displayTimeOnCursor(time);
+					return;
 				}
-			} else if (Timeline.dragging_endbracket) {
+			}
+			if (Timeline.time != time) {
+				Timeline.setTime(time)
+				Animator.preview()
+				if (rounded) {
+					Timeline.playAudioStutter();
+				}
+				displayTimeOnCursor(time);
+			}
+		} else if (Timeline.dragging_endbracket) {
 
 				convertTouchEvent(e);
 				let offset = e.clientX - $('#timeline_time').offset().left;
@@ -489,10 +536,22 @@ export const Timeline = {
 			}
 		});
 		addEventListeners(document, 'mouseup touchend', e => {
-			if (Timeline.dragging_playhead) {
-				delete Timeline.dragging_playhead;
-				Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.drag_without_snapping');
-				if (Timeline.playing) Timeline.pause();
+		if (Timeline.dragging_playhead) {
+			delete Timeline.dragging_playhead;
+			Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.drag_without_snapping');
+			if (Timeline.playing) Timeline.pause();
+			// Shift+拖动范围选择收尾
+			let rrs = Timeline.ruler_range_select;
+			if (rrs) {
+				Timeline.ruler_range_select = null;
+				if (rrs.active) {
+					$('#timeline_range_selector')
+						.css('width', 0)
+						.css('height', 0)
+						.hide();
+					Undo.finishSelection('Select keyframes in range');
+				}
+			}
 
 			} else if (Timeline.dragging_endbracket) {
 				Undo.finishEdit('Change Animation Length')
@@ -2067,6 +2126,7 @@ Interface.definePanels(() => {
 							<div id="timeline_empty_head" class="channel_head" v-bind:style="{width: head_width+'px'}">
 							</div>
 							<div id="timeline_selector" class="selection_rectangle"></div>
+							<div id="timeline_range_selector" class="selection_rectangle"></div>
 							<div id="timeline_graph_editor" ref="graph_editor" v-if="graph_editor_open" :style="{left: head_width + 'px', top: scroll_top + 'px'}">
 								<svg :style="{'margin-left': clamp(scroll_left, 9, Infinity) + 'px'}">
 									<path :d="zero_line" style="stroke: var(--color-grid);"></path>
