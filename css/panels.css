@@ -1756,6 +1756,9 @@
 	#timeline_selector {
 		display: none;
 	}
+	#timeline_range_selector {
+		display: none;
+	}
 	#timeline_body li > div {
 		display: flex;
 		min-height: 24px;
