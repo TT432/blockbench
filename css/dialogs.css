@@ -12,7 +12,10 @@
 		opacity: 0;
 	}
 	#blackout.darken {
-		background-color: var(--color-dark);
+		/* 固定深色，不跟随 --color-dark：该变量同时是用户可自定义的
+		   「暗色（工作区背景）」，跟随它会把对话框遮罩染成自定义色，
+		   整个 UI 被叠加染色（社区反馈） */
+		background-color: #21252b;
 		opacity: 0.6;
 	}
 	.dialog_handle {
