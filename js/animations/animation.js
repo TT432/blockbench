@@ -224,7 +224,16 @@ export class Animation extends AnimationItem {
 		Timeline.clear();
 		Timeline.vue._data.markers = this.markers;
 		Timeline.vue._data.animation_length = this.length;
-		Timeline.setTime(Timeline.time % this.length);
+		{
+			// Bedrock animations usually have length 0 (display length is computed
+			// dynamically via getMaxLength). time % 0 is NaN, and Math.clamp maps
+			// NaN to 0, which reset the playhead to the first frame on every
+			// re-select of such an animation (undo selection restore, entering
+			// animate mode, clicking the animation list). Wrap by the effective
+			// length instead; for empty animations keep the playhead where it is.
+			let wrap_length = this.length || this.getMaxLength();
+			if (wrap_length > 0) Timeline.setTime(Timeline.time % wrap_length);
+		}
 		Animator.MolangParser.resetVariables();
 		this.selected = true;
 		if (this.playing == false) this.playing = true;
