@@ -120,6 +120,9 @@ export const Animator = {
 		three_grid.position.z = three_grid.position.x;
 		Canvas.ground_plane.position.z = Canvas.ground_plane.position.x;
 		Animator.showDefaultPose();
+		// 姿态已复位到默认，但合批代理网格仍冻结在最后一帧动画姿态
+		// （编辑模式下 needsRebake 因 Animator.open=false 短路，不会自发重烘焙）
+		BoneBatcher.requestRebake();
 		if (Project) Project.model_3d.scale.set(1, 1, 1);
 
 		if (Panels.transform) {

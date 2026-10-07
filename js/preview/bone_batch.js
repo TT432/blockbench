@@ -441,7 +441,13 @@ const BoneBatcher = {
 	},
 
 	reset() {
-		// 工程切换/关闭：代理网格随 model_3d 一并移除，只需清状态
+		// 工程切换/关闭：旧工程的 model_3d 不会被销毁（标签页常驻内存），
+		// 必须主动移除并 dispose 代理网格——否则切回时 rebuild 新建一套，
+		// 旧代理成为孤儿滞留场景，模型渲染双份（不可选中、不可编辑）
+		for (let record of this.meshes.values()) {
+			if (record.mesh.parent) record.mesh.parent.remove(record.mesh);
+			record.geometry.dispose();
+		}
 		this.meshes.clear();
 		this.cube_entry.clear();
 		this.element_animated.clear();
