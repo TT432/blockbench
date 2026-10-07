@@ -1471,6 +1471,13 @@
 		position: relative;
 		background-color: var(--color-back);
 		height: calc(100% - 30px);
+		/* Vertical windowing changes spacer heights on scroll; Chromium scroll
+		   anchoring then compensates scrollTop for the shifted anchor row, which
+		   fires another scroll event and re-shifts the window — a self-sustaining
+		   loop that runs the scrollbar to the top or bottom (feedback row 32).
+		   The windowing itself keeps the viewport content stable, so anchoring
+		   is both harmful and unnecessary here. */
+		overflow-anchor: none;
 	}
 	.timeline_marker {
 		position: absolute;
