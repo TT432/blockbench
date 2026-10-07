@@ -516,7 +516,9 @@ Group.addBehaviorOverride({
 		new MenuSeparator('settings'),
 		'edit_bedrock_binding',
 		'set_element_marker_color',
-		"randomize_marker_colors",
+		'randomize_marker_colors',
+		'collapse_group_children',
+		'unfold_group_children',
 		{name: 'menu.cube.texture', icon: 'collections', condition: () => Format.per_group_texture, children(context) {
 			function applyTexture(texture_value, undo_message) {
 				let affected_groups = Group.all.filter(g => g.selected);
@@ -883,6 +885,30 @@ BARS.defineActions(function() {
 			Outliner.elements.forEach(element => {
 				if ('isOpen' in element) element.isOpen = true;
 			});
+		}
+	})
+	new Action('collapse_group_children', {
+		icon: 'format_indent_decrease',
+		category: 'edit',
+		click(context) {
+			let groups = Group.multi_selected.includes(context) ? Group.multi_selected : [context];
+			for (let group of groups) {
+				group.forEachChild(child => {
+					if ('isOpen' in child) child.isOpen = false;
+				}, undefined, true);
+			}
+		}
+	})
+	new Action('unfold_group_children', {
+		icon: 'format_indent_increase',
+		category: 'edit',
+		click(context) {
+			let groups = Group.multi_selected.includes(context) ? Group.multi_selected : [context];
+			for (let group of groups) {
+				group.forEachChild(child => {
+					if ('isOpen' in child) child.isOpen = true;
+				}, undefined, true);
+			}
 		}
 	})
 	new Action('edit_bedrock_binding', {
