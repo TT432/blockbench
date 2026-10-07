@@ -1341,7 +1341,7 @@ Interface.definePanels(() => {
 					if (!size || !isFinite(size)) return keyframes;
 					// Horizontal windowing + density culling: only render markers
 					// inside the viewport, and skip markers that would land within
-					// a few pixels of the previous one (visually indistinguishable).
+					// a few pixels of an already-rendered one (visually indistinguishable).
 					// Selected keyframes always render; while dragging, selected
 					// keyframes outside the viewport render as well.
 					let start_time = (this.scroll_left - 40) / size;
@@ -1349,15 +1349,22 @@ Interface.definePanels(() => {
 					let min_gap = 4 / size;
 					let include_offscreen_selected = !!(Timeline.dragging_keyframes && Timeline.selected.length);
 					let result = [];
-					let last_time = -Infinity;
+					// The channel array is append-ordered, not time-ordered
+					// (createKeyframe pushes). Density culling must therefore be
+					// order-independent: bucket by time and drop markers whose
+					// bucket neighborhood is already occupied. Comparing against
+					// only the previous entry permanently hid any keyframe
+					// created at a time earlier than an existing later one.
+					let occupied = new Set();
 					for (let i = 0; i < keyframes.length; i++) {
 						let kf = keyframes[i];
 						if (kf.time < start_time || kf.time > end_time) {
 							if (include_offscreen_selected && kf.selected) result.push(kf);
 							continue;
 						}
-						if (!kf.selected && kf.time - last_time < min_gap) continue;
-						last_time = kf.time;
+						let bucket = Math.round(kf.time / min_gap);
+						if (!kf.selected && (occupied.has(bucket - 1) || occupied.has(bucket) || occupied.has(bucket + 1))) continue;
+						occupied.add(bucket);
 						result.push(kf);
 					}
 					return result;

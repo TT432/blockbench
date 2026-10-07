@@ -1512,7 +1512,10 @@
 	#timeline_playhead {
 		position: absolute;
 		z-index: 3;
-		cursor: ew-resize;
+		/* Events pass through to the ruler (drag playhead) or to the channel row
+		   below (MI-style click/double-click); the handle itself must not swallow
+		   clicks now that single clicks move the playhead under the cursor. */
+		pointer-events: none;
 
 		height: 26px;
 		width: 18px;
