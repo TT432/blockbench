@@ -585,6 +585,7 @@ export const UVEditor = {
 		}
 	},
 	updateFaceSelection() {
+		this.updateUVRevisions();
 		updateSelection();
 	},
 	//Set
@@ -670,6 +671,7 @@ export const UVEditor = {
 			if (!event.shiftKey && Mesh.selected[0]) {
 				UVEditor.selectMeshUVIsland(UVEditor.getSelectedFaces(Mesh.selected[0])[0]);
 			}
+			UVEditor.updateUVRevisions();
 			updateSelection();
 		}
 		return matches;
@@ -740,8 +742,11 @@ export const UVEditor = {
 	},
 	// UV 数值（face.uv / uv_offset）经数组下标写入，Vue 2 无法观测；uv-editor-element
 	// 子组件因此不会因 UV 数据变化重渲染，父级 $forceUpdate 对 props 未变的子组件无效。
-	// loadData 是所有 UV 变更路径的汇聚刷新点，在此按元素计算 UV 签名，变化时提升
-	// 该元素子组件的 revision prop，精确触发对应子组件重渲染（不影响其余子组件）。
+	// 面选中状态（selected_element_faces / mesh_selection）同样是非响应式普通数组，
+	// 切换选中面时子组件也不重渲染（面轮廓高亮滞留旧位置，反馈 #21/#34）。
+	// loadData 与 updateFaceSelection 是两类变更的汇聚刷新点，在此按元素计算
+	// UV+面选中组合签名，变化时提升该元素子组件的 revision prop，精确触发对应
+	// 子组件重渲染（不影响其余子组件）。
 	_uv_signatures: {},
 	getElementUVSignature(element) {
 		let h = 0;
@@ -765,6 +770,9 @@ export const UVEditor = {
 					mix(face.rotation || 0);
 				}
 			}
+		}
+		if (element.getTypeBehavior && element.getTypeBehavior('select_faces') != false) {
+			mix_str(UVEditor.getSelectedFaces(element).slice().sort().join(','));
 		}
 		return h;
 	},
@@ -1132,6 +1140,7 @@ export const UVEditor = {
 			})
 		}
 		UVEditor.displayTools();
+		UVEditor.updateUVRevisions();
 	},
 	selectMeshUVIsland(face_key) {
 		let mesh = Mesh.selected[0];
@@ -3702,6 +3711,7 @@ Interface.definePanels(function() {
 									UVEditor.getSelectedFaces(element, true).empty();
 								}
 							}
+							UVEditor.updateUVRevisions();
 							UVEditor.vue.$forceUpdate();
 						}
 					}
