@@ -890,7 +890,12 @@ BARS.defineActions(function() {
 	new Action('collapse_group_children', {
 		icon: 'format_indent_decrease',
 		category: 'edit',
+		condition: () => !!Group.first_selected,
 		click(context) {
+			// 右键菜单里 Action 经 trigger(event) 触发时收到的是 DOM 事件而非组对象
+			//（反馈#25 复报：点击无效，TypeError forEachChild）；此时回退到当前选中组
+			if (!(context instanceof Group)) context = Group.first_selected;
+			if (!context) return;
 			let groups = Group.multi_selected.includes(context) ? Group.multi_selected : [context];
 			for (let group of groups) {
 				group.forEachChild(child => {
@@ -902,7 +907,10 @@ BARS.defineActions(function() {
 	new Action('unfold_group_children', {
 		icon: 'format_indent_increase',
 		category: 'edit',
+		condition: () => !!Group.first_selected,
 		click(context) {
+			if (!(context instanceof Group)) context = Group.first_selected;
+			if (!context) return;
 			let groups = Group.multi_selected.includes(context) ? Group.multi_selected : [context];
 			for (let group of groups) {
 				group.forEachChild(child => {
