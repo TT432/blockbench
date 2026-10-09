@@ -1231,21 +1231,21 @@ Interface.definePanels(() => {
 					this.length = Timeline.getMaxLength();
 
 					var step = 1
-					if (this.size < 1) {step = 1}
-					else if (this.size < 20) {step = 4}
-					else if (this.size < 40) {step = 2}
-					else if (this.size < 100) {step = 1}
-					else if (this.size < 256) {step = 0.5}
-					else if (this.size < 520) {step = 0.25}
-					else if (this.size < 660) {step = 0.2}
-					else if (this.size < 860) {step = 0.1}
-					else {step = 0.05}
-
-					// Rounding to "FPS" to better match snapping
-					if (step < 1) {
-						let substep_simplification = Math.max((Math.floor(Math.sqrt(step / Timeline.getStep()))-1), 1);
-						var FPS = Timeline.getStep() / substep_simplification;
-						step = Math.round(step/FPS) * FPS
+					// 步长从规整候选序列选取（反馈#35：旧秒级硬编码表+sqrt启发式取整在 15fps 下产生
+					// 8→15→30 帧的非规整跳变，间距感知错乱）。帧显模式用帧候选，秒显模式用秒候选，
+					// 取像素间距 ≥80px 的最小档；步长恒为整帧倍数以保持与吸附网格对齐。
+					let frame_time = Timeline.getStep()
+					let min_spacing = 80
+					if (settings.timecode_frame_number.value) {
+						const candidates = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+						let px_per_frame = this.size * frame_time
+						let frames = candidates.find(f => f * px_per_frame >= min_spacing) || candidates[candidates.length-1]
+						step = frames * frame_time
+					} else {
+						const candidates = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120]
+						step = candidates.find(s => s * this.size >= min_spacing) || candidates[candidates.length-1]
+						// 亚秒档对齐整帧（整秒档天然是整帧倍数）
+						if (step < 1) step = Math.max(Math.round(step / frame_time), 1) * frame_time
 					}
 
 					// Substep simplification
