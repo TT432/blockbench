@@ -439,6 +439,7 @@ export const MenuBar = {
 			'flip_animation',
 			'optimize_animation',
 			'retarget_animators',
+			'delete_unused_animators',
 			'bake_ik_animation',
 			'bake_animation_into_model',
 			'merge_animation',

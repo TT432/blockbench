@@ -709,6 +709,13 @@ UndoSystem.save = class {
 					animation.uuid = uuid
 				}
 				animation.extend(this.animations[uuid]).add(false)
+				// extend() is additive: remove animators that do not exist in the saved state
+				let saved_animators = this.animations[uuid].animators || {};
+				for (let animator_uuid in animation.animators) {
+					if (!saved_animators[animator_uuid]) {
+						animation.removeAnimator(animator_uuid);
+					}
+				}
 				if (this.animations[uuid].selected) {
 					animation.select()
 				}

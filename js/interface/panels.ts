@@ -266,18 +266,22 @@ export class Panel extends EventSystem {
 				addEventListeners(this.sidebar_resize_handle, 'mousedown touchstart', (event: MouseEvent) => {
 					let all_panels: Panel[] = this.slot == 'right_bar' ? Interface.getRightPanels() : Interface.getLeftPanels();
 					let self_index = all_panels.indexOf(this);
-					let resizable_static_height_panels = all_panels.filter(panel => panel.resizable && !panel.growable);
 					if (all_panels.length == 1 && all_panels[0].growable) {
 						// Only one panel in sidebar, make it fill the entire sidebar
 						return makeSidebarFilled(all_panels);
-					} else if (this.growable && resizable_static_height_panels.length) {
-						// This panel can dynamically expand, but another panel in the list is fixed height, so resize that one instead
-						resizable_static_height_panels.last().resize(event);
-					} else if (event.ctrlKey && all_panels[self_index+1]?.resizable) {
-						// Holding control resizes the other panel
-						all_panels[self_index+1].resize(event);
+					}
+					// The handle sits on the gap between two adjacent panels: on the bottom edge
+					// of a regular panel, or on the top edge of the bottommost panel.
+					let is_top_handle = this.container.classList.contains('bottommost_panel') && !this.container.classList.contains('topmost_panel');
+					let upper_panel: Panel = is_top_handle ? all_panels[self_index-1] : this;
+					let lower_panel: Panel = is_top_handle ? this : all_panels[self_index+1];
+					if (event.ctrlKey && lower_panel?.resizable) {
+						// Holding control only resizes the panel below the gap
+						lower_panel.resize(event);
+					} else if (upper_panel && lower_panel) {
+						// Resize the two panels adjacent to the gap so all other panels keep their height
+						upper_panel.resize(event, lower_panel);
 					} else {
-						// By default, resize the panel itself
 						this.resize(event);
 					}
 				});
@@ -695,9 +699,10 @@ export class Panel extends EventSystem {
 		this.dispatchEvent('fold', {});
 		return this;
 	}
-	resize(e1: MouseEvent | TouchEvent) {
+	resize(e1: MouseEvent | TouchEvent, adjacent_panel?: Panel) {
 		e1 = convertTouchEvent(e1);
 		let height_before = this.container.clientHeight;
+		let adjacent_height_before = adjacent_panel ? adjacent_panel.container.clientHeight : 0;
 		let started = false;
 		let direction = 1;
 		if (this.container.classList.contains('bottommost_panel') && !this.container.classList.contains('topmost_panel')) {
@@ -722,11 +727,22 @@ export class Panel extends EventSystem {
 			for (let panel of other_panels) {
 				sidebar_gap -= panel.container.clientHeight;
 			}
+			// Keep both adjacent panels above their minimum height
+			change_amount = Math.max(change_amount, this.min_height - height_before);
+			if (adjacent_panel) {
+				change_amount = Math.min(change_amount, adjacent_height_before - adjacent_panel.min_height);
+			}
 
-			let height1 = this.position_data.height;
 			this.position_data.fixed_height = true;
-			this.position_data.height = Math.max(height_before + change_amount, this.min_height);
+			this.position_data.height = height_before + change_amount;
 			this.update();
+			if (adjacent_panel) {
+				// Shrink/grow the panel on the other side of the gap by the same
+				// amount, so panels not adjacent to the gap keep their height.
+				adjacent_panel.position_data.fixed_height = true;
+				adjacent_panel.position_data.height = adjacent_height_before - change_amount;
+				adjacent_panel.update();
+			}
 		}
 		let stop = e2 => {
 			convertTouchEvent(e2);
