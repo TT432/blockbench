@@ -1226,7 +1226,10 @@ BARS.defineActions(function() {
 			}
 		},
 		click(event) {
-			let all_channels = BarItems.keyframe_column_create.keybind.additionalModifierTriggered(event) == 'all_channels';
+			// 反馈#44：keybind 自身含 Shift 时（如 Ctrl+Shift+K），每次按下 shiftKey 恒为 true，
+			// 会误触发 all_channels 变体给所有通道建帧；此时退化为与顶部按钮一致的「仅已有帧通道」。
+			let all_channels = !BarItems.keyframe_column_create.keybind.shift
+				&& BarItems.keyframe_column_create.keybind.additionalModifierTriggered(event) == 'all_channels';
 			Timeline.selected.empty();
 			let new_keyframes = [];
 			Undo.initEdit({keyframes: new_keyframes})

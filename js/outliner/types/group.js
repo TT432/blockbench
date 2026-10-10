@@ -71,10 +71,10 @@ export class Group extends OutlinerNode {
 		var allSelected = Group.multi_selected.length == 1 && Group.first_selected === this && Outliner.selected.length && this.matchesSelection();
 		let previous_first_selected = Project.selected_elements[0];
 		let multi_select = (event.ctrlOrCmd || Pressing.overrides.ctrl);
-		let shift_select = (event.shiftKey || Pressing.overrides.shift);
 
+		// 反馈#43：组的 shift 范围多选已移除（多选只保留 ctrl），shift+点击等同普通点击。
 		//Unselect others
-		if (!multi_select && !shift_select) {
+		if (!multi_select) {
 			unselectAllElements();
 			Project.groups.forEach(function(s) {
 				s.selected = false;
@@ -82,31 +82,10 @@ export class Group extends OutlinerNode {
 			})
 		}
 
-		if (event && shift_select && this.getParentArray().includes(Group.multi_selected.last()) && is_outliner_click) {
-			let selecting;
-			let last_selected = Group.multi_selected.last();
-			this.getParentArray().forEach((s, i) => {
-				let select_this = false;
-				if (s === last_selected || s === this) {
-					selecting = !selecting;
-					select_this = true;
-				} else if (selecting) {
-					select_this = true;
-				}
-				if (select_this) {
-					if (s instanceof Group) {
-						s.multiSelect()
-					} else if (!Outliner.selected.includes(s)) {
-						s.markAsSelected()
-					}
-				}
-			})
-		} else {
-			//Select This Group
-			this.selected = true;
-			this.directly_selected = true;
-			Group.multi_selected.safePush(this);
-		}
+		//Select This Group
+		this.selected = true;
+		this.directly_selected = true;
+		Group.multi_selected.safePush(this);
 
 		//Select / Unselect Children
 		if (allSelected && (event.which === 1 || isTouchEvent(event))) {

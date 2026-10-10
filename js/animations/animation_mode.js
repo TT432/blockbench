@@ -633,65 +633,75 @@ export const Animator = {
 		}
 
 
-		// Shift ground
-		if (Canvas.ground_plane.visible && Animation.selected && Animation.selected.anim_time_update.includes('modified_distance_moved')) {
-			let value = Animator.MolangParser.parse(Animation.selected.anim_time_update, {'query.modified_distance_moved': Timeline.time});
-			value = (Timeline.time / value) * Timeline.time * 3;
-			value = (value % 64) || 0;
-			Canvas.ground_plane.position.z = Canvas.ground_plane.position.x + value;
-			three_grid.position.z = three_grid.position.x + value;
-		} else {
-			three_grid.position.z = three_grid.position.x;
-			Canvas.ground_plane.position.z = Canvas.ground_plane.position.x;
-		}
+		// 姿态应用之后的全部环境/装饰步骤包进 try/catch（反馈#36）：任何一步抛异常都不得中断
+		// 姿态管线——requestRebake 被跳过会让合批代理网格永久冻结（画面停在旧姿态），
+		// 故异常仅上报（保留堆栈供定位），requestRebake 在其后无条件执行。
+		try {
+			// Shift ground
+			if (Canvas.ground_plane.visible && Animation.selected && Animation.selected.anim_time_update.includes('modified_distance_moved')) {
+				let value = Animator.MolangParser.parse(Animation.selected.anim_time_update, {'query.modified_distance_moved': Timeline.time});
+				value = (Timeline.time / value) * Timeline.time * 3;
+				value = (value % 64) || 0;
+				Canvas.ground_plane.position.z = Canvas.ground_plane.position.x + value;
+				three_grid.position.z = three_grid.position.x + value;
+			} else {
+				three_grid.position.z = three_grid.position.x;
+				Canvas.ground_plane.position.z = Canvas.ground_plane.position.x;
+			}
 
-		Animator.updateOnionSkin();
+			Animator.updateOnionSkin();
 
 
 
-		Billboard.all.forEach(billboard => {
-			Billboard.preview_controller.updateFacingCamera(billboard);
-		})
-
-		if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.texture\s*=/mi)) {
-			let tex_index = Animator.MolangParser.variableHandler('preview.texture');
-			let texture = Texture.all[tex_index % Texture.all.length];
-			if (texture && texture != Texture.selected) texture.select();
-		}
-		if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.texture_frame\s*=/mi)) {
-			let frame = Animator.MolangParser.variableHandler('preview.texture_frame');
-
-			Texture.all.forEach(tex => {
-				tex.currentFrame = (frame % tex.frameCount) || 0;
+			Billboard.all.forEach(billboard => {
+				Billboard.preview_controller.updateFacingCamera(billboard);
 			})
-			TextureAnimator.update(Texture.all.filter(tex => tex.frameCount > 1));
-		}
-		Project.model_3d.scale.set(1, 1, 1);
-		if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scale\s*=/mi)) {
-			let scale = Animator.MolangParser.variableHandler('preview.scale');
-			Project.model_3d.scale.x = Project.model_3d.scale.y = Project.model_3d.scale.z = scale;
-		}
-		if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scalex\s*=/mi)) {
-			let scale = Animator.MolangParser.variableHandler('preview.scalex');
-			Project.model_3d.scale.x = scale;
-		}
-		if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scaley\s*=/mi)) {
-			let scale = Animator.MolangParser.variableHandler('preview.scaley');
-			Project.model_3d.scale.y = scale;
-		}
-		if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scalez\s*=/mi)) {
-			let scale = Animator.MolangParser.variableHandler('preview.scalez');
-			Project.model_3d.scale.z = scale;
-		}
 
-		if (Group.first_selected || (Outliner.selected[0] && Outliner.selected[0].constructor.animator)) {
-			Transformer.updateSelection()
+			if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.texture\s*=/mi)) {
+				let tex_index = Animator.MolangParser.variableHandler('preview.texture');
+				let texture = Texture.all[tex_index % Texture.all.length];
+				if (texture && texture != Texture.selected) texture.select();
+			}
+			if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.texture_frame\s*=/mi)) {
+				let frame = Animator.MolangParser.variableHandler('preview.texture_frame');
+
+				Texture.all.forEach(tex => {
+					tex.currentFrame = (frame % tex.frameCount) || 0;
+				})
+				TextureAnimator.update(Texture.all.filter(tex => tex.frameCount > 1));
+			}
+			Project.model_3d.scale.set(1, 1, 1);
+			if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scale\s*=/mi)) {
+				let scale = Animator.MolangParser.variableHandler('preview.scale');
+				Project.model_3d.scale.x = Project.model_3d.scale.y = Project.model_3d.scale.z = scale;
+			}
+			if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scalex\s*=/mi)) {
+				let scale = Animator.MolangParser.variableHandler('preview.scalex');
+				Project.model_3d.scale.x = scale;
+			}
+			if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scaley\s*=/mi)) {
+				let scale = Animator.MolangParser.variableHandler('preview.scaley');
+				Project.model_3d.scale.y = scale;
+			}
+			if (Interface.Panels.variable_placeholders.inside_vue.text.match(/^\s*preview\.scalez\s*=/mi)) {
+				let scale = Animator.MolangParser.variableHandler('preview.scalez');
+				Project.model_3d.scale.z = scale;
+			}
+
+			// 反馈#45：矩阵刷新必须在 Transformer.updateSelection() 之前——gizmo 定位经
+			// getWorldCenter→localToWorld 读 matrixWorld（three r129 不自动刷新），
+			// 顺序颠倒会让旋转工具中心停在上一帧姿态的枢轴位置，与当前枢轴错位。
+			Canvas.scene.updateMatrixWorld();
+			Animator._scene_matrices_fresh = true;
+
+			if (Group.first_selected || (Outliner.selected[0] && Outliner.selected[0].constructor.animator)) {
+				Transformer.updateSelection()
+			}
+
+			Animator.displayMeshDeformation();
+		} catch (error) {
+			console.error('Error in animation preview post-pose steps:', error);
 		}
-
-		Canvas.scene.updateMatrixWorld();
-		Animator._scene_matrices_fresh = true;
-
-		Animator.displayMeshDeformation();
 
 		// 姿态管线完整跑过一帧（拖动时间轴/编辑关键帧值/播放等所有路径汇聚于此），
 		// 合并网格需重烘焙，否则批量代理网格停在旧姿态形成"影分身"。
