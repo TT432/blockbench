@@ -1,3 +1,5 @@
+import { animation_codec } from "./bedrock/bedrock_animation";
+
 new ModelFormat('free', {
 	icon: 'icon-format_free',
 	category: 'general',
@@ -24,6 +26,7 @@ new ModelFormat('free', {
 	per_texture_wrap_mode: true,
 	uv_rotation: true,
 	animation_mode: true,
+	animation_codec,
 	per_animator_rotation_interpolation: true,
 	animated_textures: true,
 	locators: true,

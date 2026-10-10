@@ -453,6 +453,8 @@
 	"message.duplicate_groups.message": "The name of this bone exists on multiple bones. This can cause problems.",
 	"message.optimize_animation.keyframes_removed": "Removed %0 redundant keyframes",
 	"message.optimize_animation.nothing_to_optimize": "Found nothing to optimize!",
+	"message.delete_unused_animators.animators_removed": "Deleted %0 unused animators and their keyframes",
+	"message.delete_unused_animators.nothing_to_delete": "No unused animators to delete!",
 	"message.duplicate_bone_copy_animation.title": "Copy Animation",
 	"message.duplicate_bone_copy_animation.message": "The duplicated bone is animated in %0 animations. Do you want to copy the keyframes over to the new bone?",
 
@@ -2290,6 +2292,8 @@
 	"action.optimize_animation.desc": "Optimize the current animation and reduce the keyframe count",
 	"action.retarget_animators": "Retarget Animations",
 	"action.retarget_animators.desc": "Select which animator targets which bone or element",
+	"action.delete_unused_animators": "Delete Unused Animators",
+	"action.delete_unused_animators.desc": "Delete keyframes whose animated group no longer exists in the model",
 	"action.merge_animation": "Merge Animation",
 	"action.merge_animation.desc": "Merge the animation into another animation",
 	"action.bake_ik_animation": "Bake Inverse Kinematics",

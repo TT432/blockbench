@@ -100,6 +100,20 @@ export function loadModelFile(file, args) {
 	}
 	// JSON
 	let model = autoParseJSON(file.content, {file_path: file.path});
+	// Bedrock animation files dropped in Animate mode are imported into the current project
+	// (must run before model codecs: bedrock_old's load filter also matches plain animation JSON)
+	if (
+		model && typeof model == 'object' &&
+		(model.animations || model.animation_controllers) &&
+		!model.meta && !model.elements && !model['minecraft:geometry'] &&
+		Condition({modes: ['animate']})
+	) {
+		let animation_codec = AnimationCodec.getCodec() || AnimationCodec.codecs.bedrock;
+		if (animation_codec) {
+			animation_codec.importFile({path: file.path, content: file.content});
+			return;
+		}
+	}
 	for (let id in Codecs) {
 		let success = loadIfCompatible(Codecs[id], 'json', model);
 		if (success) return;

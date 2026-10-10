@@ -955,6 +955,14 @@ new ValidatorCheck('unused_animators', {
 						}
 						Validator.dialog.close();
 					},
+				},
+				{
+					name: 'action.delete_unused_animators',
+					icon: 'delete',
+					click() {
+						Validator.dialog.close();
+						BarItems.delete_unused_animators.click();
+					},
 				}
 			];
 			this.warn({
@@ -1026,7 +1034,7 @@ BARS.defineActions(function() {
 	new Action('load_animation_file', {
 		icon: 'fa-file-video',
 		category: 'animation',
-		condition: {modes: ['animate'], features: ['animation_files'], method: () => AnimationCodec.getCodec()?.pickFile},
+		condition: {modes: ['animate'], method: () => AnimationCodec.getCodec()?.pickFile},
 		click: function () {
 			AnimationCodec.getCodec()?.pickFile();
 		}
@@ -1703,6 +1711,33 @@ BARS.defineActions(function() {
 
 			Undo.finishEdit('Retarget animations');
 			Animator.preview();
+		}
+	})
+	new Action('delete_unused_animators', {
+		icon: 'delete',
+		category: 'animation',
+		condition: {modes: ['animate'], method: () => Animation.selected},
+		click: function() {
+			let animation = Animation.selected;
+			let unused_animators = [];
+			for (let id in animation.animators) {
+				let animator = animation.animators[id];
+				if (animator instanceof BoneAnimator && animator.keyframes.length && !animator.getGroup()) {
+					unused_animators.push(animator);
+				}
+			}
+			if (!unused_animators.length) {
+				Blockbench.showQuickMessage('message.delete_unused_animators.nothing_to_delete', 1800);
+				return;
+			}
+			Undo.initEdit({animations: [animation]});
+			for (let animator of unused_animators) {
+				animator.keyframes.forEach(kf => kf.remove());
+				animation.removeAnimator(animator.uuid);
+			}
+			updateKeyframeSelection();
+			Undo.finishEdit('Delete unused animators');
+			Blockbench.showQuickMessage(tl('message.delete_unused_animators.animators_removed', unused_animators.length), 2000);
 		}
 	})
 	new Toggle('search_animations', {
