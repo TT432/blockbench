@@ -441,29 +441,45 @@ export const TextureGenerator = {
 				this.mirror_x = Math.sign(this.face.uv_size[0]);
 				this.mirror_y = Math.sign(this.face.uv_size[1]);
 				this.rotation = this.face.rotation;
-				// 岛尺寸由面 UV 实际覆盖的像素域决定（而非立方体尺寸取整），
-				// 保留分数 extent 与部分覆盖的边缘像素列，避免重建后贴图漂移（编号46）
-				let fx = (tex instanceof Texture && tex.getUVWidth()) ? tex.width / tex.getUVWidth() : 1;
-				let fy = (tex instanceof Texture && tex.getUVHeight()) ? tex.height / tex.getUVHeight() : 1;
-				let u0 = Math.min(this.face.uv[0], this.face.uv[2]);
-				let v0 = Math.min(this.face.uv[1], this.face.uv[3]);
-				let ew = Math.abs(this.face.uv[2] - this.face.uv[0]);
-				let eh = Math.abs(this.face.uv[3] - this.face.uv[1]);
-				let span_u = (Math.ceil((u0 + ew) * fx - 1e-6) - Math.floor(u0 * fx + 1e-6)) / fx;
-				let span_v = (Math.ceil((v0 + eh) * fy - 1e-6) - Math.floor(v0 * fy + 1e-6)) / fy;
-				let align_u = (u0 - Math.floor(u0 * fx + 1e-6) / fx);
-				let align_v = (v0 - Math.floor(v0 * fy + 1e-6) / fy);
 				// 旋转 90/270 的面：岛与写回 UV 使用四元面方向（axes 交换），drawCubeTexture 内部会再交换绘制
 				let swap = (this.rotation % 180) != 0;
-				this.width  = (swap ? span_v : span_u) * res_multiple;
-				this.height = (swap ? span_u : span_v) * res_multiple;
-				// 写回 UV 时保持原分数对齐与 extent（align 为 UV 矩形相对岛左上角的右/下偏移，≥0）
-				this.align_x = (swap ? align_v : align_u) * res_multiple;
-				this.align_y = (swap ? align_u : align_v) * res_multiple;
-				this.extent_w = (swap ? eh : ew) * res_multiple;
-				this.extent_h = (swap ? ew : eh) * res_multiple;
-				if (this.width  >= 0.01 && this.width  < 1) this.width  = 1 / res_multiple;
-				if (this.height >= 0.01 && this.height < 1) this.height = 1 / res_multiple;
+				// 本节所有尺寸均为新贴图的 UV 单位（res_multiple = 像素/UV单位），
+				// 岛尺寸向上对齐到新贴图的像素网格
+				if (cube.uv_lock || this.face.uv_lock) {
+					// 锁定（编号65）：不改变 UV 大小范围——岛尺寸由面 UV 实际覆盖的像素域决定，
+					// 保留分数 extent 与部分覆盖的边缘像素列，避免重建后贴图漂移（编号46）
+					let fx = (tex instanceof Texture && tex.getUVWidth()) ? tex.width / tex.getUVWidth() : 1;
+					let fy = (tex instanceof Texture && tex.getUVHeight()) ? tex.height / tex.getUVHeight() : 1;
+					let u0 = Math.min(this.face.uv[0], this.face.uv[2]);
+					let v0 = Math.min(this.face.uv[1], this.face.uv[3]);
+					let ew = Math.abs(this.face.uv[2] - this.face.uv[0]);
+					let eh = Math.abs(this.face.uv[3] - this.face.uv[1]);
+					let span_u = (Math.ceil((u0 + ew) * fx - 1e-6) - Math.floor(u0 * fx + 1e-6)) / fx;
+					let span_v = (Math.ceil((v0 + eh) * fy - 1e-6) - Math.floor(v0 * fy + 1e-6)) / fy;
+					let align_u = (u0 - Math.floor(u0 * fx + 1e-6) / fx);
+					let align_v = (v0 - Math.floor(v0 * fy + 1e-6) / fy);
+					this.width  = Math.ceil((swap ? span_v : span_u) * res_multiple - 1e-6) / res_multiple;
+					this.height = Math.ceil((swap ? span_u : span_v) * res_multiple - 1e-6) / res_multiple;
+					// 写回 UV 时保持原分数对齐与 extent（align 为 UV 矩形相对岛左上角的右/下偏移，≥0）
+					this.align_x = (swap ? align_v : align_u);
+					this.align_y = (swap ? align_u : align_v);
+					this.extent_w = (swap ? eh : ew);
+					this.extent_h = (swap ? ew : eh);
+				} else {
+					// 默认（编号58/64）：UV 大小自适应方块面实际尺寸——岛尺寸 = 面尺寸向上对齐像素网格，
+					// 写回 UV extent = 面尺寸（保留分数），密度归一化到 res_multiple 像素/单位，
+					// 方块缩放后重建/追加贴图不再沿用陈旧 UV 范围造成混素
+					let w_units = Math.abs(swap ? y : x);
+					let h_units = Math.abs(swap ? x : y);
+					this.width  = Math.ceil(w_units * res_multiple - 1e-6) / res_multiple;
+					this.height = Math.ceil(h_units * res_multiple - 1e-6) / res_multiple;
+					this.align_x = 0;
+					this.align_y = 0;
+					this.extent_w = w_units;
+					this.extent_h = h_units;
+				}
+				if (this.width  >= 0.01 / res_multiple && this.width  < 1 / res_multiple) this.width  = 1 / res_multiple;
+				if (this.height >= 0.01 / res_multiple && this.height < 1 / res_multiple) this.height = 1 / res_multiple;
 			} else {
 				this.posx = this.face.uv[0], this.face.uv[0+2];
 				this.posy = this.face.uv[1], this.face.uv[1+2];
@@ -541,6 +557,8 @@ export const TextureGenerator = {
 					}
 					
 					let template = new TextureGenerator.boxUVCubeTemplate(element, element.box_uv ? 0 : 1);
+					// 编号65：锁定的方块在新建/追加贴图时不改变 UV 位置（box UV 的范围由尺寸决定，位置即 uv_offset）
+					if (element.uv_lock) template.locked = true;
 	
 					if (options.double_use && Texture.all.length) {
 						let double_key = [...element.uv_offset, ...element.size(undefined, true), ].join('_')
@@ -1122,8 +1140,22 @@ export const TextureGenerator = {
 
 			let total = (box_uv_templates.length * 6 + face_list.length) * 1.05;
 			let handled = 0;
+			// 编号65：锁定的 box UV 方块固定在原 uv_offset 位置，先占位再打包其余模板
+			box_uv_templates.forEach(tpl => {
+				if (!tpl.locked) return;
+				tpl.posx = tpl.obj.uv_offset[0];
+				tpl.posy = tpl.obj.uv_offset[1];
+				for (let x = 0; x < tpl.width; x++) {
+					for (let y = 0; y < tpl.height; y++) {
+						occupy(Math.round(tpl.posx) + x, Math.round(tpl.posy) + y);
+					}
+				}
+				extend_x = Math.max(extend_x, tpl.posx + tpl.width);
+				extend_y = Math.max(extend_y, tpl.posy + tpl.height);
+			});
 			outer_loop:
 			for (let tpl of box_uv_templates) {
+				if (tpl.locked) continue;
 				if (performance.now() - last_timeout > 24) {
 					await setProgress(handled/total);
 				}

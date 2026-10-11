@@ -5036,6 +5036,23 @@ Interface.definePanels(function() {
 					Undo.finishEdit('Toggle face')
 					Canvas.updateSelectedFaces()
 				},
+				toggleFaceUVLock(key, event) {
+					// 编号65：锁定后该面在新建/追加贴图（重排 UV）时不改变自身 UV 大小范围
+					let value = !this.mappable_elements[0].faces[key].uv_lock;
+					Undo.initEdit({elements: Cube.selected, uv_only: true})
+					UVEditor.forCubes(obj => {
+						let faces = UVEditor.getFaces(obj, event);
+						if (!faces.includes(key)) {
+							faces = [key];
+						}
+						for (let side of faces) {
+							obj.faces[side].uv_lock = value;
+						}
+					})
+					UVEditor.loadData()
+					Undo.finishEdit('Toggle face UV lock')
+					this.$forceUpdate();
+				},
 				openFaceTextureMenu(event) {
 					let menu = new Menu(Texture.all.map(tex => {
 						return {
@@ -5132,6 +5149,8 @@ Interface.definePanels(function() {
 								
 							<label style="width: 76px;">Enabled</label>
 
+							<label style="width: 50px;" title="${tl('uv_editor.face_properties.uv_lock.desc')}">${tl('uv_editor.face_properties.uv_lock')}</label>
+
 							<label style="width: 120px;" class="flexible">Texture</label>
 
 							<template v-if="checkFormat({java_face_properties: true})">
@@ -5165,6 +5184,8 @@ Interface.definePanels(function() {
 							>
 								
 								<input type="checkbox" :checked="mappable_elements[0].faces[key].texture !== null" @change="toggleFaceEnabled(key, $event)" @pointerdown.stop>
+
+								<input type="checkbox" style="width: 50px;" title="${tl('uv_editor.face_properties.uv_lock.desc')}" :checked="mappable_elements[0].faces[key].uv_lock" @change="toggleFaceUVLock(key, $event)" @pointerdown.stop>
 
 								<label>{{ face_names[key] }}</label>
 
