@@ -2778,6 +2778,8 @@
 	"switches.export": "Export",
 	"switches.shade": "Shade",
 	"switches.mirror": "Mirror UV",
+	"switches.uv_lock": "Lock UV Size",
+	"switches.uv_lock.desc": "When locked, creating or appending a texture template does not change this element's UV size or position",
 	"switches.autouv": "Auto UV",
 	"switches.autouv.alt": "Relative",
 
@@ -2874,6 +2876,8 @@
 
 	"uv_editor.title": "UV Editor",
 	"uv_editor.face_properties": "Face Properties",
+	"uv_editor.face_properties.uv_lock": "UV Lock",
+	"uv_editor.face_properties.uv_lock.desc": "When locked, creating or appending a texture template does not change this face's UV size",
 	"uv_editor.face_properties.material_instance": "Material Instance",
 	"uv_editor.tint.info": "Tint can be enabled on a face to tell Minecraft to tint it. In vanilla, tint can only be used by specific blocks such as leaves and redstone dust, and can only have a value of 0.",
 	"uv_editor.cullface.info": "Enabling cullface tells a face on a block to unrender if another full block is placed next to it in the specified direction in your Minecraft world. This can be used to optimize performance.",

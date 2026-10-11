@@ -124,6 +124,8 @@ new Property(CubeFace, 'number', 'tint', {default: -1});
 new Property(CubeFace, 'enum', 'cullface', {values: ['', 'north', 'south', 'west', 'east', 'up', 'down']});
 new Property(CubeFace, 'string', 'material_name');
 new Property(CubeFace, 'boolean', 'enabled', {default: true});
+// 编号65：锁定后该面在新建/追加贴图（重排 UV）时不改变自身 UV 大小范围
+new Property(CubeFace, 'boolean', 'uv_lock', {default: false});
 
 CubeFace.opposite = {
 	north: 'south',
@@ -1081,6 +1083,14 @@ new Property(Cube, 'boolean', 'rescale', {
 	}
 });
 new Property(Cube, 'boolean', 'locked');
+// 编号65：锁定后方块在新建/追加贴图（重排 UV）时不改变自身 UV 大小范围与位置
+new Property(Cube, 'boolean', 'uv_lock', {
+	inputs: {
+		element_panel: {
+			input: {label: 'switches.uv_lock', description: 'switches.uv_lock.desc', type: 'checkbox'},
+		}
+	}
+});
 new Property(Cube, 'boolean', 'shade', {
 	default: true,
 	condition: {features: ['java_cube_shading_properties'], method: () => !Format.java_cube_shade_direction_override},

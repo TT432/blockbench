@@ -73,6 +73,12 @@ export const Clipbench = {
 			return Clipbench.types.display_slot
 		}
 		if (Animator.open && Prop.active_panel == 'animations') {
+			// 反馈#60：在动画列表里点击切换动画后，面板焦点停留在动画列表上，
+			// 此时 Ctrl+V 会被派发成“粘贴整个动画”。若剪贴板当前内容是关键帧，
+			// 应改为把关键帧粘贴到当前播放头位置。
+			if (Clipbench.getClipboardContentType() == 'keyframe') {
+				return Clipbench.types.keyframe;
+			}
 			return Clipbench.types.animation
 		}
 		if (Animator.open && (Timeline.animators.length || p == 'timeline') && ['keyframe', 'timeline', 'preview'].includes(p)) {
@@ -123,6 +129,22 @@ export const Clipbench = {
 		if (isApp && clipboard.readText()) {
 			return Clipbench.types.text;
 		}
+	},
+	// 探测剪贴板当前内容类型（'keyframe'/'animation'/null）。
+	// 桌面端直接读系统剪贴板 HTML（跨实例可靠）；网页端退化为会话内
+	// 的 last_copied 记录。供粘贴派发判断使用（反馈#60）。
+	getClipboardContentType() {
+		if (isApp) {
+			try {
+				let data = JSON.parse(clipboard.readHTML());
+				if (data && data.type === 'keyframes' && data.content && data.content.length) return 'keyframe';
+				if (data && data.type === 'animation' && data.content) return 'animation';
+			} catch (err) {}
+			return null;
+		}
+		if (Clipbench.last_copied == 'keyframe' && Clipbench.keyframes && Clipbench.keyframes.length) return 'keyframe';
+		if (Clipbench.last_copied == 'animation' && Clipbench.animation) return 'animation';
+		return null;
 	},
 	copy(event, cut) {
 		let match = SharedActions.run('copy', event, cut);
