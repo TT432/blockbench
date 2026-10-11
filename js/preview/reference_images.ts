@@ -28,6 +28,7 @@ interface ReferenceImageOptions {
 	sync_to_timeline?: boolean
 	cull_backface?: boolean
 	clear_mode?: boolean
+	crop?: number[]
 	attached_side?: string
 	source?: string
 	modes?: string[]
@@ -52,6 +53,16 @@ export class ReferenceImage {
 	clear_mode: boolean = false;
 	attached_side: string = '';
 	source: string = '';
+	/**Normalized crop insets [left, top, right, bottom], each 0..1 of the source image */
+	crop: number[] = [0, 0, 0, 0];
+	crop_mode: boolean = false;
+	crop_wrapper: HTMLDivElement;
+	/**@private */
+	_crop_backup?: number[];
+	/**@private */
+	_crop_overlay_nodes: HTMLElement[] = [];
+	/**@private */
+	_crop_key_listener?: (e: KeyboardEvent) => void;
 	modes: string[] = [];
 	uuid: string;
 	cache_version: number = 0;
@@ -96,6 +107,7 @@ export class ReferenceImage {
 		this.img = new Image();
 		this.img.style.display = 'none';
 		this.img.className = 'image_content';
+		this.crop_wrapper = Interface.createElement('div', {class: 'crop_viewport'}) as HTMLDivElement;
 		if (this.is_video) {
 			this.video = Interface.createElement('video', {
 				autoplay: true,
@@ -110,11 +122,12 @@ export class ReferenceImage {
 				this.video.style.pointerEvents = controls_usable ? 'auto' : '';
 			})
 			this.video.append(Interface.createElement('source', {type: `video/mp4`}))
-			this.node.append(this.video);
+			this.crop_wrapper.append(this.video);
 			this.image_is_loaded = true;
 		} else {
-			this.node.append(this.img);
+			this.crop_wrapper.append(this.img);
 		}
+		this.node.append(this.crop_wrapper);
 		this.scene_object = new CSS3DObject(this.node);
 		switch (Format.forward_direction) {
 			case '-z': this.plane_rotation[1] = 180; this.plane_position[2] = Format.block_size; break;
@@ -155,7 +168,21 @@ export class ReferenceImage {
 		this.extend(data);
 	}
 	get aspect_ratio(): number {
-		return this.source_width / this.source_height;
+		let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
+		let width = this.source_width * (1 - crop_l - crop_r);
+		let height = this.source_height * (1 - crop_t - crop_b);
+		return width / (height || 1);
+	}
+	/**
+	 * Crop insets [left, top, right, bottom] clamped so that the remaining window is at least 5% of the source
+	 */
+	getNormalizedCrop(): [number, number, number, number] {
+		let crop = this.crop || [0, 0, 0, 0];
+		let l = Math.clamp(crop[0] || 0, 0, 0.95);
+		let t = Math.clamp(crop[1] || 0, 0, 0.95);
+		let r = Math.clamp(crop[2] || 0, 0, 0.95 - l);
+		let b = Math.clamp(crop[3] || 0, 0, 0.95 - t);
+		return [l, t, r, b];
 	}
 	get source_width(): number {
 		return (this.is_video ? this.video.videoWidth : this.img.naturalWidth) || 16;
@@ -332,7 +359,24 @@ export class ReferenceImage {
 		if (this.rotation && this.view_mode != 'plane') transforms.push(`rotate(${this.rotation}deg)`);
 		if (this.flip_x) transforms.push('scaleX(-1)');
 		if (this.flip_y) transforms.push('scaleY(-1)');
-		image_content.style.transform = transforms.join(' ');
+		// Rotation/flipping applies to the crop viewport so the cropped window transforms as a unit
+		this.crop_wrapper.style.transform = transforms.join(' ');
+
+		let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
+		if (this.crop_mode) {
+			// In crop mode the node displays the full image, shades mark the cropped away parts
+			image_content.style.width = '100%';
+			image_content.style.height = '100%';
+			image_content.style.left = '0';
+			image_content.style.top = '0';
+		} else {
+			let full_width_factor = 1 / (1 - crop_l - crop_r);
+			let full_height_factor = 1 / (1 - crop_t - crop_b);
+			image_content.style.width = (full_width_factor * 100) + '%';
+			image_content.style.height = (full_height_factor * 100) + '%';
+			image_content.style.left = (-crop_l * full_width_factor * 100) + '%';
+			image_content.style.top = (-crop_t * full_height_factor * 100) + '%';
+		}
 
 		let source = this.source + (this.cache_version ? ('?'+this.cache_version) : '');
 		if (this.is_video) {
@@ -348,7 +392,7 @@ export class ReferenceImage {
 			}
 		}
 
-		this.img.style.imageRendering = (this.img.naturalWidth > this.size[0]) ? 'auto' : 'pixelated';
+		this.img.style.imageRendering = (this.source_width * (1 - crop_l - crop_r) > this.size[0]) ? 'auto' : 'pixelated';
 
 		if (!this.selected && this.clear_mode) {
 			let light_mode = document.body.classList.contains('light_mode');
@@ -386,7 +430,14 @@ export class ReferenceImage {
 			this.toolbar.querySelector('.tool[tool_id=flip_y]').classList.toggle('enabled', this.flip_y);
 			this.toolbar.querySelector('.tool[tool_id=visibility]').classList.toggle('enabled', this.visibility);
 			(this.toolbar.querySelector('.tool[tool_id=rotation]') as HTMLElement).style.display = this.view_mode == 'plane' ? 'block' : 'none';
+			let crop_button = this.toolbar.querySelector('.tool[tool_id=crop]') as HTMLElement;
+			if (crop_button) crop_button.style.display = (this.crop_mode || this.view_mode == 'plane') ? 'none' : '';
+			let crop_confirm = this.toolbar.querySelector('.tool[tool_id=crop_confirm]') as HTMLElement;
+			if (crop_confirm) crop_confirm.style.display = this.crop_mode ? '' : 'none';
+			let crop_cancel = this.toolbar.querySelector('.tool[tool_id=crop_cancel]') as HTMLElement;
+			if (crop_cancel) crop_cancel.style.display = this.crop_mode ? '' : 'none';
 		}
+		if (this.crop_mode) this.updateCropOverlay();
 		return this;
 	}
 	getZoomLevel(): number {
@@ -399,6 +450,19 @@ export class ReferenceImage {
 	}
 	updateTransform(): this {
 		if (!(this.node.isConnected || this.view_mode == 'plane')) return this;
+		// In crop mode the node temporarily displays the full uncropped image,
+		// shifted so the cropped window stays in place on screen
+		let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
+		let eff_width = this.size[0];
+		let eff_height = this.size[1];
+		let shift_x = 0;
+		let shift_y = 0;
+		if (this.crop_mode) {
+			eff_width = this.size[0] / (1 - crop_l - crop_r);
+			eff_height = this.size[1] / (1 - crop_t - crop_b);
+			shift_x = -crop_l * eff_width;
+			shift_y = -crop_t * eff_height;
+		}
 		if (Format.image_editor && this.is_blueprint) {
 			let uv_viewport = UVEditor.vue.$refs.viewport;
 			if (!uv_viewport || !uv_viewport.clientWidth || !uv_viewport.scrollLeft) return this;
@@ -406,13 +470,13 @@ export class ReferenceImage {
 			let zoom = this.getZoomLevel();
 			let offset_x = uv_viewport.scrollLeft - UVEditor.width/2;
 			let offset_y = uv_viewport.scrollTop - UVEditor.height/2;
-			let pos_x = this.position[0] * zoom - offset_x - (this.size[0] * zoom) / 2;
-			let pos_y = this.position[1] * zoom - offset_y - (this.size[1] * zoom) / 2;
+			let pos_x = this.position[0] * zoom - offset_x - (eff_width * zoom) / 2 + shift_x * zoom;
+			let pos_y = this.position[1] * zoom - offset_y - (eff_height * zoom) / 2 + shift_y * zoom;
 			pos_x += UVEditor.width/2;
 			pos_y += UVEditor.height/2;
 
-			this.node.style.width = (this.size[0] * zoom) + 'px';
-			this.node.style.height = (this.size[1] * zoom) + 'px';
+			this.node.style.width = (eff_width * zoom) + 'px';
+			this.node.style.height = (eff_height * zoom) + 'px';
 			this.node.style.left = pos_x + 'px';
 			this.node.style.top  = pos_y + 'px';
 
@@ -437,11 +501,11 @@ export class ReferenceImage {
 				pos_y += preview.node.parentElement.offsetTop;
 			}
 				
-			pos_x += (this.position[0] * zoom) - (this.size[0] * zoom) / 2;
-			pos_y += (this.position[1] * zoom) - (this.size[1] * zoom) / 2;
+			pos_x += (this.position[0] * zoom) - (eff_width * zoom) / 2 + shift_x * zoom;
+			pos_y += (this.position[1] * zoom) - (eff_height * zoom) / 2 + shift_y * zoom;
 
-			this.node.style.width = (this.size[0] * zoom) + 'px';
-			this.node.style.height = (this.size[1] * zoom) + 'px';
+			this.node.style.width = (eff_width * zoom) + 'px';
+			this.node.style.height = (eff_height * zoom) + 'px';
 			this.node.style.left = pos_x + 'px';
 			this.node.style.top  = pos_y + 'px';
 
@@ -456,14 +520,14 @@ export class ReferenceImage {
 			}
 
 		} else {
-			this.node.style.width = this.size[0] + 'px';
-			this.node.style.height = this.size[1] + 'px';
+			this.node.style.width = eff_width + 'px';
+			this.node.style.height = eff_height + 'px';
 			this.node.style.clipPath = '';
 
 			if (this.view_mode == 'flat_image' || this.view_mode == 'blueprint') {
 				let position = this.getClampedPosition();
-				this.node.style.left = (position[0] - this.size[0]/2) + 'px';
-				this.node.style.top  = (position[1] - this.size[1]/2) + 'px';
+				this.node.style.left = (position[0] - eff_width/2 + shift_x) + 'px';
+				this.node.style.top  = (position[1] - eff_height/2 + shift_y) + 'px';
 
 			} else if (this.view_mode == 'plane') {
 				this.node.style.left = '0';
@@ -499,6 +563,134 @@ export class ReferenceImage {
 	detach() {
 		if (this.scene_object) this.scene_object.removeFromParent();
 		this.node.remove();
+	}
+	enterCropMode(): this {
+		if (this.crop_mode || this.view_mode == 'plane') return this;
+		this.select();
+		this._crop_backup = this.crop.slice();
+		this.crop_mode = true;
+		this.node.classList.add('cropping');
+
+		for (let side of ['left', 'right', 'top', 'bottom']) {
+			let shade = Interface.createElement('div', {class: 'reference_image_crop_shade ' + side});
+			this.node.append(shade);
+			this._crop_overlay_nodes.push(shade);
+			this._modify_nodes.push(shade);
+		}
+		for (let side of ['w', 'e', 'n', 's']) {
+			let handle = Interface.createElement('div', {class: 'reference_image_crop_handle ' + side});
+			addEventListeners(handle, 'mousedown touchstart', (e1: MouseEvent) => {
+				convertTouchEvent(e1);
+				e1.stopPropagation();
+				let original_crop = this.getNormalizedCrop();
+
+				let move = (e2: MouseEvent) => {
+					convertTouchEvent(e2);
+					let width = this.node.clientWidth || 1;
+					let height = this.node.clientHeight || 1;
+					let dx = (e2.clientX - e1.clientX) / width;
+					let dy = (e2.clientY - e1.clientY) / height;
+					if (side == 'w') this.crop[0] = Math.clamp(original_crop[0] + dx, 0, 1 - original_crop[2] - 0.05);
+					if (side == 'e') this.crop[2] = Math.clamp(original_crop[2] - dx, 0, 1 - original_crop[0] - 0.05);
+					if (side == 'n') this.crop[1] = Math.clamp(original_crop[1] + dy, 0, 1 - original_crop[3] - 0.05);
+					if (side == 's') this.crop[3] = Math.clamp(original_crop[3] - dy, 0, 1 - original_crop[1] - 0.05);
+					this.update();
+				}
+				let stop = () => {
+					removeEventListeners(document, 'mousemove touchmove', move);
+					removeEventListeners(document, 'mouseup touchend', stop);
+				}
+				addEventListeners(document, 'mousemove touchmove', move);
+				addEventListeners(document, 'mouseup touchend', stop);
+			})
+			this.node.append(handle);
+			this._crop_overlay_nodes.push(handle);
+			this._modify_nodes.push(handle);
+		}
+		this._crop_key_listener = (event: KeyboardEvent) => {
+			if (event.key == 'Escape') {
+				this.exitCropMode(false);
+			} else if (event.key == 'Enter') {
+				this.exitCropMode(true);
+			}
+		};
+		document.addEventListener('keydown', this._crop_key_listener);
+		this.update();
+		return this;
+	}
+	exitCropMode(apply: boolean): this {
+		if (!this.crop_mode) return this;
+		if (this._crop_key_listener) {
+			document.removeEventListener('keydown', this._crop_key_listener);
+			this._crop_key_listener = undefined;
+		}
+		this._crop_overlay_nodes.forEach(node => {
+			node.remove();
+			this._modify_nodes.remove(node);
+		});
+		this._crop_overlay_nodes.empty();
+		this.node.classList.remove('cropping');
+		this.crop_mode = false;
+
+		if (apply) {
+			let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
+			let rect = this.node.getBoundingClientRect();
+			let zoom = this.getZoomLevel() || 1;
+			// Keep the cropped window stationary on screen: shrink the node to the window
+			let desired_left = rect.left + crop_l * rect.width;
+			let desired_top = rect.top + crop_t * rect.height;
+			this.size[0] = Math.max((1 - crop_l - crop_r) * rect.width / zoom, 4);
+			this.size[1] = Math.max((1 - crop_t - crop_b) * rect.height / zoom, 4);
+			this.update();
+			let actual = this.node.getBoundingClientRect();
+			this.position[0] += (desired_left - actual.left) / zoom;
+			this.position[1] += (desired_top - actual.top) / zoom;
+			this.update().save();
+		} else {
+			if (this._crop_backup) this.crop.replace(this._crop_backup);
+			this.update();
+		}
+		return this;
+	}
+	updateCropOverlay(): this {
+		if (!this.crop_mode) return this;
+		let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
+		let shades: Record<string, HTMLElement> = {};
+		let handles: Record<string, HTMLElement> = {};
+		this._crop_overlay_nodes.forEach(node => {
+			if (node.classList.contains('reference_image_crop_shade')) {
+				shades[node.classList[1]] = node;
+			} else {
+				handles[node.classList[1]] = node;
+			}
+		})
+		if (shades.left) {
+			shades.left.style.left = '0';
+			shades.left.style.top = '0';
+			shades.left.style.width = (crop_l * 100) + '%';
+			shades.left.style.height = '100%';
+			shades.right.style.left = 'auto';
+			shades.right.style.right = '0';
+			shades.right.style.top = '0';
+			shades.right.style.width = (crop_r * 100) + '%';
+			shades.right.style.height = '100%';
+			shades.top.style.left = (crop_l * 100) + '%';
+			shades.top.style.width = ((1 - crop_l - crop_r) * 100) + '%';
+			shades.top.style.top = '0';
+			shades.top.style.height = (crop_t * 100) + '%';
+			shades.bottom.style.left = (crop_l * 100) + '%';
+			shades.bottom.style.width = ((1 - crop_l - crop_r) * 100) + '%';
+			shades.bottom.style.top = 'auto';
+			shades.bottom.style.bottom = '0';
+			shades.bottom.style.height = (crop_b * 100) + '%';
+		}
+		if (handles.w) {
+			handles.w.style.left = (crop_l * 100) + '%';
+			handles.e.style.left = ((1 - crop_r) * 100) + '%';
+			handles.n.style.top = (crop_t * 100) + '%';
+			handles.s.style.top = ((1 - crop_b) * 100) + '%';
+		}
+		return this;
 	}
 	setupEditHandles() {
 		let self = this;
@@ -657,6 +849,16 @@ export class ReferenceImage {
 		addButton('flip_y', tl('action.flip', 'Y'), 'icon-mirror_y', () => {
 			self.flip_y = !self.flip_y;
 			self.update().save();
+		});
+
+		addButton('crop', 'reference_image.crop', 'crop', () => {
+			self.enterCropMode();
+		});
+		addButton('crop_confirm', 'reference_image.crop_confirm', 'check', () => {
+			self.exitCropMode(true);
+		});
+		addButton('crop_cancel', 'reference_image.crop_cancel', 'close', () => {
+			self.exitCropMode(false);
 		});
 		
 		addButton('rotation', 'reference_image.rotation', '3d_rotation', (event: MouseEvent) => {
@@ -862,9 +1064,10 @@ export class ReferenceImage {
 			let lerp_y = Math.getLerp(rect.y, rect.bottom, local_y);
 			if (this.flip_x) lerp_x = 1 - lerp_x;
 			if (this.flip_y) lerp_y = 1 - lerp_y;
+			let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
 			return [
-				Math.floor(Math.min(lerp_x, 0.9999) * this.source_width),
-				Math.floor(Math.min(lerp_y, 0.9999) * this.source_height),
+				Math.floor((crop_l + Math.min(lerp_x, 0.9999) * (1 - crop_l - crop_r)) * this.source_width),
+				Math.floor((crop_t + Math.min(lerp_y, 0.9999) * (1 - crop_t - crop_b)) * this.source_height),
 			]
 		}
 		return false;
@@ -982,6 +1185,10 @@ export class ReferenceImage {
 				plane_position: {type: 'vector', label: 'reference_image.position', dimensions: 3, value: this.plane_position, condition: (form) => form.view_mode == 'plane'},
 				plane_rotation: {type: 'vector', label: 'reference_image.rotation', dimensions: 3, value: this.plane_rotation, condition: (form) => form.view_mode == 'plane'},
 				size: {type: 'vector', label: 'reference_image.size', dimensions: 2, linked_ratio: true, value: this.size},
+				crop_left: {type: 'number', label: 'reference_image.crop_left', value: Math.round((this.crop[0] || 0) * this.source_width), min: 0, max: this.source_width, step: 1},
+				crop_top: {type: 'number', label: 'reference_image.crop_top', value: Math.round((this.crop[1] || 0) * this.source_height), min: 0, max: this.source_height, step: 1},
+				crop_right: {type: 'number', label: 'reference_image.crop_right', value: Math.round((this.crop[2] || 0) * this.source_width), min: 0, max: this.source_width, step: 1},
+				crop_bottom: {type: 'number', label: 'reference_image.crop_bottom', value: Math.round((this.crop[3] || 0) * this.source_height), min: 0, max: this.source_height, step: 1},
 				rotation: {type: 'number', label: 'reference_image.rotation', value: this.rotation, condition: (form) => form.view_mode != 'plane'},
 				opacity: {type: 'range', label: 'reference_image.opacity', editable_range_label: true, value: this.opacity * 100, min: 0, max: 100, step: 1},
 				visibility: {type: 'checkbox', label: 'reference_image.visibility', value: this.visibility},
@@ -992,6 +1199,13 @@ export class ReferenceImage {
 			onConfirm: (result) => {
 				if (this.removed) return;
 				let clear_mode_before = this.clear_mode;
+				let old_crop = this.getNormalizedCrop();
+				let new_crop = [
+					Math.clamp((result.crop_left || 0) / this.source_width, 0, 0.95),
+					Math.clamp((result.crop_top || 0) / this.source_height, 0, 0.95),
+					Math.clamp((result.crop_right || 0) / this.source_width, 0, 0.95),
+					Math.clamp((result.crop_bottom || 0) / this.source_height, 0, 0.95),
+				];
 				this.extend({
 					source: result.source,
 					view_mode: result.view_mode,
@@ -1005,7 +1219,19 @@ export class ReferenceImage {
 					sync_to_timeline: result.sync_to_timeline,
 					cull_backface: result.cull_backface,
 					clear_mode: result.clear_mode,
+					crop: new_crop,
 				});
+				if (!new_crop.equals(old_crop)) {
+					// Keep the display scale of the cropped content: resize the node to the new window
+					let old_source_width = this.source_width * (1 - old_crop[0] - old_crop[2]);
+					let old_source_height = this.source_height * (1 - old_crop[1] - old_crop[3]);
+					let new_source_width = this.source_width * (1 - new_crop[0] - new_crop[2]);
+					let new_source_height = this.source_height * (1 - new_crop[1] - new_crop[3]);
+					if (old_source_width > 0 && old_source_height > 0) {
+						this.size[0] = Math.max(this.size[0] * new_source_width / old_source_width, 4);
+						this.size[1] = Math.max(this.size[1] * new_source_height / old_source_height, 4);
+					}
+				}
 				this.changeLayer(result.layer);
 				this.changeScope(result.scope);
 				if (this.clear_mode != clear_mode_before) {
@@ -1097,6 +1323,20 @@ ReferenceImage.prototype.menu = new Menu([
 			if (ref.clear_mode) {
 				ref.unselect();
 				setTimeout(() => ref.select(), 400);
+			}
+		}
+	},
+	{
+		id: 'crop',
+		name: 'reference_image.crop',
+		icon: 'crop',
+		condition: (ref: ReferenceImage) => ref.view_mode != 'plane',
+		click(ref: ReferenceImage) {
+			if (ref.crop_mode) {
+				ref.exitCropMode(true);
+			} else {
+				ref.select();
+				ref.enterCropMode();
 			}
 		}
 	},
@@ -1215,6 +1455,7 @@ new Property(ReferenceImage, 'boolean', 'visibility', {default: true});
 new Property(ReferenceImage, 'boolean', 'sync_to_timeline', {default: true});
 new Property(ReferenceImage, 'boolean', 'cull_backface', {default: false});
 new Property(ReferenceImage, 'boolean', 'clear_mode');
+new Property(ReferenceImage, 'vector4', 'crop', {default: [0, 0, 0, 0]});
 new Property(ReferenceImage, 'string', 'attached_side', {default: 'north'});
 new Property(ReferenceImage, 'string', 'source');
 
