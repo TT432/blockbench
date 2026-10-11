@@ -438,13 +438,32 @@ export const TextureGenerator = {
 			this.cube = cube;
 			this.face = cube.faces[face_key];
 			if (options.rearrange_uv) {
-				this.width  = Math.abs(x) * res_multiple;
-				this.height = Math.abs(y) * res_multiple;
 				this.mirror_x = Math.sign(this.face.uv_size[0]);
 				this.mirror_y = Math.sign(this.face.uv_size[1]);
-				this.width  = ((this.width  >= 0.01 && this.width  < 1) ? 1 : Math.round(this.width)) / res_multiple;
-				this.height = ((this.height >= 0.01 && this.height < 1) ? 1 : Math.round(this.height)) / res_multiple;
 				this.rotation = this.face.rotation;
+				// 岛尺寸由面 UV 实际覆盖的像素域决定（而非立方体尺寸取整），
+				// 保留分数 extent 与部分覆盖的边缘像素列，避免重建后贴图漂移（编号46）
+				let fx = (tex instanceof Texture && tex.getUVWidth()) ? tex.width / tex.getUVWidth() : 1;
+				let fy = (tex instanceof Texture && tex.getUVHeight()) ? tex.height / tex.getUVHeight() : 1;
+				let u0 = Math.min(this.face.uv[0], this.face.uv[2]);
+				let v0 = Math.min(this.face.uv[1], this.face.uv[3]);
+				let ew = Math.abs(this.face.uv[2] - this.face.uv[0]);
+				let eh = Math.abs(this.face.uv[3] - this.face.uv[1]);
+				let span_u = (Math.ceil((u0 + ew) * fx - 1e-6) - Math.floor(u0 * fx + 1e-6)) / fx;
+				let span_v = (Math.ceil((v0 + eh) * fy - 1e-6) - Math.floor(v0 * fy + 1e-6)) / fy;
+				let align_u = (u0 - Math.floor(u0 * fx + 1e-6) / fx);
+				let align_v = (v0 - Math.floor(v0 * fy + 1e-6) / fy);
+				// 旋转 90/270 的面：岛与写回 UV 使用四元面方向（axes 交换），drawCubeTexture 内部会再交换绘制
+				let swap = (this.rotation % 180) != 0;
+				this.width  = (swap ? span_v : span_u) * res_multiple;
+				this.height = (swap ? span_u : span_v) * res_multiple;
+				// 写回 UV 时保持原分数对齐与 extent（align 为 UV 矩形相对岛左上角的右/下偏移，≥0）
+				this.align_x = (swap ? align_v : align_u) * res_multiple;
+				this.align_y = (swap ? align_u : align_v) * res_multiple;
+				this.extent_w = (swap ? eh : ew) * res_multiple;
+				this.extent_h = (swap ? ew : eh) * res_multiple;
+				if (this.width  >= 0.01 && this.width  < 1) this.width  = 1 / res_multiple;
+				if (this.height >= 0.01 && this.height < 1) this.height = 1 / res_multiple;
 			} else {
 				this.posx = this.face.uv[0], this.face.uv[0+2];
 				this.posy = this.face.uv[1], this.face.uv[1+2];
@@ -1363,12 +1382,19 @@ export const TextureGenerator = {
 			}
 
 			ctx.imageSmoothingEnabled = false;
+			// 源矩形向外对齐到源像素整数边界，保证部分覆盖的边缘像素列被完整采样（编号46）
+			let gfx = texture.img.naturalWidth / texture.getUVWidth();
+			let gfp = texture.img.naturalHeight / texture.getUVHeight();
+			let sx0 = Math.max(0, Math.floor(src_x * gfx + 1e-6));
+			let sy0 = Math.max(0, Math.floor(src_y * gfp + 1e-6));
+			let sx1 = Math.min(texture.img.naturalWidth,  Math.ceil((src_x + src_w) * gfx - 1e-6));
+			let sy1 = Math.min(texture.img.naturalHeight, Math.ceil((src_y + src_h) * gfp - 1e-6));
 			ctx.drawImage(
 				texture.img,
-				src_x/texture.getUVWidth() * texture.img.naturalWidth,
-				src_y/texture.getUVHeight() * texture.img.naturalHeight,
-				src_w/texture.getUVWidth() * texture.img.naturalWidth,
-				src_h/texture.getUVHeight() * texture.img.naturalHeight,
+				sx0,
+				sy0,
+				Math.max(1, sx1 - sx0),
+				Math.max(1, sy1 - sy0),
 				(-target_w / 2)*res_multiple,
 				(-target_h / 2)*res_multiple,
 				target_w*res_multiple,
@@ -1512,9 +1538,15 @@ export const TextureGenerator = {
 			if (options.rearrange_uv) {
 				function applyUV(source, target) {
 					if (target.cube) {
+						// 保持原分数 extent 与亚像素对齐（编号46）：UV 矩形内嵌于岛，
+						// 右/下偏移 align + 原 extent，避免边缘像素列丢失导致的贴图漂移
+						let ax = target.align_x ?? 0;
+						let ay = target.align_y ?? 0;
+						let ew = target.extent_w ?? pos.w;
+						let eh = target.extent_h ?? pos.h;
 						target.face.extend({
 							rotation: 0,
-							uv: [pos.x, pos.y, pos.x + pos.w, pos.y + pos.h],
+							uv: [pos.x + ax, pos.y + ay, pos.x + ax + ew, pos.y + ay + eh],
 						})
 						if (source != target) {
 							// Double occupancy mirroring
