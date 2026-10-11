@@ -59,6 +59,8 @@ export class ReferenceImage {
 	crop_wrapper: HTMLDivElement;
 	/**@private */
 	_crop_backup?: number[];
+	/**@private Crop values at crop-mode entry: anchor for the full-image geometry while dragging */
+	_crop_anchor?: [number, number, number, number];
 	/**@private */
 	_crop_overlay_nodes: HTMLElement[] = [];
 	/**@private */
@@ -458,10 +460,14 @@ export class ReferenceImage {
 		let shift_x = 0;
 		let shift_y = 0;
 		if (this.crop_mode) {
-			eff_width = this.size[0] / (1 - crop_l - crop_r);
-			eff_height = this.size[1] / (1 - crop_t - crop_b);
-			shift_x = -crop_l * eff_width;
-			shift_y = -crop_t * eff_height;
+			// Anchor the full-image geometry to the crop values at mode entry:
+			// deriving it from live crop values makes the image pan/zoom wildly while
+			// dragging and blows up to 20x when the crop approaches the 0.95 clamp
+			let [anchor_l, anchor_t, anchor_r, anchor_b] = this._crop_anchor || [crop_l, crop_t, crop_r, crop_b];
+			eff_width = this.size[0] / (1 - anchor_l - anchor_r);
+			eff_height = this.size[1] / (1 - anchor_t - anchor_b);
+			shift_x = -anchor_l * eff_width;
+			shift_y = -anchor_t * eff_height;
 		}
 		if (Format.image_editor && this.is_blueprint) {
 			let uv_viewport = UVEditor.vue.$refs.viewport;
@@ -568,6 +574,7 @@ export class ReferenceImage {
 		if (this.crop_mode || this.view_mode == 'plane') return this;
 		this.select();
 		this._crop_backup = this.crop.slice();
+		this._crop_anchor = this.getNormalizedCrop();
 		this.crop_mode = true;
 		this.node.classList.add('cropping');
 
@@ -631,6 +638,7 @@ export class ReferenceImage {
 		this._crop_overlay_nodes.empty();
 		this.node.classList.remove('cropping');
 		this.crop_mode = false;
+		this._crop_anchor = undefined;
 
 		if (apply) {
 			let [crop_l, crop_t, crop_r, crop_b] = this.getNormalizedCrop();
