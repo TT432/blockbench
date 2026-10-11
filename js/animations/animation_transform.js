@@ -186,6 +186,9 @@ new TransformerModule('animation', {
 		displayDistance(context.value - this.initial_value);
 
 		Animator.preview()
+		// Keyframes are __v_skip (non-reactive): refresh the keyframe panel so the
+		// value display follows gizmo drags live
+		if (Interface.Panels.keyframe?.inside_vue) Interface.Panels.keyframe.inside_vue.$forceUpdate();
 
 	},
 	onEnd(context) {

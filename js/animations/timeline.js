@@ -266,10 +266,9 @@ export const Timeline = {
 	// Writes the playhead position and timecode displays directly to the DOM
 	// instead of Vue reactive data. Both update every frame during playback and
 	// scrubbing, and reactive writes re-rendered the whole timeline component
-	// (including every keyframe element) each frame. The Vue data properties
-	// (playhead, timestamp, framenumber) still exist for the initial render;
-	// since they never change afterwards, Vue's vnode diff never touches the
-	// imperatively updated nodes.
+	// (including every keyframe element) each frame. The template carries NO
+	// Vue binding for these nodes: a stale binding value could be written back
+	// by a vnode re-creation and clobber the imperative position (编号52).
 	updatePlayhead() {
 		let playhead_node = document.getElementById('timeline_playhead');
 		if (playhead_node) {
@@ -854,8 +853,31 @@ export const Timeline = {
 	_keyframe_cache_animators: null,
 	_keyframe_cache_animator_count: 0,
 	_keyframe_cache_graph_state: null,
+	// Per-channel time-sorted keyframe copies for getVisibleKeyframes density
+	// sampling. Keyed by the channel array (WeakMap), invalidated via the epoch
+	// bump in invalidateKeyframeCache (keyframe add/remove, finished_edit,
+	// undo/redo, animation switch all funnel through there).
+	_keyframe_sort_cache: new WeakMap(),
+	_keyframe_sort_epoch: 0,
+	getSortedChannelKeyframes(keyframes) {
+		let entry = Timeline._keyframe_sort_cache.get(keyframes);
+		if (entry && entry.epoch === Timeline._keyframe_sort_epoch) return entry;
+		let sorted = keyframes.slice().sort((a, b) => a.time - b.time);
+		let median_gap = 0;
+		let n = sorted.length;
+		if (n > 2) {
+			let gaps = [];
+			for (let i = 1; i < n; i++) gaps.push(sorted[i].time - sorted[i-1].time);
+			gaps.sort((a, b) => a - b);
+			median_gap = gaps[Math.floor(gaps.length / 2)];
+		}
+		entry = {epoch: Timeline._keyframe_sort_epoch, sorted, median_gap};
+		Timeline._keyframe_sort_cache.set(keyframes, entry);
+		return entry;
+	},
 	invalidateKeyframeCache() {
 		Timeline._keyframe_cache_dirty = true;
+		Timeline._keyframe_sort_epoch++;
 		// Keyframes are not reactive (__v_skip); edits/undo/redo/animation switches
 		// funnel through here, so refresh the timeline markers imperatively.
 		if (Timeline.vue) {
@@ -1007,9 +1029,6 @@ Interface.definePanels(() => {
 				custom_range: Timeline.custom_range,
 				waveforms: Timeline.waveforms,
 				focus_channel: null,
-				playhead: Timeline.time,
-				timestamp: '0',
-				framenumber: '0',
 
 				graph_editor_open: false,
 				graph_editor_channel: 'rotation',
@@ -1339,32 +1358,41 @@ Interface.definePanels(() => {
 					if (!keyframes || keyframes.length == 0) return keyframes;
 					let size = this.size;
 					if (!size || !isFinite(size)) return keyframes;
-					// Horizontal windowing + density culling: only render markers
-					// inside the viewport, and skip markers that would land within
-					// a few pixels of an already-rendered one (visually indistinguishable).
+					// Horizontal windowing + uniform density sampling: only render
+					// markers inside the viewport; when markers would land closer than
+					// a few pixels, keep every stride-th keyframe in time order so the
+					// surviving markers stay exactly evenly spaced for evenly spaced
+					// keyframes (feedback #35: the old 4px-bucket greedy culling kept a
+					// beat-frequency subset — gaps alternated between N and N+1 frames,
+					// looking like broken spacing when zoomed out).
 					// Selected keyframes always render; while dragging, selected
 					// keyframes outside the viewport render as well.
 					let start_time = (this.scroll_left - 40) / size;
 					let end_time = (this.scroll_left + this.body_width + 40) / size;
-					let min_gap = 4 / size;
 					let include_offscreen_selected = !!(Timeline.dragging_keyframes && Timeline.selected.length);
 					let result = [];
-					// The channel array is append-ordered, not time-ordered
-					// (createKeyframe pushes). Density culling must therefore be
-					// order-independent: bucket by time and drop markers whose
-					// bucket neighborhood is already occupied. Comparing against
-					// only the previous entry permanently hid any keyframe
-					// created at a time earlier than an existing later one.
-					let occupied = new Set();
-					for (let i = 0; i < keyframes.length; i++) {
-						let kf = keyframes[i];
+					// Channel arrays are append-ordered (createKeyframe pushes), so the
+					// stride must be computed on a time-sorted copy. The copy is cached
+					// per channel array and invalidated through the same funnel as the
+					// marker refresh (Timeline.invalidateKeyframeCache).
+					let entry = Timeline.getSortedChannelKeyframes(keyframes);
+					let sorted = entry.sorted;
+					let n = sorted.length;
+					let stride = 1;
+					if (n > 2) {
+						let min_gap = 4 / size;
+						let median_gap = entry.median_gap;
+						if (median_gap > 0 && median_gap < min_gap) {
+							stride = Math.max(1, Math.ceil(min_gap / median_gap));
+						}
+					}
+					for (let i = 0; i < n; i++) {
+						let kf = sorted[i];
 						if (kf.time < start_time || kf.time > end_time) {
 							if (include_offscreen_selected && kf.selected) result.push(kf);
 							continue;
 						}
-						let bucket = Math.round(kf.time / min_gap);
-						if (!kf.selected && (occupied.has(bucket - 1) || occupied.has(bucket) || occupied.has(bucket + 1))) continue;
-						occupied.add(bucket);
+						if (!kf.selected && stride > 1 && (i % stride) !== 0) continue;
 						result.push(kf);
 					}
 					return result;
@@ -1976,9 +2004,8 @@ Interface.definePanels(() => {
 			updated() {
 				// Repair the imperatively maintained playhead/timecode displays after
 				// every re-render. Vue's child diff can mis-pair sibling vnodes and
-				// clobber imperative style/text writes with stale binding values
-				// (fork regression: playhead/timestamp data are write-once initial
-				// values, so a stale write never self-corrects).
+				// replace these nodes; the replacements carry no stale binding value
+				// anymore (编号52), so this rewrite restores the correct position.
 				Timeline.setTimecode(Timeline.time);
 				Timeline.updatePlayhead();
 			},
@@ -1986,9 +2013,9 @@ Interface.definePanels(() => {
 				<div id="timeline_vue" :class="{graph_editor: graph_editor_open}" :style="{'--timeline-height': timeline_height + 'px'}">
 					<div id="timeline_header">
 						<div id="timeline_corner" v-bind:style="{width: head_width+'px'}">
-							<div id="timeline_timestamp">{{ timestamp }}</div>
+							<div id="timeline_timestamp"></div>
 							<span>/</span>
-							<div id="timeline_framenumber">{{ framenumber }}</div>
+							<div id="timeline_framenumber"></div>
 							<div class="channel_axis_selector" v-if="graph_editor_open">
 								<div @click="graph_editor_axis = 'x';" :class="{selected: graph_editor_axis == 'x'}" style="color: var(--color-axis-x);">X</div>
 								<div @click="graph_editor_axis = 'y';" :class="{selected: graph_editor_axis == 'y'}" style="color: var(--color-axis-y);">Y</div>
@@ -2008,7 +2035,6 @@ Interface.definePanels(() => {
 								</div>
 							<div id="timeline_playhead"
 								key="timeline_playhead"
-								v-bind:style="{left: (playhead * size) + 'px'}"
 							/>
 							<div id="timeline_onion_skin_point"
 								key="timeline_onion_skin_point"

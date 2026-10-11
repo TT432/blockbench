@@ -685,6 +685,9 @@ export function updateKeyframeSelection() {
 	BARS.updateConditions()
 	// Keyframes are excluded from Vue reactivity (__v_skip); refresh markers imperatively
 	if (Timeline.vue) Timeline.vue.$forceUpdate();
+	// Same for the keyframe panel: its template reads x_string prototype getters,
+	// which are non-reactive under __v_skip, so value edits would leave it stale.
+	if (Interface.Panels.keyframe?.inside_vue) Interface.Panels.keyframe.inside_vue.$forceUpdate();
 	Blockbench.dispatchEvent('update_keyframe_selection');
 }
 export function selectAllKeyframes() {
@@ -1431,6 +1434,9 @@ Interface.definePanels(function() {
 								total += difference;
 
 								Animator.preview()
+								// Keyframes are __v_skip (non-reactive): refresh the panel so the
+								// dragged value is displayed live
+								if (Interface.Panels.keyframe?.inside_vue) Interface.Panels.keyframe.inside_vue.$forceUpdate();
 								Blockbench.setStatusBarText(trimFloatNumber(total));
 							}
 							last_event = e2;
