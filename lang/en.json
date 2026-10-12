@@ -2450,6 +2450,9 @@
 	"animation_controllers.state.blend_transition_curve": "Blend Transition Curve",
 	"animation_controllers.state.shortest_path": "Blend by Shortest Path",
 	"animation_controllers.state.edit_transition": "Edit Transition",
+	"animation_controllers.state.add_transition": "Add Transition",
+	"animation_controllers.zoom_fit": "Zoom to Fit",
+	"animation_controllers.auto_layout": "Auto Layout",
 
 	"menu.action_control.type.tab": "Tab",
 	"menu.action_control.type.angle": "Camera Angle",
