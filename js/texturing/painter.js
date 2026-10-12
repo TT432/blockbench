@@ -6,6 +6,71 @@ import { getFaceKeyFromIndex } from "../util/util";
 
 StateMemory.init('brush_presets', 'array')
 
+const cube_face_direction_normals = {
+	north: [0, 0, -1], south: [0, 0, 1],
+	east: [1, 0, 0], west: [-1, 0, 0],
+	up: [0, 1, 0], down: [0, -1, 0]
+};
+
+// CubeFace.UVToLocal 的逆运算：把 mesh 局部空间（已减去 origin）的点映射回面的 UV 坐标
+function cubeFaceLocalToUV(face, vector) {
+	let cube = face.cube;
+	let from = cube.from.slice();
+	let to = cube.to.slice();
+	adjustFromAndToForInflateAndStretch(from, to, cube);
+
+	let px = vector.x + cube.origin[0];
+	let py = vector.y + cube.origin[1];
+	let pz = vector.z + cube.origin[2];
+	let lerp_x, lerp_y, plane_offset;
+	switch (face.direction) {
+		case 'east':
+			plane_offset = px - to[0];
+			lerp_y = Math.getLerp(to[1], from[1], py);
+			lerp_x = Math.getLerp(to[2], from[2], pz);
+			break;
+		case 'west':
+			plane_offset = px - from[0];
+			lerp_y = Math.getLerp(to[1], from[1], py);
+			lerp_x = Math.getLerp(from[2], to[2], pz);
+			break;
+		case 'up':
+			plane_offset = py - to[1];
+			lerp_y = Math.getLerp(from[2], to[2], pz);
+			lerp_x = Math.getLerp(from[0], to[0], px);
+			break;
+		case 'down':
+			plane_offset = py - from[1];
+			lerp_y = Math.getLerp(to[2], from[2], pz);
+			lerp_x = Math.getLerp(from[0], to[0], px);
+			break;
+		case 'south':
+			plane_offset = pz - to[2];
+			lerp_y = Math.getLerp(to[1], from[1], py);
+			lerp_x = Math.getLerp(from[0], to[0], px);
+			break;
+		case 'north':
+			plane_offset = pz - from[2];
+			lerp_y = Math.getLerp(to[1], from[1], py);
+			lerp_x = Math.getLerp(to[0], from[0], px);
+			break;
+		default:
+			return null;
+	}
+	// 撤销面 UV 旋转（UVToLocal 正向每 90°: [lx, ly] = [1-ly, lx]，逆向为 [ly, 1-lx]）
+	for (let i = 0; i < face.rotation; i += 90) {
+		[lerp_x, lerp_y] = [lerp_y, 1 - lerp_x];
+	}
+	return {
+		plane_offset,
+		lerp: [lerp_x, lerp_y],
+		uv: [
+			Math.lerp(face.uv[0], face.uv[2], lerp_x),
+			Math.lerp(face.uv[1], face.uv[3], lerp_y)
+		]
+	};
+}
+
 export const Painter = {
 	currentPixel: [-1, -1],
 	brushChanges: false,
@@ -1029,17 +1094,23 @@ export const Painter = {
 			} else if (mirror_vectors[0].equals([1, 0, 1])) {
 				mirror_vectors = [[1,0,0], [0,0,1], [1,0,1]];
 			}
-			mirror_vectors.forEach((mirror_vector, i) => {
-				if (Painter.mirror_painting_options.global) {
-					targets.push(getTargetWithOptions(mirror_vector, false));
-				}
-				if (Painter.mirror_painting_options.local) {
-					targets.push(getTargetWithOptions(mirror_vector, true));
-				}
-				if (Painter.mirror_painting_options.global && Painter.mirror_painting_options.local) {
-					targets.push(getTargetWithOptions(mirror_vector, null));
-				}
-			})
+			if (Painter.mirror_painting_options.physical) {
+				mirror_vectors.forEach((mirror_vector) => {
+					targets.push(Painter.getPhysicalMirrorTarget(texture, x, y, mirror_vector));
+				})
+			} else {
+				mirror_vectors.forEach((mirror_vector, i) => {
+					if (Painter.mirror_painting_options.global) {
+						targets.push(getTargetWithOptions(mirror_vector, false));
+					}
+					if (Painter.mirror_painting_options.local) {
+						targets.push(getTargetWithOptions(mirror_vector, true));
+					}
+					if (Painter.mirror_painting_options.global && Painter.mirror_painting_options.local) {
+						targets.push(getTargetWithOptions(mirror_vector, null));
+					}
+				})
+			}
 		}
 		// 2D
 		if (Painter.mirror_painting_options.texture && !Painter.current.element) {
@@ -1663,6 +1734,144 @@ export const Painter = {
 				}
 			}
 			return element;
+		}
+	},
+	getPhysicalMirrorTarget(texture, x, y, mirror_vector) {
+		// 物理镜像：按世界空间位置/法线寻找对称面，任意旋转（含 45° 倍数与多轴旋转）后物理对称的面都能互绘
+		let source_element = Painter.current.element;
+		let source_fkey = Painter.current.face;
+		if (!source_element || !source_element.mesh || !(source_element instanceof Cube || source_element instanceof Mesh)) return;
+		let source_face = source_element.faces[source_fkey];
+		if (!source_face) return;
+
+		let grid_center = Format.centered_grid ? 0 : 8;
+		let offset_pixel_brush = Condition(Toolbox.selected.brush?.floor_coordinates) ? 1 : 0;
+		let even_brush_size = BarItems.slider_brush_size.get()%2 == 0 && Toolbox.selected.brush?.offset_even_radius && Condition(Toolbox.selected.brush?.floor_coordinates);
+		if (Toolbox.selected.id == 'gradient_tool') even_brush_size = true;
+
+		let getUVFactorX = (element) => (element instanceof Cube ? texture.img.naturalWidth : texture.width) / texture.getUVWidth();
+		let getUVFactorY = (element) => (element instanceof Cube ? texture.img.naturalHeight : texture.height) / texture.getUVHeight();
+		let source_uv = [
+			(even_brush_size ? x : x + 0.5) / getUVFactorX(source_element),
+			(even_brush_size ? y : y + 0.5) / getUVFactorY(source_element)
+		];
+
+		// 源点的世界坐标与世界法线
+		let world_point = source_element.mesh.localToWorld(source_face.UVToLocal(source_uv));
+		let world_normal = source_element instanceof Cube
+			? new THREE.Vector3().fromArray(cube_face_direction_normals[source_face.direction])
+			: new THREE.Vector3().fromArray(source_face.getNormal(true));
+		world_normal.applyQuaternion(source_element.mesh.getWorldQuaternion(new THREE.Quaternion()));
+
+		// 按世界空间镜像（位置与法线一起翻转）
+		mirror_vector.forEach((enabled, axis) => {
+			if (!enabled) return;
+			world_point.setComponent(axis, 2 * grid_center - world_point.getComponent(axis));
+			world_normal.setComponent(axis, -world_normal.getComponent(axis));
+		});
+
+		let en = 0.02;	// 法线容差
+		let ep = 0.03;	// 面距离/往返映射容差（模型单位）
+		let ep_lerp = 0.03;	// 面内归一化坐标容差
+		let quaternion = new THREE.Quaternion();
+
+		for (let element of [...Cube.all, ...Mesh.all]) {
+			if (!element.mesh) continue;
+			element.mesh.getWorldQuaternion(quaternion);
+			if (element instanceof Cube) {
+				for (let fkey in element.faces) {
+					let face = element.faces[fkey];
+					if (face.enabled == false) continue;
+					if (face.getTexture() !== texture) continue;
+					let normal2 = new THREE.Vector3().fromArray(cube_face_direction_normals[face.direction]).applyQuaternion(quaternion);
+					if (!Math.epsilon(normal2.x, world_normal.x, en) ||
+						!Math.epsilon(normal2.y, world_normal.y, en) ||
+						!Math.epsilon(normal2.z, world_normal.z, en)) continue;
+
+					let local = element.mesh.worldToLocal(world_point.clone());
+					let mapping = cubeFaceLocalToUV(face, local);
+					if (!mapping) continue;
+					if (Math.abs(mapping.plane_offset) > ep) continue;
+					if (mapping.lerp[0] < -ep_lerp || mapping.lerp[0] > 1 + ep_lerp ||
+						mapping.lerp[1] < -ep_lerp || mapping.lerp[1] > 1 + ep_lerp) continue;
+
+					let point_on_uv = [
+						mapping.uv[0] * getUVFactorX(element),
+						mapping.uv[1] * getUVFactorY(element)
+					];
+					if (Condition(Toolbox.selected.brush?.floor_coordinates)) {
+						if (even_brush_size) {
+							point_on_uv = point_on_uv.map(v => Math.round(v))
+						} else {
+							point_on_uv = point_on_uv.map(v => Math.floor(v))
+						}
+					}
+					if (offset_pixel_brush == 1) {
+						point_on_uv[0] = Math.round(point_on_uv[0]);
+						point_on_uv[1] = Math.round(point_on_uv[1]);
+					}
+					return {
+						element,
+						x: point_on_uv[0],
+						y: point_on_uv[1],
+						uv_tag: face.uv,
+						face: fkey
+					}
+				}
+			} else if (element instanceof Mesh) {
+				for (let fkey in element.faces) {
+					let face = element.faces[fkey];
+					if (face.vertices.length < 3) continue;
+					if (face.getTexture() !== texture) continue;
+					let normal2 = new THREE.Vector3().fromArray(face.getNormal(true)).applyQuaternion(quaternion);
+					if (!Math.epsilon(normal2.x, world_normal.x, en) ||
+						!Math.epsilon(normal2.y, world_normal.y, en) ||
+						!Math.epsilon(normal2.z, world_normal.z, en)) continue;
+
+					let local = element.mesh.worldToLocal(world_point.clone());
+					let normal_local = new THREE.Vector3().fromArray(face.getNormal(true));
+					let vertex0 = new THREE.Vector3().fromArray(element.vertices[face.vertices[0]]);
+					if (Math.abs(normal_local.dot(local.clone().sub(vertex0))) > ep) continue;
+
+					// 逐三角形往返验证，确保镜像点落在面内
+					let triangles = face.vertices.length > 3
+						? [[face.vertices[0], face.vertices[1], face.vertices[2]], [face.vertices[0], face.vertices[2], face.vertices[3]]]
+						: [face.vertices.slice(0, 3)];
+					let uv_result;
+					for (let tri of triangles) {
+						let uv = face.localToUV(local, tri);
+						let round_trip = face.UVToLocal(uv, tri);
+						if (round_trip.distanceTo(local) <= ep) {
+							uv_result = uv;
+							break;
+						}
+					}
+					if (!uv_result) continue;
+
+					let point_on_uv = [
+						uv_result[0] * getUVFactorX(element),
+						uv_result[1] * getUVFactorY(element)
+					];
+					if (Condition(Toolbox.selected.brush?.floor_coordinates)) {
+						if (even_brush_size) {
+							point_on_uv = point_on_uv.map(v => Math.round(v))
+						} else {
+							point_on_uv = point_on_uv.map(v => Math.floor(v))
+						}
+					}
+					if (offset_pixel_brush == 1) {
+						point_on_uv[0] = Math.round(point_on_uv[0]);
+						point_on_uv[1] = Math.round(point_on_uv[1]);
+					}
+					return {
+						element,
+						x: point_on_uv[0],
+						y: point_on_uv[1],
+						uv_tag: face.uv,
+						face: fkey
+					}
+				}
+			}
 		}
 	},
 	updateNslideValues() {
@@ -3633,8 +3842,9 @@ BARS.defineActions(function() {
 			form: {
 				enabled: {type: 'checkbox', label: 'menu.mirror_painting.enabled', value: Painter.mirror_painting},
 				_1: '_',
-				global: {type: 'checkbox', label: 'menu.mirror_painting.global', value: true, description: 'menu.mirror_painting.global.desc',},
-				local: {type: 'checkbox', label: 'menu.mirror_painting.local', description: 'menu.mirror_painting.local.desc',},
+				global: {type: 'checkbox', label: 'menu.mirror_painting.global', value: true, description: 'menu.mirror_painting.global.desc', condition: form => !form.physical},
+				local: {type: 'checkbox', label: 'menu.mirror_painting.local', description: 'menu.mirror_painting.local.desc', condition: form => !form.physical},
+				physical: {type: 'checkbox', label: 'menu.mirror_painting.physical', value: false, description: 'menu.mirror_painting.physical.desc'},
 				axis: {type: 'inline_multi_select', label: 'menu.mirror_painting.axis', options: {x: 'X', z: 'Z'}, value: {x: true, z: false}, description: 'menu.mirror_painting.axis.desc'},
 				_2: '_',
 				texture: {type: 'checkbox', label: 'menu.mirror_painting.texture', description: 'menu.mirror_painting.texture.desc'},

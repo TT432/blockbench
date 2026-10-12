@@ -374,4 +374,64 @@ new ValidatorCheck('zero_wide_uv_faces', {
 	}
 })
 
+new ValidatorCheck('overlapping_cubes', {
+	condition: () => Format.edit_mode,
+	update_triggers: ['finished_edit', 'undo', 'redo'],
+	run() {
+		let groups = {};
+		for (let cube of Cube.all) {
+			// Cubes only count as fully overlapping if their rendered geometry coincides
+			// completely: same position and size (from/to), same inflate, and same rotation/origin.
+			let key = JSON.stringify([cube.from, cube.to, cube.inflate || 0, cube.rotation, cube.origin]);
+			if (!groups[key]) groups[key] = [];
+			groups[key].push(cube);
+		}
+		let overlap_groups = [];
+		for (let key in groups) {
+			if (groups[key].length > 1) overlap_groups.push(groups[key]);
+		}
+		if (!overlap_groups.length) return;
+		let overlapping_cubes = [];
+		let removable_cubes = [];
+		overlap_groups.forEach(group => {
+			overlapping_cubes.push(...group);
+			// Keep one cube per overlap group, mark the rest for deletion
+			removable_cubes.push(...group.slice(1));
+		});
+		this.warn({
+			message: `${overlapping_cubes.length} cubes completely overlap with other cubes (identical position and size) in ${overlap_groups.length} ${overlap_groups.length == 1 ? 'group' : 'groups'}. Textures painted on hidden cubes cannot be seen. You can select the cubes or delete all but one cube per group.`,
+			buttons: [
+				{
+					name: 'Select Cubes',
+					icon: 'fa-cube',
+					click() {
+						Validator.dialog.hide();
+						let cubes = overlapping_cubes.filter(cube => Cube.all.includes(cube));
+						if (!cubes.length) return;
+						Undo.initSelection();
+						unselectAllElements();
+						cubes.forEach(cube => cube.markAsSelected());
+						TickUpdates.selection = true;
+						Undo.finishSelection('Select overlapping cubes');
+						updateSelection();
+					}
+				},
+				{
+					name: 'Delete Overlapping Cubes',
+					icon: 'delete',
+					click() {
+						Validator.dialog.hide();
+						let cubes = removable_cubes.filter(cube => Cube.all.includes(cube));
+						if (!cubes.length) return;
+						Undo.initEdit({elements: cubes, selection: true, outliner: true});
+						cubes.forEach(cube => cube.remove(false));
+						Undo.finishEdit('Delete overlapping cubes');
+						updateSelection();
+					}
+				}
+			]
+		})
+	}
+})
+
 Object.assign(window, {Validator, ValidatorCheck});

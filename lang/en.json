@@ -2792,6 +2792,9 @@
 	"action.uv_lock_size.desc": "When locked, creating or appending a texture template does not change the selected elements' UV size or position",
 	"action.fixed_world_position": "Fixed World Position",
 	"action.fixed_world_position.desc": "When enabled, rotating a group keeps the world position of its contained blocks/groups unchanged (their rotation values change accordingly)",
+	"message.fixed_world_position_unsupported": "Fixed world position: %0 cube(s) cannot absorb the inverse rotation due to the single-axis rotation limit and were left rotating with the group",
+	"menu.mirror_painting.physical": "Physical Mirror (World Space)",
+	"menu.mirror_painting.physical.desc": "Match symmetric faces by world-space position and normal, so faces stay mirrored correctly after any rotation (e.g. 45° or multi-axis rotations). Replaces the Global/Local options.",
 	"switches.autouv": "Auto UV",
 	"switches.autouv.alt": "Relative",
 

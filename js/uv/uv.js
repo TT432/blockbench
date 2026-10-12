@@ -3921,7 +3921,7 @@ Interface.definePanels(function() {
 										}
 									})
 								} else if (element.box_uv) {
-									let size = element.size(undefined, Format.box_uv_float_size != true);
+									let size = element.size(undefined, 'box_uv');
 									let uv_size = [
 										size[2] + size[0] + (size[1] ? size[2] : 0) + size[0],
 										size[2] + size[1],
