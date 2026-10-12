@@ -434,6 +434,28 @@ export const TextureGenerator = {
 		element_list = element_list.filter(el => {
 			return (el.getTypeBehavior('cube_faces') || el instanceof Mesh) && el.visibility;
 		});
+		// 编号46（竞态）：扫描（faceRect 读 tex.width）与绘制（drawCubeTexture 读 img.naturalWidth）
+		// 之间有 await 让出；源贴图若仍在解码，岛尺寸/源采样会基于 0 尺寸计算 → 偶发漂移/空岛。
+		// 先等所有涉及贴图解码完成（失败/超时则放行，由绘制端兜底回退模板色块）
+		{
+			let involved = new Set();
+			element_list.forEach(el => {
+				if (!el.faces) return;
+				for (let fkey in el.faces) {
+					let t = el.faces[fkey].getTexture();
+					if (t instanceof Texture) involved.add(t);
+				}
+			});
+			if (makeTexture instanceof Texture) involved.add(makeTexture);
+			await Promise.all([...involved].map(t => new Promise(resolve => {
+				if (!t.img || (t.img.complete && t.img.naturalWidth > 0)) return resolve();
+				let done = false;
+				let finish = () => { if (!done) { done = true; resolve(); } };
+				t.img.addEventListener('load', finish, {once: true});
+				t.img.addEventListener('error', finish, {once: true});
+				setTimeout(finish, 15000);
+			})));
+		}
 		function faceRect(cube, face_key, tex, x, y, face_old_pos_id) {
 			this.cube = cube;
 			this.face = cube.faces[face_key];
@@ -1378,6 +1400,8 @@ export const TextureGenerator = {
 				texture = Texture.getDefault();
 			}
 			if (!texture || !texture.img) return false;
+			// 编号46（竞态兜底）：源图未解码/损坏时回退模板色块，避免 0 尺寸采样画出空岛
+			if (!texture.img.naturalWidth || !texture.img.naturalHeight) return false;
 
 			ctx.save();
 
@@ -1657,7 +1681,7 @@ export const TextureGenerator = {
 			makeTexture.updateSource(dataUrl);
 		}
 
-		let affected_elements = TextureGenerator.changeUVResolution(new_resolution[0], new_resolution[1], texture);
+		let affected_elements = TextureGenerator.changeUVResolution(new_resolution[0], new_resolution[1], texture, element_list);
 
 		if (texture) {
 			element_list.forEach(function(element) {
@@ -1820,7 +1844,7 @@ export const TextureGenerator = {
 		var dataUrl = canvas.toDataURL()
 		var texture = cb(dataUrl)
 
-		let affected_elements = TextureGenerator.changeUVResolution(new_resolution[0], new_resolution[1], texture);
+		let affected_elements = TextureGenerator.changeUVResolution(new_resolution[0], new_resolution[1], texture, element_list);
 
 		if (texture) {
 			face_list.forEach(({face, fkey}, i) => {
@@ -1846,7 +1870,7 @@ export const TextureGenerator = {
 		})
 	},
 	//Misc
-	changeUVResolution(width, height, texture) {
+	changeUVResolution(width, height, texture, element_list) {
 		let factor_x = width / Project.getUVWidth(texture);
 		let factor_y = height / Project.getUVHeight(texture);
 
@@ -1861,7 +1885,10 @@ export const TextureGenerator = {
 		let changed_elements = [];
 
 		if (!Project.box_uv && !Format.single_texture && !Format.per_texture_uv_size && (factor_x !== 1 || factor_y !== 1)) {
-			changed_elements = Outliner.elements.filter(el => el.faces && !el.selected);
+			// 编号46（生命周期）：排除集必须用扫描时捕获的 element_list，而非 finale 时的实时
+			// el.selected——generateTemplate 跨 await，中途选择变化会导致面 UV 既不重写也不缩放
+			let excluded = element_list || Outliner.selected;
+			changed_elements = Outliner.elements.filter(el => el.faces && !excluded.includes(el));
 			Undo.current_save.addElements(changed_elements, {uv_only: true});
 
 			changed_elements.forEach(element => {
