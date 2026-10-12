@@ -30,7 +30,8 @@ export class AnimationControllerState {
 			particle: false,
 		}
 		this.playing_sounds = [];
-		// 2D canvas position ({x, y}); null = automatic layout. Session-only UI state: not saved, not part of undo.
+		// 2D canvas position ({x, y}); null = automatic layout. Saved with the project via getUndoCopy/extend.
+		// Moving a node is not an undoable edit by itself; positions ride along with other undo snapshots.
 		this.position = null;
 
 		if (data) {
@@ -155,6 +156,12 @@ export class AnimationControllerState {
 				this.blend_transition_curve[timecode] = data.blend_transition[key];
 			}
 		}
+		if ('position' in data) {
+			let p = data.position;
+			this.position = (p && typeof p.x == 'number' && typeof p.y == 'number' && isFinite(p.x) && isFinite(p.y))
+				? {x: p.x, y: p.y}
+				: null;
+		}
 	}
 	getUndoCopy() {
 		var copy = {
@@ -168,6 +175,7 @@ export class AnimationControllerState {
 		copy.transitions = JSON.parse(JSON.stringify(copy.transitions));
 		copy.particles = JSON.parse(JSON.stringify(copy.particles));
 		copy.sounds = JSON.parse(JSON.stringify(copy.sounds));
+		copy.position = this.position ? {x: this.position.x, y: this.position.y} : null;
 		return copy;
 	}
 	compileForBedrock() {
@@ -823,6 +831,31 @@ AnimationControllerState.prototype.menu = new Menu([
 		}
 	},
 	new MenuSeparator('manage'),
+	{
+		id: 'add_transition',
+		name: 'animation_controllers.state.add_transition',
+		icon: 'login',
+		searchable: true,
+		children(state) {
+			let list = [];
+			state.controller?.states.forEach(state2 => {
+				if (state2 == state || state.transitions.find(t => t.target == state2.uuid)) return;
+				list.push({
+					name: state2.name,
+					icon: 'login',
+					click: () => state.addTransition(state2.uuid)
+				})
+			})
+			if (!list.length) {
+				list.push({
+					name: 'generic.unset',
+					icon: 'remove',
+					click: () => state.addTransition()
+				})
+			}
+			return list;
+		}
+	},
 	'duplicate',
 	'rename',
 	'delete',
@@ -1487,6 +1520,7 @@ Interface.definePanels(() => {
 				zoom: 1,
 				pan: {x: 40, y: 40},
 				playback_speed: 100,
+				preview_mode: 'manual',
 				connecting: false,
 				suppress_state_click: false,
 				pickwhip: {
@@ -1496,6 +1530,16 @@ Interface.definePanels(() => {
 					end_y: 0,
 				}
 			}},
+			mounted() {
+				// BarSelect value is not reactive; poll so the "playing" highlight follows the toolbar mode
+				this._preview_mode_interval = setInterval(() => {
+					let mode = BarItems.animation_controller_preview_mode?.value || 'manual';
+					if (mode != this.preview_mode) this.preview_mode = mode;
+				}, 250);
+			},
+			beforeDestroy() {
+				clearInterval(this._preview_mode_interval);
+			},
 			methods: {
 				loadPreset(preset) {
 					Undo.initEdit({animation_controllers: [AnimationController.selected]})
@@ -1718,9 +1762,94 @@ Interface.definePanels(() => {
 						this.pan.y = Math.clamp(this.pan.y, lo_y, hi_y);
 					})
 				},
+				zoomToFit() {
+					if (!this.controller || !this.controller.states.length) return;
+					Vue.nextTick(() => {
+						let margin = 60;
+						let min_x = Infinity, min_y = Infinity, max_x = -Infinity, max_y = -Infinity;
+						this.controller.states.forEach(state => {
+							let pos = this.getStatePosition(state);
+							let node = this.$el.querySelector(`.controller_state[uuid="${state.uuid}"]`);
+							let w = node ? node.offsetWidth : 300;
+							let h = node ? node.offsetHeight : 100;
+							min_x = Math.min(min_x, pos.x);
+							min_y = Math.min(min_y, pos.y);
+							max_x = Math.max(max_x, pos.x + w);
+							max_y = Math.max(max_y, pos.y + h);
+						})
+						let view_w = this.$el.clientWidth;
+						let view_h = this.$el.clientHeight;
+						let zoom = Math.clamp(Math.min(view_w / (max_x - min_x + 2 * margin), view_h / (max_y - min_y + 2 * margin)), 0.2, 2);
+						this.zoom = Math.round(zoom * 100) / 100;
+						this.pan.x = Math.round((view_w - (max_x - min_x) * this.zoom) / 2 - min_x * this.zoom);
+						this.pan.y = Math.round((view_h - (max_y - min_y) * this.zoom) / 2 - min_y * this.zoom);
+					})
+				},
+				autoLayout() {
+					let controller = this.controller;
+					if (!controller || !controller.states.length) return;
+					let states = controller.states;
+					// BFS into left-to-right layers, starting at the initial state; each disconnected component stacks below
+					let visited = new Set();
+					let components = [];
+					let roots = [];
+					let initial = states.find(s => s.uuid == controller.initial_state);
+					if (initial) roots.push(initial);
+					states.forEach(state => { if (state != initial) roots.push(state); });
+					roots.forEach(root => {
+						if (visited.has(root.uuid)) return;
+						let layers = [];
+						let queue = [[root, 0]];
+						visited.add(root.uuid);
+						while (queue.length) {
+							let [state, depth] = queue.shift();
+							(layers[depth] = layers[depth] || []).push(state);
+							state.transitions.forEach(transition => {
+								let target = states.find(s => s.uuid == transition.target);
+								if (target && !visited.has(target.uuid)) {
+									visited.add(target.uuid);
+									queue.push([target, depth + 1]);
+								}
+							})
+						}
+						components.push(layers);
+					})
+					let component_y = 0;
+					components.forEach(layers => {
+						let component_bottom = component_y;
+						layers.forEach((layer, depth) => {
+							let y = component_y;
+							layer.forEach(state => {
+								let node = this.$el.querySelector(`.controller_state[uuid="${state.uuid}"]`);
+								let h = node ? node.offsetHeight : 100;
+								state.position = {x: depth * 380, y};
+								y += h + 40;
+							})
+							component_bottom = Math.max(component_bottom, y);
+						})
+						component_y = component_bottom + 80;
+					})
+					this.zoomToFit();
+				},
+				onCanvasKeydown(event) {
+					if (!this.controller) return;
+					let tag = event.target.tagName;
+					if (tag == 'INPUT' || tag == 'TEXTAREA' || event.target.isContentEditable) return;
+					if (event.key == 'Home' || event.code == 'NumpadDecimal') {
+						event.preventDefault();
+						event.stopPropagation();
+						this.zoomToFit();
+					} else if (event.key == 'Delete' || (event.code == 'KeyX' && !event.ctrlOrCmd && !event.altKey)) {
+						let state = this.controller.selected_state;
+						if (!state) return;
+						event.preventDefault();
+						event.stopPropagation();
+						state.remove(true);
+					}
+				},
 				panCanvas(event) {
 					if (event.button) return;
-					if (event.target.closest('.controller_state') || event.target.closest('path') || event.target.closest('.controller_add_state_button') || event.target.closest('#animation_controller_presets')) return;
+					if (event.target.closest('.controller_state') || event.target.closest('path') || event.target.closest('.ac_canvas_tools') || event.target.closest('#animation_controller_presets')) return;
 					convertTouchEvent(event);
 					let scope = this;
 					let start_x = event.clientX, start_y = event.clientY;
@@ -2013,6 +2142,9 @@ Interface.definePanels(() => {
 							let pos2 = this.getStatePosition(target);
 							let selected = state == selected_state || !selected_state;
 							let relevant = target == selected_state;
+							let dimmed = !!(selected_state && state != selected_state && target != selected_state);
+							let playing = this.preview_mode == 'play' && !!selected_state && state == selected_state;
+							let active_in = this.preview_mode == 'play' && !!selected_state && target == selected_state && state != selected_state;
 							let color = markerColors[result.list.length % markerColors.length].standard;
 
 							let x2 = pos2.x;
@@ -2021,7 +2153,7 @@ Interface.definePanels(() => {
 
 							result.list.push({
 								state_index, target_index,
-								selected, relevant, color,
+								selected, relevant, dimmed, playing, active_in, color,
 								uuid: transition.uuid,
 								condition: transition.condition,
 								path: `M ${x1} ${y1} C ${x1 + spread} ${y1}, ${x2 - spread} ${y2}, ${x2} ${y2}`,
@@ -2035,16 +2167,19 @@ Interface.definePanels(() => {
 			},
 			template: `
 				<div id="animation_controllers_wrapper"
+					tabindex="0"
 					:class="{connecting_controllers: connecting}"
 					:style="{'--blend-transition': controller && controller.last_state ? (controller.last_state.blend_transition / (playback_speed/100)) + 's' : 0}"
 					@mousedown="panCanvas($event)" @touchstart="panCanvas($event)"
-					@click="deselect($event)" @wheel="onMouseWheel($event)" @scroll="onCanvasScroll()"
+					@click="deselect($event)" @wheel="onMouseWheel($event)" @scroll="onCanvasScroll()" @keydown="onCanvasKeydown($event)"
 				>
 
 					<div class="ac_canvas" :style="{transform: 'translate(' + pan.x + 'px, ' + pan.y + 'px) scale(' + zoom + ')'}">
 
 						<svg v-if="controller" class="ac_connections">
-							<g v-for="connection in connections.list" :key="connection.uuid">
+							<g v-for="connection in connections.list" :key="connection.uuid"
+								:class="{dimmed: connection.dimmed, conn_playing: connection.playing, conn_active_in: connection.active_in}"
+							>
 								<path class="ac_connection_hit" :d="connection.path"
 									@click="selectConnection(connection, $event)" @dblclick="selectConnectionDeep(connection, $event)" @contextmenu="connectionContextMenu(connection, $event)"
 								><title>{{ connection.condition }}</title></path>
@@ -2061,7 +2196,7 @@ Interface.definePanels(() => {
 						<template v-if="controller">
 						<div v-for="state in controller.states" :key="state.uuid"
 							class="controller_state"
-							:class="{selected: controller.selected_state == state, folded: state.folded, initial_state: controller.initial_state == state.uuid}"
+							:class="{selected: controller.selected_state == state, folded: state.folded, initial_state: controller.initial_state == state.uuid, playing: preview_mode == 'play' && controller.selected_state == state}"
 							:uuid="state.uuid"
 							:style="{left: getStatePosition(state).x + 'px', top: getStatePosition(state).y + 'px'}"
 							@click="onStateClick(state, $event)"
@@ -2263,8 +2398,16 @@ Interface.definePanels(() => {
 
 					</div>
 
-					<div v-if="controller" class="controller_add_state_button" :title="'${tl('action.add_animation_controller_state')}'" @click="addState()">
-						<i class="material-icons">add</i>
+					<div v-if="controller" class="ac_canvas_tools">
+						<div class="ac_tool_button" title="${tl('animation_controllers.zoom_fit')} (Home)" @click="zoomToFit()">
+							<i class="material-icons">zoom_out_map</i>
+						</div>
+						<div class="ac_tool_button" title="${tl('animation_controllers.auto_layout')}" @click="autoLayout()">
+							<i class="material-icons">account_tree</i>
+						</div>
+						<div class="ac_tool_button" :title="'${tl('action.add_animation_controller_state')}'" @click="addState()">
+							<i class="material-icons">add</i>
+						</div>
 					</div>
 
 					<div v-if="controller && !controller.states.length" id="animation_controller_presets">

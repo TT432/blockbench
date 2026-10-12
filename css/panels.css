@@ -2065,6 +2065,33 @@ svg.ac_connections path.ac_connection.selected,
 svg.ac_connections path.ac_connection.relevant {
 	opacity: 1;
 }
+svg.ac_connections g.dimmed path.ac_connection {
+	opacity: 0.12;
+}
+svg.ac_connections g.dimmed path.ac_connection_arrow {
+	opacity: 0.2;
+}
+svg.ac_connections g.conn_playing path.ac_connection {
+	stroke: #4ade80 !important;
+	opacity: 1;
+	stroke-dasharray: 8 5;
+	animation: ac_connection_flow 0.6s linear infinite;
+}
+svg.ac_connections g.conn_playing path.ac_connection_arrow {
+	fill: #4ade80 !important;
+	opacity: 1;
+}
+svg.ac_connections g.conn_active_in path.ac_connection {
+	stroke: #86efac !important;
+	opacity: 0.8;
+}
+svg.ac_connections g.conn_active_in path.ac_connection_arrow {
+	fill: #86efac !important;
+}
+@keyframes ac_connection_flow {
+	0%   { stroke-dashoffset: 0; }
+	100% { stroke-dashoffset: -13; }
+}
 svg.ac_connections path.ac_connection_arrow {
 	pointer-events: none;
 	opacity: 0.9;
@@ -2088,6 +2115,17 @@ line.ac_pickwhip {
 	width: min(100vw, 300px);
 	border-color: var(--color-accent);
 	z-index: 19;
+}
+#animation_controllers_wrapper .controller_state.playing {
+	border-color: #4ade80;
+	animation: ac_state_playing_pulse 1.5s ease-in-out infinite;
+}
+@keyframes ac_state_playing_pulse {
+	0%, 100% { box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.7), 0 0 10px rgb(0 0 0 / 22%); }
+	50%      { box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.25), 0 0 10px rgb(0 0 0 / 22%); }
+}
+#animation_controllers_wrapper:focus {
+	outline: none;
 }
 #animation_controllers_wrapper .controller_state:focus-within {
 	z-index: 20;
@@ -2247,10 +2285,15 @@ span.controller_state_section_info {
 .controller_state input[type=checkbox] {
 	width: 38px;
 }
-.controller_add_state_button {
+.ac_canvas_tools {
 	position: absolute;
 	right: 12px;
 	bottom: 12px;
+	display: flex;
+	gap: 6px;
+	z-index: 30;
+}
+.ac_tool_button {
 	width: 34px;
 	height: 34px;
 	border-radius: 6px;
@@ -2260,9 +2303,8 @@ span.controller_state_section_info {
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
-	z-index: 30;
 }
-.controller_add_state_button:hover {
+.ac_tool_button:hover {
 	color: var(--color-light);
 	background-color: var(--color-elevated);
 }
