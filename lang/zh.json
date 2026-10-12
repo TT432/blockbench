@@ -1744,6 +1744,7 @@
 	"animation_controllers.state.add_transition": "添加过渡",
 	"animation_controllers.zoom_fit": "缩放至适配",
 	"animation_controllers.auto_layout": "自动布局",
+	"animation_controllers.connection.reset_curvature": "重置曲率",
 	"menu.color_picker.picker_type": "拾色器类型",
 	"menu.color_picker.picker_type.square": "正方形",
 	"menu.color_picker.picker_type.wheel": "圆轮",

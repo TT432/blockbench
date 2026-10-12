@@ -87,8 +87,8 @@ export class AnimationControllerState {
 				};
 				this.transitions.push(transition);
 				if (typeof a == 'object' && typeof a.uuid == 'string' && a.uuid.length == 36) {
-					// Internal
-					Object.assign(transition, a);
+					// Internal. Defaults first so keys absent from the snapshot (e.g. curvature before it was introduced) do not linger.
+					Object.assign(transition, {target: '', condition: '', curvature: 0}, a);
 				} else if (typeof a == 'object') {
 					// Bedrock
 					let key = Object.keys(a)[0];
@@ -1523,6 +1523,9 @@ Interface.definePanels(() => {
 				preview_mode: 'manual',
 				connecting: false,
 				suppress_state_click: false,
+				selected_states: [],
+				marquee: null,
+				connections_epoch: 0,
 				pickwhip: {
 					start_x: 0,
 					start_y: 0,
@@ -1839,17 +1842,32 @@ Interface.definePanels(() => {
 						event.preventDefault();
 						event.stopPropagation();
 						this.zoomToFit();
-					} else if (event.key == 'Delete' || (event.code == 'KeyX' && !event.ctrlOrCmd && !event.altKey)) {
-						let state = this.controller.selected_state;
-						if (!state) return;
+					} else if (event.code == 'KeyA' && event.ctrlOrCmd) {
 						event.preventDefault();
 						event.stopPropagation();
-						state.remove(true);
+						this.selected_states = this.controller.states.map(s => s.uuid);
+						let last = this.controller.states.last();
+						if (last) last.select();
+					} else if (event.key == 'Delete' || (event.code == 'KeyX' && !event.ctrlOrCmd && !event.altKey)) {
+						event.preventDefault();
+						event.stopPropagation();
+						let targets = this.controller.states.filter(s => this.selected_states.includes(s.uuid));
+						if (!targets.length && this.controller.selected_state) targets = [this.controller.selected_state];
+						if (!targets.length) return;
+						if (targets.length == 1) {
+							targets[0].remove(true);
+						} else {
+							Undo.initEdit({animation_controllers: [this.controller]});
+							targets.forEach(state => state.remove(false));
+							Undo.finishEdit('Remove animation controller states');
+						}
+						this.selected_states = [];
 					}
 				},
 				panCanvas(event) {
 					if (event.button) return;
 					if (event.target.closest('.controller_state') || event.target.closest('path') || event.target.closest('.ac_canvas_tools') || event.target.closest('#animation_controller_presets')) return;
+					if (event.shiftKey) return this.startMarquee(event);
 					convertTouchEvent(event);
 					let scope = this;
 					let start_x = event.clientX, start_y = event.clientY;
@@ -1873,13 +1891,64 @@ Interface.definePanels(() => {
 					addEventListeners(document, 'mousemove touchmove', move);
 					addEventListeners(document, 'mouseup touchend', stop);
 				},
+				startMarquee(event) {
+					convertTouchEvent(event);
+					event.preventDefault();
+					let scope = this;
+					let rect = this.$el.getBoundingClientRect();
+					let toCanvas = e => ({
+						x: (e.clientX - rect.left - this.pan.x) / this.zoom,
+						y: (e.clientY - rect.top - this.pan.y) / this.zoom
+					});
+					let start = toCanvas(event);
+					let moved = false;
+					function move(e2) {
+						convertTouchEvent(e2);
+						let cur = toCanvas(e2);
+						if (!moved && Math.abs(e2.clientX - event.clientX) + Math.abs(e2.clientY - event.clientY) < 4) return;
+						moved = true;
+						scope.marquee = {
+							x: Math.min(start.x, cur.x),
+							y: Math.min(start.y, cur.y),
+							width: Math.abs(cur.x - start.x),
+							height: Math.abs(cur.y - start.y),
+						};
+					}
+					function stop(e2) {
+						removeEventListeners(document, 'mousemove touchmove', move);
+						removeEventListeners(document, 'mouseup touchend', stop);
+						let box = scope.marquee;
+						scope.marquee = null;
+						if (!moved || !box || !scope.controller) return;
+						scope.suppress_state_click = true;
+						setTimeout(() => { scope.suppress_state_click = false; }, 0);
+						// Select every state whose node intersects the marquee
+						let hit = scope.controller.states.filter(state => {
+							let pos = scope.getStatePosition(state);
+							let node = scope.$el.querySelector(`.controller_state[uuid="${state.uuid}"]`);
+							let w = node ? node.offsetWidth : scope.getStateWidth(state);
+							let h = node ? node.offsetHeight : 100;
+							return pos.x < box.x + box.width && pos.x + w > box.x
+								&& pos.y < box.y + box.height && pos.y + h > box.y;
+						});
+						scope.selected_states = hit.map(s => s.uuid);
+						let last = hit.last();
+						if (last) last.select();
+					}
+					addEventListeners(document, 'mousemove touchmove', move);
+					addEventListeners(document, 'mouseup touchend', stop);
+				},
 				dragStateNode(state, event) {
 					if (event.button) return;
 					convertTouchEvent(event);
 					if (event.type == 'mousedown') event.preventDefault();
 					event.stopPropagation();
 					let scope = this;
-					let start_pos = this.getStatePosition(state);
+					// Group drag: move every state in the multi-selection together
+					let group = (this.selected_states.length > 1 && this.selected_states.includes(state.uuid))
+						? this.controller.states.filter(s => this.selected_states.includes(s.uuid))
+						: [state];
+					let start_positions = group.map(s => ({state: s, pos: this.getStatePosition(s)}));
 					let start_x = event.clientX, start_y = event.clientY;
 					let moved = false;
 					function move(e2) {
@@ -1887,10 +1956,14 @@ Interface.definePanels(() => {
 						if (!moved && Math.abs(e2.clientX - start_x) + Math.abs(e2.clientY - start_y) < 4) return;
 						moved = true;
 						scope.suppress_state_click = true;
-						state.position = {
-							x: Math.round(start_pos.x + (e2.clientX - start_x) / scope.zoom),
-							y: Math.round(start_pos.y + (e2.clientY - start_y) / scope.zoom)
-						};
+						let dx = (e2.clientX - start_x) / scope.zoom;
+						let dy = (e2.clientY - start_y) / scope.zoom;
+						start_positions.forEach(({state, pos}) => {
+							state.position = {
+								x: Math.round(pos.x + dx),
+								y: Math.round(pos.y + dy)
+							};
+						})
 					}
 					function stop() {
 						removeEventListeners(document, 'mousemove touchmove', move);
@@ -1902,13 +1975,30 @@ Interface.definePanels(() => {
 				},
 				onStateClick(state, event) {
 					if (this.suppress_state_click) return;
-					state.select().scrollTo();
+					if (event.ctrlOrCmd || Pressing.overrides.ctrl) {
+						// Toggle in multi-selection
+						if (this.selected_states.includes(state.uuid)) {
+							this.selected_states.remove(state.uuid);
+							if (this.controller.selected_state == state) {
+								let last = this.selected_states.last();
+								let next = last && this.controller.states.find(s => s.uuid == last);
+								if (next) next.select(); else this.controller.selected_state = null;
+							}
+						} else {
+							this.selected_states.push(state.uuid);
+							state.select().scrollTo();
+						}
+					} else {
+						this.selected_states = [state.uuid];
+						state.select().scrollTo();
+					}
 				},
 				deselect(event) {
 					if (!this.controller) return;
 					let target = event.target;
 					if (target.id !== 'animation_controllers_wrapper' && !target.classList?.contains('ac_canvas') && target.tagName !== 'svg') return;
 					this.controller.selected_state = null;
+					this.selected_states = [];
 				},
 				sortAnimation(state, event) {
 					Undo.initEdit({animation_controller_state: state});
@@ -1923,6 +2013,7 @@ Interface.definePanels(() => {
 					Undo.finishEdit('Reorder transitions in controller state');
 				},
 				selectConnection(connection, event) {
+					if (this.suppress_state_click) return;
 					let state = this.controller.states[connection.state_index];
 					let target = this.controller.states[connection.target_index];
 					if (state == this.controller.selected_state || event.ctrlOrCmd || Pressing.overrides.ctrl) {
@@ -1949,6 +2040,7 @@ Interface.definePanels(() => {
 					}
 				},
 				connectionContextMenu(connection, event) {
+					let vue = this;
 					let state = this.controller.states[connection.state_index];
 					new Menu('controller_connection_context', [
 						{
@@ -1967,16 +2059,64 @@ Interface.definePanels(() => {
 							}
 						},
 						{
+							name: 'animation_controllers.connection.reset_curvature',
+							icon: 'undo',
+							condition: () => state.transitions.find(t => t.uuid == connection.uuid)?.curvature,
+							click() {
+								Undo.initEdit({animation_controller_state: state});
+								// Property.copy replaces array items during initEdit; re-find by uuid
+								let transition = state.transitions.find(t => t.uuid == connection.uuid);
+								if (transition) transition.curvature = 0;
+								vue.connections_epoch++;
+								Undo.finishEdit('Reset connection curvature');
+							}
+						},
+						{
 							name: 'generic.remove',
 							icon: 'clear',
 							click() {
-								let transition = state.transitions.find(t => t.uuid == connection.uuid);
 								Undo.initEdit({animation_controller_state: state});
-								state.transitions.remove(transition);
+								// Property.copy replaces array items during initEdit; re-find by uuid
+								let transition = state.transitions.find(t => t.uuid == connection.uuid);
+								if (transition) state.transitions.remove(transition);
 								Undo.finishEdit('Remove animation controller transition');
 							}
 						},
 					]).open(event)
+				},
+				dragConnectionCurve(connection, event) {
+					if (event.button) return;
+					convertTouchEvent(event);
+					let scope = this;
+					let state = this.controller.states[connection.state_index];
+					let start_y = event.clientY;
+					let start_curvature = connection.curvature;
+					let editing = false;
+					let moved = false;
+					function move(e2) {
+						convertTouchEvent(e2);
+						if (!moved && Math.abs(e2.clientY - start_y) < 4) return;
+						if (!editing) {
+							editing = true;
+							Undo.initEdit({animation_controller_state: state});
+						}
+						moved = true;
+						scope.suppress_state_click = true;
+						// Property.copy replaces array items during initEdit; re-find by uuid
+						let transition = state.transitions.find(t => t.uuid == connection.uuid);
+						if (transition) {
+							transition.curvature = Math.round(start_curvature + (e2.clientY - start_y) / scope.zoom);
+							scope.connections_epoch++;
+						}
+					}
+					function stop() {
+						removeEventListeners(document, 'mousemove touchmove', move);
+						removeEventListeners(document, 'mouseup touchend', stop);
+						if (editing) Undo.finishEdit('Adjust connection curvature');
+						setTimeout(() => { scope.suppress_state_click = false; }, 0);
+					}
+					addEventListeners(document, 'mousemove touchmove', move);
+					addEventListeners(document, 'mouseup touchend', stop);
 				},
 				dragConnection(state, event) {
 					state.select();
@@ -2123,6 +2263,8 @@ Interface.definePanels(() => {
 			},
 			computed: {
 				connections() {
+					// transition.curvature lives on unobserved plain objects; this epoch re-runs the computed when it changes
+					void this.connections_epoch;
 					let result = {
 						list: [],
 						colors: {},
@@ -2150,13 +2292,15 @@ Interface.definePanels(() => {
 							let x2 = pos2.x;
 							let y2 = pos2.y + 15;
 							let spread = Math.clamp(Math.abs(x2 - x1) / 2, 40, 160);
+							let curvature = transition.curvature || 0;
 
 							result.list.push({
 								state_index, target_index,
 								selected, relevant, dimmed, playing, active_in, color,
 								uuid: transition.uuid,
 								condition: transition.condition,
-								path: `M ${x1} ${y1} C ${x1 + spread} ${y1}, ${x2 - spread} ${y2}, ${x2} ${y2}`,
+								curvature,
+								path: `M ${x1} ${y1} C ${x1 + spread} ${y1 + curvature}, ${x2 - spread} ${y2 + curvature}, ${x2} ${y2}`,
 								arrow: `M ${x2} ${y2} L ${x2 - 9} ${y2 - 4.5} L ${x2 - 9} ${y2 + 4.5} Z`
 							});
 							result.colors[transition.uuid] = color;
@@ -2181,6 +2325,7 @@ Interface.definePanels(() => {
 								:class="{dimmed: connection.dimmed, conn_playing: connection.playing, conn_active_in: connection.active_in}"
 							>
 								<path class="ac_connection_hit" :d="connection.path"
+									@mousedown="dragConnectionCurve(connection, $event)" @touchstart="dragConnectionCurve(connection, $event)"
 									@click="selectConnection(connection, $event)" @dblclick="selectConnectionDeep(connection, $event)" @contextmenu="connectionContextMenu(connection, $event)"
 								><title>{{ connection.condition }}</title></path>
 								<path class="ac_connection" :class="{selected: connection.selected, relevant: connection.relevant}"
@@ -2196,7 +2341,7 @@ Interface.definePanels(() => {
 						<template v-if="controller">
 						<div v-for="state in controller.states" :key="state.uuid"
 							class="controller_state"
-							:class="{selected: controller.selected_state == state, folded: state.folded, initial_state: controller.initial_state == state.uuid, playing: preview_mode == 'play' && controller.selected_state == state}"
+							:class="{selected: controller.selected_state == state, multi_selected: selected_states.length > 1 && selected_states.includes(state.uuid), folded: state.folded, initial_state: controller.initial_state == state.uuid, playing: preview_mode == 'play' && controller.selected_state == state}"
 							:uuid="state.uuid"
 							:style="{left: getStatePosition(state).x + 'px', top: getStatePosition(state).y + 'px'}"
 							@click="onStateClick(state, $event)"
@@ -2395,6 +2540,10 @@ Interface.definePanels(() => {
 							</template>
 						</div>
 						</template>
+
+						<div v-if="marquee" class="ac_marquee"
+							:style="{left: marquee.x + 'px', top: marquee.y + 'px', width: marquee.width + 'px', height: marquee.height + 'px'}"
+						></div>
 
 					</div>
 
