@@ -30,6 +30,8 @@ export class AnimationControllerState {
 			particle: false,
 		}
 		this.playing_sounds = [];
+		// 2D canvas position ({x, y}); null = automatic layout. Session-only UI state: not saved, not part of undo.
+		this.position = null;
 
 		if (data) {
 			this.extend(data);
@@ -304,8 +306,8 @@ export class AnimationControllerState {
 		}
 	}
 	scrollTo() {
-		let node = document.querySelector(`.controller_state[uuid="${this.uuid}"]`);
-		if (node) node.scrollIntoView({behavior: 'smooth', block: 'nearest'})
+		let vue = Panels.animation_controllers && Panels.animation_controllers.inside_vue;
+		if (vue) vue.panToState(this);
 		return this;
 	}
 	rename() {
@@ -1476,9 +1478,6 @@ Interface.definePanels(() => {
 		},
 		growable: true,
 		resizable: true,
-		onResize() {
-			if (this.inside_vue) this.inside_vue.updateConnectionWrapperOffset();
-		},
 		component: {
 			name: 'panel-animation-controllers',
 			components: {VuePrismEditor},
@@ -1486,14 +1485,15 @@ Interface.definePanels(() => {
 				controller: null,
 				presets: AnimationController.presets,
 				zoom: 1,
+				pan: {x: 40, y: 40},
 				playback_speed: 100,
-				connection_wrapper_offset: 0,
 				connecting: false,
+				suppress_state_click: false,
 				pickwhip: {
 					start_x: 0,
 					start_y: 0,
-					length: 0,
-					angle: 0,
+					end_x: 0,
+					end_y: 0,
 				}
 			}},
 			methods: {
@@ -1503,7 +1503,6 @@ Interface.definePanels(() => {
 						states: preset.states,
 						initial_state: preset.initial_state
 					});
-					this.updateConnectionWrapperOffset();
 					Undo.finishEdit('Apply animation controller preset')
 				},
 				toggleStateSection(state, section) {
@@ -1659,34 +1658,128 @@ Interface.definePanels(() => {
 				addState() {
 					BarItems.add_animation_controller_state.trigger();
 				},
-				sortStates(event) {
-					let max_index = this.controller.states.length - 1;
-					Undo.initEdit({animation_controllers: [this.controller]});
-					var item = this.controller.states.splice(Math.min(event.oldIndex, max_index), 1)[0];
-					this.controller.states.splice(Math.min(event.newIndex, max_index), 0, item);
-					Undo.finishEdit('Reorder animation controller states');
-				},
 				getStateName(uuid) {
 					let state = this.controller.states.find(s => s.uuid == uuid);
 					return state ? state.name : '';
 				},
 				onMouseWheel(event) {
+					if (!this.controller) return;
+					event.preventDefault();
 					if (Keybinds.extra.uv_editor_scroll_zoom.keybind.isTriggered(event)) {
-						let delta = (event.deltaY < 0) ? 0.1 : -0.1;
-						this.zoom = Math.clamp(this.zoom + delta, 0.3, 1);
-						this.updateConnectionWrapperOffset();
+						// Zoom around the cursor
+						let old_zoom = this.zoom;
+						let zoom = Math.clamp(old_zoom * (event.deltaY < 0 ? 1.1 : 0.9), 0.2, 2);
+						if (zoom == old_zoom) return;
+						let rect = this.$el.getBoundingClientRect();
+						let cx = event.clientX - rect.left;
+						let cy = event.clientY - rect.top;
+						this.pan.x = cx - (cx - this.pan.x) * (zoom / old_zoom);
+						this.pan.y = cy - (cy - this.pan.y) * (zoom / old_zoom);
+						this.zoom = zoom;
+					} else {
+						// Pan
+						this.pan.x -= event.deltaX + (event.shiftKey ? event.deltaY : 0);
+						this.pan.y -= event.shiftKey ? 0 : event.deltaY;
 					}
 				},
-				updateConnectionWrapperOffset() {
+				onCanvasScroll() {
+					// The canvas never scrolls; browsers may still scroll the wrapper to reveal focused inputs
+					if (this.$el.scrollTop || this.$el.scrollLeft) {
+						this.$el.scrollTop = 0;
+						this.$el.scrollLeft = 0;
+					}
+				},
+				getStatePosition(state) {
+					if (state.position) return state.position;
+					let index = this.controller ? this.controller.states.indexOf(state) : 0;
+					return {x: Math.max(index, 0) * 340, y: 0};
+				},
+				getStateWidth(state) {
+					return state.folded ? 54 : 300;
+				},
+				panToState(state) {
 					Vue.nextTick(() => {
-						let first = document.querySelector('#animation_controllers_wrapper .controller_state');
-						this.connection_wrapper_offset = first ? first.offsetLeft : 0;
+						let node = this.$el.querySelector(`.controller_state[uuid="${state.uuid}"]`);
+						if (!node) return;
+						let pos = this.getStatePosition(state);
+						let margin = 24;
+						let view_w = this.$el.clientWidth;
+						let view_h = this.$el.clientHeight;
+						let w = node.offsetWidth * this.zoom;
+						let h = node.offsetHeight * this.zoom;
+						let px = pos.x * this.zoom;
+						let py = pos.y * this.zoom;
+						// Pan range in which the node is fully visible (swapped bounds if larger than viewport)
+						let lo_x = view_w - margin - w - px, hi_x = margin - px;
+						if (lo_x > hi_x) [lo_x, hi_x] = [hi_x, lo_x];
+						let lo_y = view_h - margin - h - py, hi_y = margin - py;
+						if (lo_y > hi_y) [lo_y, hi_y] = [hi_y, lo_y];
+						this.pan.x = Math.clamp(this.pan.x, lo_x, hi_x);
+						this.pan.y = Math.clamp(this.pan.y, lo_y, hi_y);
 					})
 				},
-				deselect(event) {
-					if (this.controller && event.target?.id == 'animation_controllers_wrapper' || event.target?.parentElement?.id == 'animation_controllers_wrapper') {
-						this.controller.selected_state = null;
+				panCanvas(event) {
+					if (event.button) return;
+					if (event.target.closest('.controller_state') || event.target.closest('path') || event.target.closest('.controller_add_state_button') || event.target.closest('#animation_controller_presets')) return;
+					convertTouchEvent(event);
+					let scope = this;
+					let start_x = event.clientX, start_y = event.clientY;
+					let start_pan = {x: this.pan.x, y: this.pan.y};
+					let moved = false;
+					function move(e2) {
+						convertTouchEvent(e2);
+						if (!moved && Math.abs(e2.clientX - start_x) + Math.abs(e2.clientY - start_y) < 4) return;
+						moved = true;
+						scope.pan.x = start_pan.x + e2.clientX - start_x;
+						scope.pan.y = start_pan.y + e2.clientY - start_y;
 					}
+					function stop() {
+						removeEventListeners(document, 'mousemove touchmove', move);
+						removeEventListeners(document, 'mouseup touchend', stop);
+						if (moved) {
+							scope.suppress_state_click = true;
+							setTimeout(() => { scope.suppress_state_click = false; }, 0);
+						}
+					}
+					addEventListeners(document, 'mousemove touchmove', move);
+					addEventListeners(document, 'mouseup touchend', stop);
+				},
+				dragStateNode(state, event) {
+					if (event.button) return;
+					convertTouchEvent(event);
+					if (event.type == 'mousedown') event.preventDefault();
+					event.stopPropagation();
+					let scope = this;
+					let start_pos = this.getStatePosition(state);
+					let start_x = event.clientX, start_y = event.clientY;
+					let moved = false;
+					function move(e2) {
+						convertTouchEvent(e2);
+						if (!moved && Math.abs(e2.clientX - start_x) + Math.abs(e2.clientY - start_y) < 4) return;
+						moved = true;
+						scope.suppress_state_click = true;
+						state.position = {
+							x: Math.round(start_pos.x + (e2.clientX - start_x) / scope.zoom),
+							y: Math.round(start_pos.y + (e2.clientY - start_y) / scope.zoom)
+						};
+					}
+					function stop() {
+						removeEventListeners(document, 'mousemove touchmove', move);
+						removeEventListeners(document, 'mouseup touchend', stop);
+						setTimeout(() => { scope.suppress_state_click = false; }, 0);
+					}
+					addEventListeners(document, 'mousemove touchmove', move);
+					addEventListeners(document, 'mouseup touchend', stop);
+				},
+				onStateClick(state, event) {
+					if (this.suppress_state_click) return;
+					state.select().scrollTo();
+				},
+				deselect(event) {
+					if (!this.controller) return;
+					let target = event.target;
+					if (target.id !== 'animation_controllers_wrapper' && !target.classList?.contains('ac_canvas') && target.tagName !== 'svg') return;
+					this.controller.selected_state = null;
 				},
 				sortAnimation(state, event) {
 					Undo.initEdit({animation_controller_state: state});
@@ -1761,24 +1854,21 @@ Interface.definePanels(() => {
 					convertTouchEvent(event);
 					event.preventDefault();
 					event.stopPropagation();
-					let anchor = document.getElementById('animation_controllers_pickwhip_anchor');
-					let anchor_offset = $(anchor).offset();
 					let scope = this;
 					let {controller, pickwhip} = this;
+					let start_pos = this.getStatePosition(state);
+					pickwhip.start_x = start_pos.x + this.getStateWidth(state);
+					pickwhip.start_y = start_pos.y + 15;
+					pickwhip.end_x = pickwhip.start_x;
+					pickwhip.end_y = pickwhip.start_y;
 					this.connecting = true;
-					pickwhip.start_x = event.clientX - anchor_offset.left;
-					pickwhip.start_y = event.clientY - anchor_offset.top;
-					pickwhip.length = 0;
 
 					function move(e2) {
 						convertTouchEvent(e2);
 						// Visually update connection line
-						let anchor_offset = $(anchor).offset();
-						let pos2_x = e2.clientX - anchor_offset.left;
-						let pos2_y = e2.clientY - anchor_offset.top;
-						pickwhip.length = Math.sqrt(Math.pow(pos2_x - pickwhip.start_x, 2) + Math.pow(pos2_y - pickwhip.start_y, 2))
-						pickwhip.angle = Math.radToDeg(Math.atan2(pos2_y - pickwhip.start_y, pos2_x - pickwhip.start_x));
-						scope.connecting = pickwhip.length >= 5;
+						let rect = scope.$el.getBoundingClientRect();
+						pickwhip.end_x = (e2.clientX - rect.left - scope.pan.x) / scope.zoom;
+						pickwhip.end_y = (e2.clientY - rect.top - scope.pan.y) / scope.zoom;
 					}
 					function stop(e2) {
 						convertTouchEvent(e2);
@@ -1786,7 +1876,7 @@ Interface.definePanels(() => {
 						removeEventListeners(document, 'mouseup touchend', stop);
 						scope.connecting = false;
 
-						if (Math.abs(event.clientX - e2.clientX) < 20) return;
+						if (Math.abs(event.clientX - e2.clientX) < 20 && Math.abs(event.clientY - e2.clientY) < 20) return;
 
 						// find selected state
 						let target;
@@ -1904,142 +1994,80 @@ Interface.definePanels(() => {
 			},
 			computed: {
 				connections() {
-					let connections = {
-						forward: [],
-						backward: [],
+					let result = {
+						list: [],
 						colors: {},
-						outgoing_plugs: {},
-						max_layer_top: 0,
-						max_layer_bottom: 0
 					};
-					if (!this.controller) return connections;
+					if (!this.controller) return result;
 					let {states, selected_state} = this.controller;
 
-					// Count incoming plugs
-					let incoming_plugs = {};
-					let total_incoming_plugs = {};
 					states.forEach((state, state_index) => {
-						total_incoming_plugs[state.uuid] = {top: 0, bottom: 0};
-						states.forEach((origin_state, origin_state_index) => {
-							if (state === origin_state) return;
-							origin_state.transitions.forEach(t => {
-								if (t.target === state.uuid) {
-									state_index < origin_state_index
-										? total_incoming_plugs[state.uuid].top++
-										: total_incoming_plugs[state.uuid].bottom++;
-								}
-							});
-						});
-					});
-
-					let plug_gap = 16;
-
-					states.forEach((state, state_index) => {
-						let transitions_forward = state.transitions.filter(t => {
-							return state_index < states.findIndex(s => s.uuid == t.target)
-						});
-						let transitions_backward = state.transitions.filter(t => !transitions_forward.includes(t));
-						connections.outgoing_plugs[state.uuid] = {
-							top: transitions_backward.length,
-							bottom: transitions_forward.length
-						}
-						//transitions_forward.sort((a, b) => states.findIndex(s => s.uuid == a.target) - states.findIndex(s => s.uuid == b.target));
-						//transitions_backward.sort((a, b) => states.findIndex(s => s.uuid == b.target) - states.findIndex(s => s.uuid == a.target));
+						let pos1 = this.getStatePosition(state);
+						let x1 = pos1.x + this.getStateWidth(state);
+						let y1 = pos1.y + 15;
 
 						state.transitions.forEach(transition => {
 							let target_index = states.findIndex(s => s.uuid == transition.target);
 							let target = states[target_index];
 							if (!target) return;
-							let selected = state == this.controller.selected_state || !this.controller.selected_state;
-							let relevant = target == this.controller.selected_state;
-							let back = target_index < state_index;
-							let range = back ? [target_index, state_index] : [state_index, target_index];
-							let connection_list = back ? connections.backward : connections.forward;
-							let color = markerColors[(connections.forward.length + connections.backward.length) % markerColors.length].standard;
+							let pos2 = this.getStatePosition(target);
+							let selected = state == selected_state || !selected_state;
+							let relevant = target == selected_state;
+							let color = markerColors[result.list.length % markerColors.length].standard;
 
-							if (!incoming_plugs[target.uuid]) incoming_plugs[target.uuid] = {top: 0, bottom: 0};
+							let x2 = pos2.x;
+							let y2 = pos2.y + 15;
+							let spread = Math.clamp(Math.abs(x2 - x1) / 2, 40, 160);
 
-							let layer = 0;
-							for (let i = range[0]; i < range[1]; i++) {
-								while (connection_list.find(c => c.layer == layer && i >= c.range[0] && i < c.range[1])) {
-									layer++;
-								}
-							}
-							let same_level_transitions = back ? transitions_backward : transitions_forward;
-							let start_plug_offset = (same_level_transitions.indexOf(transition) - (same_level_transitions.length-1)/2) * Math.min(plug_gap, 200 / same_level_transitions.length);
-
-							let con = {
+							result.list.push({
 								state_index, target_index,
-								layer, range,
 								selected, relevant, color,
 								uuid: transition.uuid,
-								condition: transition.condition
-							}
-
-							if (back) {// Top
-								let incoming_gap_width = Math.min(plug_gap, 260 / total_incoming_plugs[target.uuid].top);
-								connections.max_layer_top = Math.max(connections.max_layer_top, layer);
-								con.end_x = state_index * 312 + 150 + start_plug_offset;
-								con.start_x = target_index * 312 + (300 - 25 - incoming_plugs[target.uuid].top * incoming_gap_width);
-								incoming_plugs[target.uuid].top++;
-
-							} else {// Bottom
-								let incoming_gap_width = Math.min(plug_gap, 260 / total_incoming_plugs[target.uuid].bottom);
-								connections.max_layer_bottom = Math.max(connections.max_layer_bottom, layer);
-								con.start_x = state_index * 312 + 150 - start_plug_offset;
-								con.end_x = target_index * 312 + 25 + incoming_plugs[target.uuid].bottom * incoming_gap_width;
-								incoming_plugs[target.uuid].bottom++;
-							}
-
-							connection_list.push(con);
-							connections.colors[transition.uuid] = color;
+								condition: transition.condition,
+								path: `M ${x1} ${y1} C ${x1 + spread} ${y1}, ${x2 - spread} ${y2}, ${x2} ${y2}`,
+								arrow: `M ${x2} ${y2} L ${x2 - 9} ${y2 - 4.5} L ${x2 - 9} ${y2 + 4.5} Z`
+							});
+							result.colors[transition.uuid] = color;
 						})
 					})
-					connections.forward.sort((a, b) => b.layer - a.layer);
-					connections.backward.sort((a, b) => b.layer - a.layer);
-					return connections;
-				}
-			},
-			watch: {
-				controller() {
-					this.updateConnectionWrapperOffset();
-				},
-				'controller.states'() {
-					this.updateConnectionWrapperOffset();
+					return result;
 				}
 			},
 			template: `
 				<div id="animation_controllers_wrapper"
 					:class="{connecting_controllers: connecting}"
-					:style="{zoom: zoom, '--blend-transition': controller && controller.last_state ? (controller.last_state.blend_transition / (playback_speed/100)) + 's' : 0}"
-					@click="deselect($event)" @wheel="onMouseWheel($event)"
+					:style="{'--blend-transition': controller && controller.last_state ? (controller.last_state.blend_transition / (playback_speed/100)) + 's' : 0}"
+					@mousedown="panCanvas($event)" @touchstart="panCanvas($event)"
+					@click="deselect($event)" @wheel="onMouseWheel($event)" @scroll="onCanvasScroll()"
 				>
 
-					<div id="animation_controllers_pickwhip_anchor" style="height: 0px; position: relative;">
-						<div id="animation_controllers_pickwhip"
-							v-if="connecting"
-							:style="{left: pickwhip.start_x + 'px', top: pickwhip.start_y + 'px', width: pickwhip.length + 'px', rotate: pickwhip.angle + 'deg'}"
-						></div>
-					</div>
+					<div class="ac_canvas" :style="{transform: 'translate(' + pan.x + 'px, ' + pan.y + 'px) scale(' + zoom + ')'}">
 
-					<div v-if="controller && controller.states.length" class="controller_state_connection_wrapper_top" :style="{'--max-layer': connections.max_layer_top, left: connection_wrapper_offset + 'px'}">
-						<div v-for="connection in connections.backward"
-							:style="{'--color-marker': connection.color, '--layer': connection.layer, left: (connection.start_x)+'px', width: (connection.end_x - connection.start_x)+'px'}"
-							class="controller_state_connection backward" :class="{selected: connection.selected, relevant: connection.relevant}"
-							:title="connection.condition"
-							@click="selectConnection(connection, $event)" @dblclick="selectConnectionDeep(connection, $event)" @contextmenu="connectionContextMenu(connection, $event)"
-						></div>
-					</div>
+						<svg v-if="controller" class="ac_connections">
+							<g v-for="connection in connections.list" :key="connection.uuid">
+								<path class="ac_connection_hit" :d="connection.path"
+									@click="selectConnection(connection, $event)" @dblclick="selectConnectionDeep(connection, $event)" @contextmenu="connectionContextMenu(connection, $event)"
+								><title>{{ connection.condition }}</title></path>
+								<path class="ac_connection" :class="{selected: connection.selected, relevant: connection.relevant}"
+									:d="connection.path" :style="{stroke: connection.relevant ? 'var(--color-text)' : connection.color}"
+								/>
+								<path class="ac_connection_arrow" :d="connection.arrow" :style="{fill: connection.relevant ? 'var(--color-text)' : connection.color}"/>
+							</g>
+							<line v-if="connecting" class="ac_pickwhip"
+								:x1="pickwhip.start_x" :y1="pickwhip.start_y" :x2="pickwhip.end_x" :y2="pickwhip.end_y"
+							/>
+						</svg>
 
-					<ul v-if="controller && controller.states.length" v-sortable="{onUpdate: sortStates, touchStartThreshold: 20, animation: 160, handle: '.controller_state_title_bar'}">
-						<li v-for="state in controller.states" :key="state.uuid"
+						<template v-if="controller">
+						<div v-for="state in controller.states" :key="state.uuid"
 							class="controller_state"
 							:class="{selected: controller.selected_state == state, folded: state.folded, initial_state: controller.initial_state == state.uuid}"
 							:uuid="state.uuid"
-							@click="state.select().scrollTo()"
+							:style="{left: getStatePosition(state).x + 'px', top: getStatePosition(state).y + 'px'}"
+							@click="onStateClick(state, $event)"
 							@contextmenu="state.openMenu($event)"
 						>
-							<div class="controller_state_title_bar" @touchstart="state.select()">
+							<div class="controller_state_title_bar" @mousedown="dragStateNode(state, $event)" @touchstart="dragStateNode(state, $event)">
 								<label @dblclick="state.rename()">{{ state.name }}</label>
 								<div class="tool" title="" @click="state.openMenu($event.target)" v-if="!state.folded"><i class="material-icons">drag_handle</i></div>
 								<!--div class="tool" title="" @click="state.folded = !state.folded"><i class="material-icons">{{ state.folded ? 'chevron_right' : 'chevron_left' }}</i></div-->
@@ -2047,8 +2075,8 @@ Interface.definePanels(() => {
 
 							<template v-if="!state.folded">
 
-								<div class="controller_state_gate controller_state_gate_top"
-									:style="{width: (10 + connections.outgoing_plugs[state.uuid].top * 16)+'px'}"
+								<div class="controller_state_gate_in"></div>
+								<div class="controller_state_gate_out"
 									@mousedown="dragConnection(state, $event)" @touchstart="dragConnection(state, $event)"
 								></div>
 
@@ -2229,24 +2257,14 @@ Interface.definePanels(() => {
 									</div>
 								</template>
 
-								<div class="controller_state_gate controller_state_gate_bottom"
-									:style="{width: (10 + connections.outgoing_plugs[state.uuid].bottom * 16)+'px'}"
-									@mousedown="dragConnection(state, $event)" @touchstart="dragConnection(state, $event)"
-								></div>
 							</template>
-						</li>
-						<li class="controller_add_column" @click="addState()">
-							<i class="material-icons">add</i>
-						</li>
-					</ul>
+						</div>
+						</template>
 
-					<div v-if="controller && controller.states.length" class="controller_state_connection_wrapper_bottom" :style="{'--max-layer': connections.max_layer_top, left: connection_wrapper_offset + 'px'}">
-						<div v-for="connection in connections.forward"
-							:style="{'--color-marker': connection.color, '--layer': connection.layer, left: (connection.start_x)+'px', width: (connection.end_x - connection.start_x)+'px'}"
-							class="controller_state_connection forward" :class="{selected: connection.selected, relevant: connection.relevant}"
-							:title="connection.condition"
-							@click="selectConnection(connection, $event)" @dblclick="selectConnectionDeep(connection, $event)" @contextmenu="connectionContextMenu(connection, $event)"
-						></div>
+					</div>
+
+					<div v-if="controller" class="controller_add_state_button" :title="'${tl('action.add_animation_controller_state')}'" @click="addState()">
+						<i class="material-icons">add</i>
 					</div>
 
 					<div v-if="controller && !controller.states.length" id="animation_controller_presets">
