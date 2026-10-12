@@ -841,6 +841,17 @@ export const UVEditor = {
 			slider.node.style.setProperty('display', Condition(slider.condition)?'block':'none');
 			slider.update();
 		}
+		// 编号66：滑块栏不在任何 Toolbar 内，BARS.updateConditions 不会刷新它，需手动同步可见性与勾选状态
+		let uv_lock_toggle = BarItems.uv_lock_size;
+		if (uv_lock_toggle && uv_lock_toggle.node) {
+			let lockable = UVEditor.getMappableElements().filter(el => 'uv_lock' in el);
+			let show = !!Modes.edit && lockable.length > 0;
+			uv_lock_toggle.node.style.setProperty('display', show ? 'block' : 'none');
+			if (show) {
+				uv_lock_toggle.value = lockable.every(el => el.uv_lock);
+				uv_lock_toggle.updateEnabledState();
+			}
+		}
 		if (!this.hasElements()) return;
 		let face = UVEditor.getReferenceFace();
 		if (face instanceof CubeFace) {
@@ -2784,6 +2795,21 @@ BARS.defineActions(function() {
 			let value = toggle_value ? 'all_elements' : 'selected_elements';
 			UVEditor.vue.display_uv = value;
 			settings.display_uv.set(value);
+		}
+	})
+	// 编号66：锁定 UV 大小的开关，显示在 UV 编辑器底部滑块栏（displayTools 中同步可见性与状态）
+	new Toggle('uv_lock_size', {
+		icon: 'fas.fa-lock',
+		category: 'uv',
+		condition: {modes: ['edit']},
+		onChange(value) {
+			let elements = UVEditor.getMappableElements().filter(el => 'uv_lock' in el);
+			if (!elements.length) return;
+			Undo.initEdit({elements, uv_only: true});
+			elements.forEach(element => {
+				element.uv_lock = value;
+			})
+			Undo.finishEdit('Toggle UV lock');
 		}
 	})
 	new Toggle('paint_mode_uv_overlay', {
@@ -5491,6 +5517,7 @@ Interface.definePanels(function() {
 		onAfter
 
 	}).toElement(slider_bar);
+	BarItems.uv_lock_size.toElement(slider_bar);
 	BarItems.edit_mode_uv_overlay.toElement(slider_bar);
 })
 

@@ -2778,8 +2778,8 @@
 	"switches.export": "Export",
 	"switches.shade": "Shade",
 	"switches.mirror": "Mirror UV",
-	"switches.uv_lock": "Lock UV Size",
-	"switches.uv_lock.desc": "When locked, creating or appending a texture template does not change this element's UV size or position",
+	"action.uv_lock_size": "Lock UV Size",
+	"action.uv_lock_size.desc": "When locked, creating or appending a texture template does not change the selected elements' UV size or position",
 	"switches.autouv": "Auto UV",
 	"switches.autouv.alt": "Relative",
 
