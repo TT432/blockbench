@@ -2786,6 +2786,8 @@
 	"switches.mirror": "Mirror UV",
 	"action.uv_lock_size": "Lock UV Size",
 	"action.uv_lock_size.desc": "When locked, creating or appending a texture template does not change the selected elements' UV size or position",
+	"action.fixed_world_position": "Fixed World Position",
+	"action.fixed_world_position.desc": "When enabled, rotating a group keeps the world position of its contained blocks/groups unchanged (their rotation values change accordingly)",
 	"switches.autouv": "Auto UV",
 	"switches.autouv.alt": "Relative",
 

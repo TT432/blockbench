@@ -1,5 +1,5 @@
 import { TransformerModule } from "./transform_modules";
-import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, moveElementsInSpace } from "../transform";
+import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, getRotationUndoAspects, moveElementsInSpace } from "../transform";
 
 function displayDistance(number) {
 	Blockbench.setCursorTooltip(trimFloatNumber(number));
@@ -263,7 +263,12 @@ new TransformerModule('edit', {
 		}
 
 		if (rotate_group) {
-			Undo.initEdit({groups: Group.multi_selected})
+			// 编号68：固定世界位置打开时，旋转补偿会改写后代元素/子组，undo 范围同步扩展
+			if (Modes.edit && BarItems.fixed_world_position?.value) {
+				Undo.initEdit(getRotationUndoAspects());
+			} else {
+				Undo.initEdit({groups: Group.multi_selected})
+			}
 		} else {
 			let transfer_undo_nodes = getGroupTransferOriginUndoNodes(Group.all.filter(g => g.selected));
 			transfer_undo_nodes.elements.safePush(...getSelectedMovingElements());

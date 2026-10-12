@@ -575,6 +575,7 @@ export const BARS = {
 				'slider_rotation_x',
 				'slider_rotation_y',
 				'slider_rotation_z',
+				'fixed_world_position',
 			]
 		})
 		if (Blockbench.isMobile) {

@@ -670,6 +670,102 @@ export function getParentTransformSpace() {
 	}
 	return bone instanceof OutlinerNode ? bone : 0;
 }
+/**
+ * 编号68「固定世界位置」：组旋转时让后代吸收逆旋转，世界几何保持不变。
+ * q̃ = q_new⁻¹·q_old（组局部旋转增量的逆）。直接子级：origin/from/to/vertices 绕组枢轴施加 q̃，
+ * rotation 属性左乘 q̃（旋转值变化，但世界位置与姿态不变）；更深后代的局部关系不变，
+ * 绝对坐标随直接子组枢轴的位移差平移（其局部旋转值保持不变）。
+ * 数学依据：world = M_g·ΠP_i，P' 链满足 ΠP' = (M_g'⁻¹M_g)·ΠP = q̃·ΠP，
+ * 仅需对直接子级 P_1 左乘 q̃，更深层保持局部不变即可精确保持世界。
+ */
+export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
+	if (q_old.angleTo(q_new) < 1e-7) return;
+	let q_tilde = q_new.clone().invert().multiply(q_old);
+	let pivot = new THREE.Vector3().fromArray(group.origin);
+	let vec = new THREE.Vector3();
+	let order = group.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+	let elements_updated = [];
+	let groups_updated = [];
+	group.children.forEach(child => {
+		if (!child.origin) return;
+		let old_origin = child.origin.slice();
+		vec.fromArray(child.origin).sub(pivot).applyQuaternion(q_tilde).add(pivot);
+		child.origin.V3_set(vec.x, vec.y, vec.z);
+		if (child.from) {
+			vec.fromArray(child.from).sub(pivot).applyQuaternion(q_tilde).add(pivot);
+			child.from.V3_set(vec.x, vec.y, vec.z);
+			vec.fromArray(child.to).sub(pivot).applyQuaternion(q_tilde).add(pivot);
+			child.to.V3_set(vec.x, vec.y, vec.z);
+		}
+		if (child.vertices) {
+			for (let vkey in child.vertices) {
+				vec.fromArray(child.vertices[vkey]).sub(pivot).applyQuaternion(q_tilde).add(pivot);
+				child.vertices[vkey].V3_set(vec.x, vec.y, vec.z);
+			}
+		}
+		let rotatable = (child instanceof Group) || (child.getTypeBehavior && child.getTypeBehavior('rotatable'));
+		if (rotatable && child.rotation) {
+			let child_order = child.mesh?.rotation?.order || order;
+			let qc = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+				Math.degToRad(child.rotation[0]),
+				Math.degToRad(child.rotation[1]),
+				Math.degToRad(child.rotation[2]),
+				child_order
+			));
+			qc.premultiply(q_tilde);
+			let e = new THREE.Euler().setFromQuaternion(qc, child_order);
+			child.rotation.V3_set(
+				Math.roundTo(Math.radToDeg(e.x), 4),
+				Math.roundTo(Math.radToDeg(e.y), 4),
+				Math.roundTo(Math.radToDeg(e.z), 4)
+			);
+		}
+		if (child instanceof Group) groups_updated.push(child); else elements_updated.push(child);
+		if (child instanceof Group) {
+			let diff = [
+				child.origin[0] - old_origin[0],
+				child.origin[1] - old_origin[1],
+				child.origin[2] - old_origin[2],
+			];
+			if (Math.abs(diff[0]) + Math.abs(diff[1]) + Math.abs(diff[2]) > 1e-9) {
+				child.forEachChild(desc => {
+					if (desc.origin) desc.origin.V3_add(diff);
+					if (desc.from) desc.from.V3_add(diff);
+					if (desc.to) desc.to.V3_add(diff);
+					if (desc.vertices) {
+						for (let vkey in desc.vertices) desc.vertices[vkey].V3_add(diff);
+					}
+					if (desc instanceof Group) groups_updated.safePush(desc); else elements_updated.safePush(desc);
+				});
+			}
+		}
+	})
+	Canvas.updateView({
+		elements: elements_updated,
+		element_aspects: {geometry: true, transform: true},
+		groups: groups_updated,
+		group_aspects: {transform: true},
+	});
+}
+/**
+ * 编号68：旋转 undo 范围。固定世界位置打开时，组旋转补偿会改写全部后代的
+ * origin/from/to/vertices/rotation，undo 必须扩展到后代元素与后代组
+ *（Group.multi_selected 只含直接选中的组，选择级联不进该列表）。
+ */
+export function getRotationUndoAspects() {
+	let elements = Outliner.selected.filter(el => el.getTypeBehavior('rotatable')).slice();
+	let groups = Group.multi_selected.slice();
+	if (Modes.edit && BarItems.fixed_world_position?.value) {
+		let rotated = getRotationObjects() || [];
+		let rotated_groups = rotated.filter(o => o instanceof Group);
+		if (rotated_groups.length) {
+			let nodes = getGroupTransferOriginUndoNodes(rotated_groups);
+			nodes.elements.forEach(el => elements.safePush(el));
+			nodes.groups.forEach(g => groups.safePush(g));
+		}
+	}
+	return {elements, groups};
+}
 export function rotateOnAxis(modify, axis, slider) {
 	var things = getRotationObjects();
 	if (!things) return;
@@ -714,6 +810,17 @@ export function rotateOnAxis(modify, axis, slider) {
 	if (axis instanceof THREE.Vector3) space = 0;
 	things.forEach(obj => {
 		let mesh = obj.mesh;
+		// 编号68：固定世界位置——捕获组旋转前朝向，分支写值后补偿后代
+		let fwp_q_old;
+		if (obj instanceof Group && Modes.edit && BarItems.fixed_world_position?.value && obj.children.length) {
+			let order = obj.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+			fwp_q_old = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+				Math.degToRad(obj.rotation[0]),
+				Math.degToRad(obj.rotation[1]),
+				Math.degToRad(obj.rotation[2]),
+				order
+			));
+		}
 		if (obj instanceof Cube && !Format.bone_rig) {
 			if (obj.origin.allEqual(0)) {
 				obj.origin.V3_set(origin)
@@ -847,6 +954,16 @@ export function rotateOnAxis(modify, axis, slider) {
 			obj.rotation[1] = Math.radToDeg(e.y);
 			obj.rotation[2] = Math.radToDeg(e.z);
 			
+		}
+		if (fwp_q_old) {
+			let order = obj.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+			let q_new = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+				Math.degToRad(obj.rotation[0]),
+				Math.degToRad(obj.rotation[1]),
+				Math.degToRad(obj.rotation[2]),
+				order
+			));
+			compensateGroupRotationFixedWorld(obj, fwp_q_old, q_new);
 		}
 		if (obj instanceof Group) {
 			Canvas.updateView({groups: [obj]});
@@ -1365,7 +1482,8 @@ BARS.defineActions(function() {
 			Canvas.updatePositions()
 		},
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected.filter(el => el.getTypeBehavior('rotatable')), groups: Group.multi_selected})
+			// 编号68：固定世界位置打开时 undo 范围扩展到被补偿的后代（getRotationUndoAspects）
+			Undo.initEdit(getRotationUndoAspects())
 		},
 		onAfter: function() {
 			afterRotateOnAxis();
@@ -1393,7 +1511,8 @@ BARS.defineActions(function() {
 			Canvas.updatePositions()
 		},
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected.filter(el => el.getTypeBehavior('rotatable')), groups: Group.multi_selected})
+			// 编号68：固定世界位置打开时 undo 范围扩展到被补偿的后代（getRotationUndoAspects）
+			Undo.initEdit(getRotationUndoAspects())
 		},
 		onAfter: function() {
 			afterRotateOnAxis();
@@ -1421,7 +1540,8 @@ BARS.defineActions(function() {
 			Canvas.updatePositions()
 		},
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected.filter(el => el.getTypeBehavior('rotatable')), groups: Group.multi_selected})
+			// 编号68：固定世界位置打开时 undo 范围扩展到被补偿的后代（getRotationUndoAspects）
+			Undo.initEdit(getRotationUndoAspects())
 		},
 		onAfter: function() {
 			afterRotateOnAxis();
@@ -1431,6 +1551,14 @@ BARS.defineActions(function() {
 	})
 	let slider_vector_rotation = [BarItems.slider_rotation_x, BarItems.slider_rotation_y, BarItems.slider_rotation_z];
 	slider_vector_rotation.forEach(slider => slider.slider_vector = slider_vector_rotation);
+
+	// 编号68：固定世界位置——打开后旋转组时，内部块/组的世界位置保持不变（旋转值相应吸收逆旋转）
+	new Toggle('fixed_world_position', {
+		icon: 'fas.fa-anchor',
+		default: false,
+		category: 'transform',
+		condition: () => Modes.edit && Format.bone_rig && !!Group.first_selected,
+	})
 
 	//Origin
 	function moveOriginOnAxis(modify, axis) {
