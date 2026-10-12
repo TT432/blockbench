@@ -2453,6 +2453,7 @@
 	"animation_controllers.state.add_transition": "Add Transition",
 	"animation_controllers.zoom_fit": "Zoom to Fit",
 	"animation_controllers.auto_layout": "Auto Layout",
+	"animation_controllers.connection.reset_curvature": "Reset Curvature",
 
 	"menu.action_control.type.tab": "Tab",
 	"menu.action_control.type.angle": "Camera Angle",

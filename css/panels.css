@@ -2052,7 +2052,20 @@ svg.ac_connections path.ac_connection_hit {
 	stroke: transparent;
 	stroke-width: 14;
 	pointer-events: stroke;
-	cursor: pointer;
+	cursor: ns-resize;
+}
+#animation_controllers_wrapper .ac_marquee {
+	position: absolute;
+	border: 1px dashed var(--color-accent);
+	background-color: var(--color-accent);
+	opacity: 0.25;
+	pointer-events: none;
+	z-index: 25;
+}
+#animation_controllers_wrapper .controller_state.multi_selected {
+	border-color: var(--color-accent);
+	box-shadow: 0 0 0 2px var(--color-accent);
+	z-index: 18;
 }
 svg.ac_connections path.ac_connection {
 	fill: none;
