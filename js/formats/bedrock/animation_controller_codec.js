@@ -47,18 +47,22 @@ export const animation_codec = new AnimationCodec('bedrock_animation_controller'
 				for (let short_name in new_particles) {
 					let path_result = Project.BedrockEntityManager.getParticleFile(short_name);
 					if (path_result) {
-						let effect = Animator.loadParticleEmitter(path_result, fs.readFileSync(path_result, 'utf-8'));
-						delete effect.config.preview_texture;
+						let asset = ParticleAsset.importFromFile({
+							name: pathToName(path_result, true),
+							path: path_result,
+							content: fs.readFileSync(path_result, 'utf-8')
+						});
 						for (let entry of new_particles[short_name]) {
-							entry.file = path_result;
+							entry.file = asset ? asset.getRef() : path_result;
 						}
 					}
 				}
 				for (let short_name in new_sounds) {
 					let path_result = Project.BedrockEntityManager.getSoundFile(short_name);
 					if (path_result && fs.existsSync(path_result)) {
+						let asset = SoundAsset.importFromFile({name: pathToName(path_result, true), path: path_result});
 						for (let entry of new_sounds[short_name]) {
-							entry.file = path_result;
+							entry.file = asset ? asset.getRef() : path_result;
 						}
 					}
 				}

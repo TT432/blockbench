@@ -256,7 +256,7 @@ export class AnimationControllerState {
 		if (!this.muted.sound) {
 			this.sounds.forEach(sound => {
 				if (sound.file && !sound.cooldown) {
-					var media = new Audio(sound.file);
+					var media = new Audio(SoundAsset.resolvePlaybackSource(sound.file));
 					media.playbackRate = Math.clamp(AnimationController.playback_speed/100, 0.1, 4.0);
 					media.volume = Math.clamp(settings.volume.value/100, 0, 1);
 					media.play().catch(() => {});
@@ -1816,46 +1816,20 @@ Interface.definePanels(() => {
 						startpath: particle_entry.file
 					}, (files) => {
 
-						let {path} = files[0];
-						Undo.initEdit({animation_controller_state: state});
-						particle_entry.file = path;
-						let effect = Animator.loadParticleEmitter(path, files[0].content);
+						let json = autoParseJSON(files[0].content, {file_path: files[0].path});
+						if (!json || !json.particle_effect) {
+							Blockbench.showQuickMessage('message.invalid_particle_file');
+							return;
+						}
+						let existing = isApp && files[0].path && ParticleAsset.all.find(a => a.path === files[0].path);
+						Undo.initEdit({animation_controller_state: state, particles: existing ? [existing] : []});
+						let asset = ParticleAsset.importFromFile(files[0]);
+						particle_entry.file = asset.getRef();
 						if (!particle_entry.effect) particle_entry.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
-						delete effect.config.preview_texture;
-						Undo.finishEdit('Change animation controller particle file');
+						Undo.finishEdit('Change animation controller particle file', {particles: [asset]});
 
-						if (!isApp) {
-							Blockbench.showMessageBox({
-								title: 'message.import_particle_texture.import',
-								message: 'message.import_particle_texture.message',
-								buttons: ['dialog.cancel'],
-								commands: {
-									import: 'message.import_particle_texture.import'
-								}
-							}, result => {
-								if (result != 'import') return;
-
-								Blockbench.import({
-									extensions: ['png'],
-									type: 'Particle Texture',
-									readtype: 'image',
-									startpath: effect.config.preview_texture || path
-								}, function(files) {
-									effect.config.preview_texture = isApp ? files[0].path : files[0].content;
-									effect.config.updateTexture();
-								})
-							})
-
-						} else if (effect.config.texture.image.src.startsWith('data:')) {
-							Blockbench.import({
-								extensions: ['png'],
-								type: 'Particle Texture',
-								readtype: 'image',
-								startpath: effect.config.preview_texture || path
-							}, (files) => {
-								effect.config.preview_texture = isApp ? files[0].path : files[0].content;
-								effect.config.updateTexture();
-							})
+						if (!asset.texture) {
+							asset.changeTexture();
 						}
 					})
 				},
@@ -1864,16 +1838,19 @@ Interface.definePanels(() => {
 						resource_id: 'animation_audio',
 						extensions: ['ogg', 'wav', 'mp3'],
 						type: 'Audio File',
+						readtype: 'binary',
 						startpath: sound_entry.file
 					}, (files) => {
-						let path = isApp
-							? files[0].path
-							: URL.createObjectURL(files[0].browser_file);
-
-						Undo.initEdit({animation_controller_state: state});
-						sound_entry.file = path;
+						let existing = isApp && files[0].path && SoundAsset.all.find(a => a.path === files[0].path);
+						Undo.initEdit({animation_controller_state: state, sounds: existing ? [existing] : []});
+						let asset = SoundAsset.importFromFile(files[0]);
+						if (!asset) {
+							Undo.cancelEdit();
+							return;
+						}
+						sound_entry.file = asset.getRef();
 						if (!sound_entry.effect) sound_entry.effect = files[0].name.toLowerCase().replace(/\.[a-z]+$/, '').replace(/[^a-z0-9._]+/g, '');
-						Undo.finishEdit('Change animation controller audio file')
+						Undo.finishEdit('Change animation controller audio file', {sounds: [asset]})
 					})
 				},
 				editStateBlendTime(state) {

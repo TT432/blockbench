@@ -344,20 +344,24 @@ export const animation_codec = new AnimationCodec('bedrock', {
 				for (let short_name in new_particles) {
 					let path_result = Project.BedrockEntityManager.getParticleFile(short_name);
 					if (path_result) {
-						let effect = Animator.loadParticleEmitter(path_result, fs.readFileSync(path_result, 'utf-8'));
-						delete effect.config.preview_texture;
+						let asset = ParticleAsset.importFromFile({
+							name: pathToName(path_result, true),
+							path: path_result,
+							content: fs.readFileSync(path_result, 'utf-8')
+						});
 						for (let entry of new_particles[short_name]) {
 							let data_point = entry.keyframe.data_points[entry.i];
-							data_point.file = path_result;
+							data_point.file = asset ? asset.getRef() : path_result;
 						}
 					}
 				}
 				for (let short_name in new_sounds) {
 					let path_result = Project.BedrockEntityManager.getSoundFile(short_name);
 					if (path_result && fs.existsSync(path_result)) {
+						let asset = SoundAsset.importFromFile({name: pathToName(path_result, true), path: path_result});
 						for (let entry of new_sounds[short_name]) {
 							let data_point = entry.keyframe.data_points[entry.i];
-							data_point.file = path_result;
+							data_point.file = asset ? asset.getRef() : path_result;
 							Timeline.visualizeAudioFile(data_point.file);
 						}
 					}

@@ -32,6 +32,8 @@ Blockbench.KeyframeDataPoint = KeyframeDataPoint;
 Blockbench.BoneAnimator = BoneAnimator;
 Blockbench.NullObjectAnimator = NullObjectAnimator;
 Blockbench.EffectAnimator = EffectAnimator;
+Blockbench.ParticleAsset = ParticleAsset;
+Blockbench.SoundAsset = SoundAsset;
 Blockbench.TimelineMarker = TimelineMarker;
 
 Blockbench.Panel = Panel;

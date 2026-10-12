@@ -729,11 +729,11 @@ export const Animator = {
 				config: new Wintersky.Config(WinterskyScene, json_content, {path}),
 				emitters: {}
 			};
-			if (isApp) {
+			if (isApp && fs.existsSync(path)) {
 				let timeout;
-				this.watcher = fs.watch(path, (eventType) => {
+				Animator.particle_effects[path].watcher = fs.watch(path, (eventType) => {
 					if (eventType == 'change') {
-						if (timeout) clearTimeout(timeout)
+						clearTimeout(timeout)
 						timeout = setTimeout(() => {
 							Blockbench.read(path, {errorbox: false}, (files) => {
 								Animator.loadParticleEmitter(path, files[0].content);
@@ -809,6 +809,7 @@ export const WinterskyScene = new Wintersky.Scene({
 
 		let path_segments = config.file_path.split(/[\\/]+/);
 		let index = path_segments.lastIndexOf('particles');
+		if (index < 0) return;
 		let base_path = path_segments.slice(0, index+1).join(PathModule.sep);
 
 		let prio_name = identifier.split(':')[1];
