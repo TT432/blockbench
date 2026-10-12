@@ -1084,13 +1084,8 @@ new Property(Cube, 'boolean', 'rescale', {
 });
 new Property(Cube, 'boolean', 'locked');
 // 编号65：锁定后方块在新建/追加贴图（重排 UV）时不改变自身 UV 大小范围与位置
-new Property(Cube, 'boolean', 'uv_lock', {
-	inputs: {
-		element_panel: {
-			input: {label: 'switches.uv_lock', description: 'switches.uv_lock.desc', type: 'checkbox'},
-		}
-	}
-});
+// 编号66：开关从元素面板移到 UV 编辑器底部滑块栏（uv.js 的 uv_lock_size Toggle）
+new Property(Cube, 'boolean', 'uv_lock', {default: false});
 new Property(Cube, 'boolean', 'shade', {
 	default: true,
 	condition: {features: ['java_cube_shading_properties'], method: () => !Format.java_cube_shade_direction_override},
