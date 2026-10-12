@@ -488,17 +488,16 @@ export const TextureGenerator = {
 					this.extent_w = (swap ? eh : ew);
 					this.extent_h = (swap ? ew : eh);
 				} else {
-					// 默认（编号58/64）：UV 大小自适应方块面实际尺寸——岛尺寸 = 面尺寸向上对齐像素网格，
-					// 写回 UV extent = 面尺寸（保留分数），密度归一化到 res_multiple 像素/单位，
-					// 方块缩放后重建/追加贴图不再沿用陈旧 UV 范围造成混素
+					// 默认（编号58/64/69/70）：UV 大小自适应方块面实际尺寸——岛尺寸 = 面尺寸向上对齐像素网格；
+					// 写回 UV extent 不设（applyUV 回退为岛尺寸，整数、填满整个岛，与原版行为一致）：
+					// 绘制目标是整个岛，UV 必须覆盖整个岛；分数 extent 只引用岛的前段，
+					// 会在新建时产生分数 UV + 死边距（编号69），重建降采样时边缘列被挤出 UV 域导致丢线/错位（编号70）
 					let w_units = Math.abs(swap ? y : x);
 					let h_units = Math.abs(swap ? x : y);
 					this.width  = Math.ceil(w_units * res_multiple - 1e-6) / res_multiple;
 					this.height = Math.ceil(h_units * res_multiple - 1e-6) / res_multiple;
 					this.align_x = 0;
 					this.align_y = 0;
-					this.extent_w = w_units;
-					this.extent_h = h_units;
 				}
 				if (this.width  >= 0.01 / res_multiple && this.width  < 1 / res_multiple) this.width  = 1 / res_multiple;
 				if (this.height >= 0.01 / res_multiple && this.height < 1 / res_multiple) this.height = 1 / res_multiple;

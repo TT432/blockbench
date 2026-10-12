@@ -642,6 +642,8 @@
 	"switches.mirror": "镜像 UV",
 	"action.uv_lock_size": "锁定 UV 大小",
 	"action.uv_lock_size.desc": "锁定后，新建/追加贴图（重排 UV）不会改变选中元素的 UV 大小范围与位置",
+	"action.fixed_world_position": "固定世界位置",
+	"action.fixed_world_position.desc": "打开后，旋转组时其内部的块/组保持世界位置不变（旋转值会相应变化）",
 	"language_name": "简体中文",
 	"message.plugin_reload": "已重新载入 %0 个本地插件",
 	"settings.brightness": "亮度",
