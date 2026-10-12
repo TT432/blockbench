@@ -672,11 +672,13 @@ export function getParentTransformSpace() {
 }
 /**
  * 编号68「固定世界位置」：组旋转时让后代吸收逆旋转，世界几何保持不变。
- * q̃ = q_new⁻¹·q_old（组局部旋转增量的逆）。直接子级：origin/from/to/vertices 绕组枢轴施加 q̃，
- * rotation 属性左乘 q̃（旋转值变化，但世界位置与姿态不变）；更深后代的局部关系不变，
- * 绝对坐标随直接子组枢轴的位移差平移（其局部旋转值保持不变）。
+ * q̃ = q_new⁻¹·q_old（组局部旋转增量的逆）。直接子级：origin 绕组枢轴施加 q̃，
+ * rotation 属性左乘 q̃（旋转值变化，但世界位置与姿态不变）；from/to/vertices 是
+ * 绝对几何坐标，只随 origin 的位移差平移——绝不能旋转它们：块的 from/to 只是
+ * 轴对齐盒的两个角点，旋转角点后按轴对齐盒重建会改变尺寸/形状（#76 平行六面体变形）。
+ * 更深后代的局部关系不变，绝对坐标随直接子组枢轴的位移差平移（其局部旋转值保持不变）。
  * 数学依据：world = M_g·ΠP_i，P' 链满足 ΠP' = (M_g'⁻¹M_g)·ΠP = q̃·ΠP，
- * 仅需对直接子级 P_1 左乘 q̃，更深层保持局部不变即可精确保持世界。
+ * 仅需对直接子级 P_1 左乘 q̃，且保持几何点与 origin 的相对偏移 v'-o' = v-o 即可精确保持世界。
  */
 export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
 	if (q_old.angleTo(q_new) < 1e-7) return;
@@ -686,24 +688,17 @@ export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
 	let order = group.mesh?.rotation?.order || Format.euler_order || 'ZYX';
 	let elements_updated = [];
 	let groups_updated = [];
+	let unsupported_cubes = [];
 	group.children.forEach(child => {
 		if (!child.origin) return;
 		let old_origin = child.origin.slice();
-		vec.fromArray(child.origin).sub(pivot).applyQuaternion(q_tilde).add(pivot);
-		child.origin.V3_set(vec.x, vec.y, vec.z);
-		if (child.from) {
-			vec.fromArray(child.from).sub(pivot).applyQuaternion(q_tilde).add(pivot);
-			child.from.V3_set(vec.x, vec.y, vec.z);
-			vec.fromArray(child.to).sub(pivot).applyQuaternion(q_tilde).add(pivot);
-			child.to.V3_set(vec.x, vec.y, vec.z);
-		}
-		if (child.vertices) {
-			for (let vkey in child.vertices) {
-				vec.fromArray(child.vertices[vkey]).sub(pivot).applyQuaternion(q_tilde).add(pivot);
-				child.vertices[vkey].V3_set(vec.x, vec.y, vec.z);
-			}
-		}
+		vec.fromArray(old_origin).sub(pivot).applyQuaternion(q_tilde).add(pivot);
+		let diff = [vec.x - old_origin[0], vec.y - old_origin[1], vec.z - old_origin[2]];
+		let has_diff = Math.abs(diff[0]) + Math.abs(diff[1]) + Math.abs(diff[2]) > 1e-9;
+
+		// 旋转吸收：q_c' = q̃·q_c（直接子级旋转值变化，世界姿态不变）
 		let rotatable = (child instanceof Group) || (child.getTypeBehavior && child.getTypeBehavior('rotatable'));
+		let new_rotation;
 		if (rotatable && child.rotation) {
 			let child_order = child.mesh?.rotation?.order || order;
 			let qc = new THREE.Quaternion().setFromEuler(new THREE.Euler(
@@ -714,20 +709,47 @@ export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
 			));
 			qc.premultiply(q_tilde);
 			let e = new THREE.Euler().setFromQuaternion(qc, child_order);
-			child.rotation.V3_set(
+			new_rotation = [
 				Math.roundTo(Math.radToDeg(e.x), 4),
 				Math.roundTo(Math.radToDeg(e.y), 4),
 				Math.roundTo(Math.radToDeg(e.z), 4)
-			);
-		}
-		if (child instanceof Group) groups_updated.push(child); else elements_updated.push(child);
-		if (child instanceof Group) {
-			let diff = [
-				child.origin[0] - old_origin[0],
-				child.origin[1] - old_origin[1],
-				child.origin[2] - old_origin[2],
 			];
-			if (Math.abs(diff[0]) + Math.abs(diff[1]) + Math.abs(diff[2]) > 1e-9) {
+		}
+		// 单轴旋转限制格式的块无法表达任意补偿旋转：放弃补偿（随组刚性旋转），
+		// 给出明确提示，而不是写入非法欧拉角造成静默变形
+		if (new_rotation && child instanceof Cube && Format.rotation_limit && child.getTypeBehavior('cube_rotation_limit')) {
+			if (new_rotation.filter(v => Math.abs(v) > 1e-4).length > 1) {
+				unsupported_cubes.push(child);
+				return;
+			}
+		}
+
+		child.origin.V3_set(vec.x, vec.y, vec.z);
+		if (has_diff) {
+			// 几何坐标只随 origin 平移，保持 v'-o' = v-o，世界几何精确不变
+			if (child.from) {
+				child.from.V3_add(diff);
+				child.to.V3_add(diff);
+			}
+			if (child.vertices) {
+				for (let vkey in child.vertices) {
+					child.vertices[vkey].V3_add(diff);
+				}
+			}
+		}
+		if (new_rotation) {
+			child.rotation.V3_set(new_rotation[0], new_rotation[1], new_rotation[2]);
+			if (child instanceof Cube) {
+				let non_zero = new_rotation.map(v => Math.abs(v) > 1e-4);
+				let axis = non_zero.indexOf(true);
+				if (axis >= 0 && non_zero.indexOf(true, axis + 1) === -1) {
+					child.rotation_axis = getAxisLetter(axis);
+				}
+			}
+		}
+		if (child instanceof Group) {
+			groups_updated.push(child);
+			if (has_diff) {
 				child.forEachChild(desc => {
 					if (desc.origin) desc.origin.V3_add(diff);
 					if (desc.from) desc.from.V3_add(diff);
@@ -738,8 +760,17 @@ export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
 					if (desc instanceof Group) groups_updated.safePush(desc); else elements_updated.safePush(desc);
 				});
 			}
+		} else {
+			elements_updated.push(child);
 		}
 	})
+	if (unsupported_cubes.length) {
+		let now = Date.now();
+		if (!compensateGroupRotationFixedWorld.last_warning || now - compensateGroupRotationFixedWorld.last_warning > 1500) {
+			compensateGroupRotationFixedWorld.last_warning = now;
+			Blockbench.showQuickMessage(tl('message.fixed_world_position_unsupported', [unsupported_cubes.length]), 3000);
+		}
+	}
 	Canvas.updateView({
 		elements: elements_updated,
 		element_aspects: {geometry: true, transform: true},

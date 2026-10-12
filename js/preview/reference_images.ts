@@ -418,6 +418,7 @@ export class ReferenceImage {
 				Interface.preview.append(this.toolbar);
 			} else {
 				this.node.append(this.toolbar);
+				this.updateToolbarPosition();
 			}
 		}
 
@@ -440,6 +441,18 @@ export class ReferenceImage {
 			if (crop_cancel) crop_cancel.style.display = this.crop_mode ? '' : 'none';
 		}
 		if (this.crop_mode) this.updateCropOverlay();
+		return this;
+	}
+	/**
+	 * Keep the edit toolbar fully outside the frame: below by default,
+	 * flipped above when the frame is too close to the bottom edge of the preview.
+	 */
+	updateToolbarPosition(): this {
+		if (!this.toolbar || this.view_mode == 'plane' || !this.node.isConnected) return this;
+		let preview_rect = Interface.preview.getBoundingClientRect();
+		let image_rect = this.node.getBoundingClientRect();
+		let toolbar_height = this.toolbar.clientHeight || 30;
+		this.toolbar.classList.toggle('above', image_rect.bottom + toolbar_height + 20 > preview_rect.bottom);
 		return this;
 	}
 	getZoomLevel(): number {
@@ -486,6 +499,7 @@ export class ReferenceImage {
 			this.node.style.left = pos_x + 'px';
 			this.node.style.top  = pos_y + 'px';
 
+			if (this.selected) this.updateToolbarPosition();
 			return this;
 		}
 		let preview = this.is_blueprint && !Format.image_editor && Preview.all.find(p => p.isOrtho && p.angle == this.attached_side);
@@ -545,6 +559,7 @@ export class ReferenceImage {
 				this.scene_object.scale.set(scale, scale, scale);
 			}
 		}
+		if (this.selected) this.updateToolbarPosition();
 		return this;
 	}
 	getClampedPosition() {

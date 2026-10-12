@@ -257,14 +257,13 @@ export const TextureGenerator = {
 	//constructors
 	boxUVCubeTemplate: class BoxUVCubeTemplate {
 		constructor(obj, min_size) {
-			let floor_uv = Format.box_uv_float_size != true;
-			this.x = Math.round(obj.size(0, floor_uv)) || min_size;
-			this.y = Math.round(obj.size(1, floor_uv)) || min_size;
-			this.z = Math.round(obj.size(2, floor_uv)) || min_size;
+			this.x = Math.ceil(obj.size(0, false) - 1e-6) || min_size;
+			this.y = Math.ceil(obj.size(1, false) - 1e-6) || min_size;
+			this.z = Math.ceil(obj.size(2, false) - 1e-6) || min_size;
 			this.posx = obj.uv_offset[0];
 			this.posy = obj.uv_offset[1];
 			this.obj = obj;
-			this.template_size = (obj.size(2, floor_uv) + obj.size(1, floor_uv))+ (obj.size(2, floor_uv) + obj.size(0, floor_uv))*2;
+			this.template_size = (this.z + this.y) + (this.z + this.x)*2;
 
 			this.height = this.z + this.y;
 			this.width = 2* (this.x + this.z);
@@ -392,7 +391,7 @@ export const TextureGenerator = {
 		}
 
 		if (!cube.box_uv) {
-			var size = cube.size(undefined, Format.box_uv_float_size != true);
+			var size = cube.size(undefined, 'box_uv');
 			size.forEach((n, i) => {
 				size[i] = n;
 			})
@@ -582,7 +581,7 @@ export const TextureGenerator = {
 					if (element.uv_lock) template.locked = true;
 	
 					if (options.double_use && Texture.all.length) {
-						let double_key = [...element.uv_offset, ...element.size(undefined, true), ].join('_')
+						let double_key = [...element.uv_offset, ...element.size(undefined, 'box_uv'), ].join('_')
 						if (doubles[double_key]) {
 							// improve chances that original is not mirrored
 							if (doubles[double_key][0].obj.mirror_uv && !element.mirror_uv) {
@@ -1437,13 +1436,15 @@ export const TextureGenerator = {
 			}
 
 			ctx.imageSmoothingEnabled = false;
-			// 源矩形向外对齐到源像素整数边界，保证部分覆盖的边缘像素列被完整采样（编号46）
+			// 编号46（第三轮根因）：源矩形使用精确分数 UV 域，不向外对齐源像素整数边界。
+			// 向外对齐会让采样域比面实际显示的 UV 域每边最多外扩 1 源像素；当旧 UV 不是源像素对齐
+			// （分数 extent 或手调 UV）时采样域≠显示域，映射被拉伸导致贴图漂移一个单位。
 			let gfx = texture.img.naturalWidth / texture.getUVWidth();
 			let gfp = texture.img.naturalHeight / texture.getUVHeight();
-			let sx0 = Math.max(0, Math.floor(src_x * gfx + 1e-6));
-			let sy0 = Math.max(0, Math.floor(src_y * gfp + 1e-6));
-			let sx1 = Math.min(texture.img.naturalWidth,  Math.ceil((src_x + src_w) * gfx - 1e-6));
-			let sy1 = Math.min(texture.img.naturalHeight, Math.ceil((src_y + src_h) * gfp - 1e-6));
+			let sx0 = Math.clamp(src_x * gfx, 0, texture.img.naturalWidth);
+			let sy0 = Math.clamp(src_y * gfp, 0, texture.img.naturalHeight);
+			let sx1 = Math.clamp((src_x + src_w) * gfx, 0, texture.img.naturalWidth);
+			let sy1 = Math.clamp((src_y + src_h) * gfp, 0, texture.img.naturalHeight);
 			ctx.drawImage(
 				texture.img,
 				sx0,

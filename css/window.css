@@ -1279,6 +1279,20 @@
 		border-radius: 6px;
 		margin-bottom: -14px;
 	}
+	/* In modify mode the toolbar sits fully below the frame so it never covers the resize corners */
+	.reference_image > .reference_image_toolbar {
+		top: 100%;
+		bottom: auto;
+		margin-top: 14px;
+		margin-bottom: 0;
+	}
+	/* Flip above the frame when there is not enough room below in the preview */
+	.reference_image > .reference_image_toolbar.above {
+		top: auto;
+		bottom: 100%;
+		margin-top: 0;
+		margin-bottom: 14px;
+	}
 	#preview > .reference_image_toolbar {
 		margin-bottom: 5px;
 		z-index: 12;
