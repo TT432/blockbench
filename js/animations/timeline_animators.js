@@ -1024,7 +1024,7 @@ export class EffectAnimator extends GeneralAnimator {
 				let media = Timeline.playing_sounds.find(s => s.keyframe_id == kf.uuid);
 				if (diff >= 0 && diff < (1 / 30) * (Timeline.playback_speed / 100) && !media) {
 					if (kf.data_points[0].file && !kf.cooldown) {
-						media = new Audio(kf.data_points[0].file);
+						media = new Audio(SoundAsset.resolvePlaybackSource(kf.data_points[0].file));
 						media.keyframe_id = kf.uuid;
 						media.playbackRate = Math.clamp(Timeline.playback_speed / 100, 0.1, 4.0);
 						media.volume = Math.clamp(settings.volume.value / 100, 0, 1);
@@ -1120,7 +1120,7 @@ export class EffectAnimator extends GeneralAnimator {
 				if (kf.data_points[0].file && !kf.cooldown) {
 					var diff = kf.time - this.animation.time;
 					if (diff < 0 && Timeline.waveforms[kf.data_points[0].file] && Timeline.waveforms[kf.data_points[0].file].duration > -diff) {
-						var media = new Audio(kf.data_points[0].file);
+						var media = new Audio(SoundAsset.resolvePlaybackSource(kf.data_points[0].file));
 						media.playbackRate = Math.clamp(Timeline.playback_speed / 100, 0.1, 4.0);
 						media.volume = Math.clamp(settings.volume.value / 100, 0, 1);
 						media.currentTime = -diff;

@@ -175,6 +175,8 @@ export class ModelProject {
 		this.textures = [];
 		this.selected_texture = null;
 		this.texture_groups = [];
+		this.particles = [];
+		this.sounds = [];
 		this.outliner = [];
 		this.collections = [];
 		this.animations = [];
@@ -327,6 +329,8 @@ export class ModelProject {
 
 		Panels.textures.inside_vue.textures = Texture.all;
 		Panels.textures.inside_vue.texture_groups = TextureGroup.all;
+		Panels.particles.inside_vue.particles = this.particles;
+		Panels.sounds.inside_vue.sounds = this.sounds;
 		Panels.layers.inside_vue.layers = Texture.selected ? Texture.selected.layers : [];
 		Canvas.scene.add(this.model_3d);
 
@@ -768,6 +772,8 @@ export function selectNoProject() {
 
 	Panels.textures.inside_vue.textures = [];
 	Panels.textures.inside_vue.texture_groups = [];
+	Panels.particles.inside_vue.particles = [];
+	Panels.sounds.inside_vue.sounds = [];
 
 	Panels.animations.inside_vue.animations = [];
 	Panels.animations.inside_vue.animation_controllers = [];

@@ -297,7 +297,7 @@ export const Timeline = {
 				var diff = kf.time - effect_animator.animation.time;
 				if (diff < 0 && Timeline.waveforms[kf.data_points[0].file] && Timeline.waveforms[kf.data_points[0].file].duration > -diff) {
 					let audio_path = kf.data_points[0].file;
-					let media = Timeline.paused_sounds.find(sound => sound.keyframe_id == kf.uuid && audio_path == sound.audio_path) ?? new Audio(audio_path);
+					let media = Timeline.paused_sounds.find(sound => sound.keyframe_id == kf.uuid && audio_path == sound.audio_path) ?? new Audio(SoundAsset.resolvePlaybackSource(audio_path));
 					if (media.stutter_timeout) {
 						clearTimeout(media.stutter_timeout);
 					}
@@ -815,8 +815,10 @@ export const Timeline = {
 		}
 		let {samples} = Timeline.waveforms[path];
 
+		let source = SoundAsset.resolvePlaybackSource(path) || path;
+
 		let audioContext = new AudioContext()
-		let response = await fetch(path);
+		let response = await fetch(source);
 		let arrayBuffer = await response.arrayBuffer();
 		let audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 		let data_array = audioBuffer.getChannelData(0);

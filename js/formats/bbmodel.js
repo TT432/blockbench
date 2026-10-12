@@ -310,6 +310,24 @@ var codec = new Codec('project', {
 			model.texture_groups.push(copy);
 		}
 
+		if (ParticleAsset.all.length) {
+			model.particles = [];
+			for (let asset of ParticleAsset.all) {
+				let copy = asset.getSaveCopy();
+				handleAssetPath(copy, 'path', 'relative_path');
+				handleAssetPath(copy, 'texture_path', 'relative_texture_path');
+				model.particles.push(copy);
+			}
+		}
+		if (SoundAsset.all.length) {
+			model.sounds = [];
+			for (let asset of SoundAsset.all) {
+				let copy = asset.getSaveCopy();
+				handleAssetPath(copy, 'path', 'relative_path');
+				model.sounds.push(copy);
+			}
+		}
+
 		let collections = [];
 		if (!options.collection_only) {
 			for (let collection of Collection.all) {
@@ -493,6 +511,57 @@ var codec = new Codec('project', {
 		if (model.skin_model) {
 			Codecs.skin_model.rebuild(model.skin_model, model.skin_pose, model.skin_pose_data);
 		}
+
+		// Effect assets must load before animations/controllers so keyframe
+		// and state references resolve to the embedded content.
+		if (model.particles instanceof Array) {
+			model.particles.forEach(data => {
+				if (isApp && data.relative_path && Project.save_path) {
+					data.path = PathModule.resolve(PathModule.dirname(Project.save_path), data.relative_path);
+				}
+				if (isApp && data.relative_texture_path && Project.save_path) {
+					data.texture_path = PathModule.resolve(PathModule.dirname(Project.save_path), data.relative_texture_path);
+				}
+				let asset = new ParticleAsset(data, data.uuid);
+				if (isApp && asset.path && fs.existsSync(asset.path) && !model.meta.backup) {
+					try {
+						let disk_json = autoParseJSON(fs.readFileSync(asset.path, 'utf8'), {file_path: asset.path});
+						if (disk_json && disk_json.particle_effect) {
+							asset.content = disk_json;
+							asset.saved = true;
+							asset.texture = '';
+							asset.texture_path = '';
+							asset.loadEmitter();
+							asset.autoResolveTexture();
+						} else {
+							asset.loadEmitter();
+						}
+					} catch (err) {
+						asset.loadEmitter();
+					}
+				} else {
+					asset.loadEmitter();
+				}
+				asset.add(false);
+			})
+		}
+		if (model.sounds instanceof Array) {
+			model.sounds.forEach(data => {
+				if (isApp && data.relative_path && Project.save_path) {
+					data.path = PathModule.resolve(PathModule.dirname(Project.save_path), data.relative_path);
+				}
+				let asset = new SoundAsset(data, data.uuid);
+				if (isApp && asset.path && fs.existsSync(asset.path) && !model.meta.backup) {
+					try {
+						let mime = asset.path.replace(/.*\./, '').toLowerCase();
+						asset.source = `data:audio/${mime == 'mp3' ? 'mpeg' : mime};base64,` + fs.readFileSync(asset.path).toString('base64');
+						asset.saved = true;
+					} catch (err) {}
+				}
+				asset.add(false);
+			})
+		}
+
 		if (model.elements) {
 			let default_texture = Texture.getDefault();
 			model.elements.forEach((template) => {
@@ -543,6 +612,26 @@ var codec = new Codec('project', {
 				if (isApp && Format.animation_files) {
 					base_ani.saved_name = base_ani.name;
 				}
+			})
+			// Resolve particle/sound file references in controller states:
+			// embedded assets are already loaded, legacy paths auto-import from disk.
+			AnimationController.all.forEach(controller => {
+				controller.states.forEach(state => {
+					state.particles.forEach(particle => {
+						if (!particle.file) return;
+						if (isApp && !PathModule.isAbsolute(particle.file) && !ParticleAsset.fromRef(particle.file) && Project.save_path) {
+							particle.file = PathModule.resolve(PathModule.dirname(Project.save_path), particle.file);
+						}
+						ParticleAsset.ensureLoaded(particle.file);
+					});
+					state.sounds.forEach(sound => {
+						if (!sound.file) return;
+						if (isApp && !PathModule.isAbsolute(sound.file) && !SoundAsset.fromRef(sound.file) && Project.save_path) {
+							sound.file = PathModule.resolve(PathModule.dirname(Project.save_path), sound.file);
+						}
+						SoundAsset.ensureLoaded(sound.file);
+					});
+				})
 			})
 		}
 		if (model.animation_variable_placeholders) {

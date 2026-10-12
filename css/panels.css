@@ -847,6 +847,25 @@
 		position: relative;
 		pointer-events: none;
 	}
+	li.particle_asset div.particle_texture_slot,
+	li.sound_asset div.sound_asset_icon {
+		pointer-events: auto;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background-color: var(--color-back);
+		border: 1px solid var(--color-border);
+	}
+	li.particle_asset div.particle_texture_slot:hover,
+	li.sound_asset div.sound_asset_icon:hover {
+		border-color: var(--color-accent);
+	}
+	li.particle_asset .particle_texture_slot_empty,
+	li.sound_asset div.sound_asset_icon i {
+		color: var(--color-subtle_text);
+		font-size: 28px;
+	}
 	.texture.selected img.texture_icon {
 		margin-top: 0;
 	}

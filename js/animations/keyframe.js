@@ -18,20 +18,14 @@ export class KeyframeDataPoint {
 		for (var key in KeyframeDataPoint.properties) {
 			KeyframeDataPoint.properties[key].merge(this, data)
 		}
-		if (isApp && data.file && !PathModule.isAbsolute(data.file)) {
+		if (isApp && data.file && !PathModule.isAbsolute(data.file) && !ParticleAsset.fromRef(data.file) && !SoundAsset.fromRef(data.file)) {
 			this.file = PathModule.resolve(PathModule.dirname(Project.save_path), data.file);
 		}
-		if (isApp && data.file && !file_value_before) {
-			if (this.keyframe.channel == 'sound' && !Timeline.waveforms[this.file]) {
-				Timeline.visualizeAudioFile(this.file);
+		if (data.file && !file_value_before) {
+			if (this.keyframe.channel == 'sound') {
+				SoundAsset.ensureLoaded(this.file);
 			} else if (this.keyframe.channel == 'particle') {
-				try {
-					Blockbench.read([this.file], {}, (files) => {
-						Animator.loadParticleEmitter(this.file, files[0].content);
-					})
-				} catch (err) {
-					console.log('Could not load particle effect for', this.file)
-				}
+				ParticleAsset.ensureLoaded(this.file);
 			}
 		}
 	}
@@ -1465,46 +1459,20 @@ Interface.definePanels(function() {
 							startpath: keyframe.data_points[0].file
 						}, function(files) {
 
-							let {path} = files[0];
-							Undo.initEdit({keyframes: [keyframe]})
-							data_point.file = path;
-							let effect = Animator.loadParticleEmitter(path, files[0].content);
+							let json = autoParseJSON(files[0].content, {file_path: files[0].path});
+							if (!json || !json.particle_effect) {
+								Blockbench.showQuickMessage('message.invalid_particle_file');
+								return;
+							}
+							let existing = isApp && files[0].path && ParticleAsset.all.find(a => a.path === files[0].path);
+							Undo.initEdit({keyframes: [keyframe], particles: existing ? [existing] : []})
+							let asset = ParticleAsset.importFromFile(files[0]);
+							data_point.file = asset.getRef();
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
-							delete effect.config.preview_texture;
-							Undo.finishEdit('Change keyframe particle file');
+							Undo.finishEdit('Change keyframe particle file', {particles: [asset]});
 
-							if (!isApp) {
-								Blockbench.showMessageBox({
-									title: 'message.import_particle_texture.import',
-									message: 'message.import_particle_texture.message',
-									buttons: ['dialog.cancel'],
-									commands: {
-										import: 'message.import_particle_texture.import'
-									}
-								}, result => {
-									if (result != 'import') return;
-
-									Blockbench.import({
-										extensions: ['png'],
-										type: 'Particle Texture',
-										readtype: 'image',
-										startpath: effect.config.preview_texture || path
-									}, function(files) {
-										effect.config.preview_texture = isApp ? files[0].path : files[0].content;
-										effect.config.updateTexture();
-									})
-								})
-
-							} else if (effect.config.texture.image.src.startsWith('data:')) {
-								Blockbench.import({
-									extensions: ['png'],
-									type: 'Particle Texture',
-									readtype: 'image',
-									startpath: effect.config.preview_texture || path
-								}, function(files) {
-									effect.config.preview_texture = isApp ? files[0].path : files[0].content;
-									effect.config.updateTexture();
-								})
+							if (!asset.texture) {
+								asset.changeTexture();
 							}
 						})
 					} else {
@@ -1512,18 +1480,21 @@ Interface.definePanels(function() {
 							resource_id: 'animation_audio',
 							extensions: ['ogg', 'wav', 'mp3'],
 							type: 'Audio File',
+							readtype: 'binary',
 							startpath: keyframe.data_points[0].file
 						}, function(files) {
 
-							let path = isApp
-								? files[0].path
-								: URL.createObjectURL(files[0].browser_file);
-
-							Undo.initEdit({keyframes: [keyframe]})
-							data_point.file = path;
+							let existing = isApp && files[0].path && SoundAsset.all.find(a => a.path === files[0].path);
+							Undo.initEdit({keyframes: [keyframe], sounds: existing ? [existing] : []})
+							let asset = SoundAsset.importFromFile(files[0]);
+							if (!asset) {
+								Undo.cancelEdit();
+								return;
+							}
+							data_point.file = asset.getRef();
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().replace(/\.[a-z]+$/, '').replace(/[^a-z0-9._]+/g, '');
-							Timeline.visualizeAudioFile(path);
-							Undo.finishEdit('Change keyframe audio file')
+							Timeline.visualizeAudioFile(data_point.file);
+							Undo.finishEdit('Change keyframe audio file', {sounds: [asset]})
 						})
 					}
 				},

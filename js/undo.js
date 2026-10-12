@@ -356,6 +356,20 @@ UndoSystem.save = class {
 			})
 		}
 
+		if (aspects.particles) {
+			this.particles = {};
+			aspects.particles.forEach(asset => {
+				this.particles[asset.uuid] = asset.getUndoCopy();
+			})
+		}
+
+		if (aspects.sounds) {
+			this.sounds = {};
+			aspects.sounds.forEach(asset => {
+				this.sounds[asset.uuid] = asset.getUndoCopy();
+			})
+		}
+
 		if (aspects.layers) {
 			this.layers = {};
 			aspects.layers.forEach(layer => {
@@ -684,6 +698,57 @@ UndoSystem.save = class {
 				return this.texture_order.indexOf(a.uuid) - this.texture_order.indexOf(b.uuid);
 			})
 			Canvas.updateLayeredTextures()
+		}
+
+		if (this.particles) {
+			for (var uuid in this.particles) {
+				let existing = ParticleAsset.all.find(a => a.uuid == uuid);
+				if (existing) {
+					existing.extend(this.particles[uuid]);
+					existing.loadEmitter();
+				} else {
+					let asset = new ParticleAsset(this.particles[uuid], uuid).add(false);
+					asset.loadEmitter();
+				}
+			}
+			let reference_particles = reference.particles || {};
+			for (var uuid in reference_particles) {
+				if (!this.particles[uuid]) {
+					let asset = ParticleAsset.all.find(a => a.uuid == uuid);
+					if (asset) {
+						ParticleAsset.all.remove(asset);
+						let effect = Animator.particle_effects[asset.getRef()];
+						if (effect) {
+							if (isApp && effect.watcher) effect.watcher.close();
+							for (let emitter_uuid in effect.emitters) {
+								effect.emitters[emitter_uuid].delete();
+							}
+							delete Animator.particle_effects[asset.getRef()];
+						}
+					}
+				}
+			}
+		}
+
+		if (this.sounds) {
+			for (var uuid in this.sounds) {
+				let existing = SoundAsset.all.find(a => a.uuid == uuid);
+				if (existing) {
+					existing.extend(this.sounds[uuid]);
+				} else {
+					new SoundAsset(this.sounds[uuid], uuid).add(false);
+				}
+			}
+			let reference_sounds = reference.sounds || {};
+			for (var uuid in reference_sounds) {
+				if (!this.sounds[uuid]) {
+					let asset = SoundAsset.all.find(a => a.uuid == uuid);
+					if (asset) {
+						SoundAsset.all.remove(asset);
+						delete Timeline.waveforms[asset.getRef()];
+					}
+				}
+			}
 		}
 
 		if (this.selected_texture) {
