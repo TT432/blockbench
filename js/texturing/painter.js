@@ -1774,6 +1774,7 @@ export const Painter = {
 		let ep = 0.03;	// 面距离/往返映射容差（模型单位）
 		let ep_lerp = 0.03;	// 面内归一化坐标容差
 		let quaternion = new THREE.Quaternion();
+		let candidates = [];
 
 		for (let element of [...Cube.all, ...Mesh.all]) {
 			if (!element.mesh) continue;
@@ -1810,13 +1811,16 @@ export const Painter = {
 						point_on_uv[0] = Math.round(point_on_uv[0]);
 						point_on_uv[1] = Math.round(point_on_uv[1]);
 					}
-					return {
+					candidates.push({
 						element,
-						x: point_on_uv[0],
-						y: point_on_uv[1],
-						uv_tag: face.uv,
-						face: fkey
-					}
+						target: {
+							element,
+							x: point_on_uv[0],
+							y: point_on_uv[1],
+							uv_tag: face.uv,
+							face: fkey
+						}
+					})
 				}
 			} else if (element instanceof Mesh) {
 				for (let fkey in element.faces) {
@@ -1863,16 +1867,60 @@ export const Painter = {
 						point_on_uv[0] = Math.round(point_on_uv[0]);
 						point_on_uv[1] = Math.round(point_on_uv[1]);
 					}
-					return {
+					candidates.push({
 						element,
-						x: point_on_uv[0],
-						y: point_on_uv[1],
-						uv_tag: face.uv,
-						face: fkey
-					}
+						target: {
+							element,
+							x: point_on_uv[0],
+							y: point_on_uv[1],
+							uv_tag: face.uv,
+							face: fkey
+						}
+					})
 				}
 			}
 		}
+		if (!candidates.length) return;
+		if (candidates.length == 1) return candidates[0].target;
+
+		// #80：多个面在物理空间重合时（如 0.1 厚度片挡住目标块的面），
+		// 优先选择「源块的物理镜像块」上的面——用世界空间角点集合判断是否互为镜像，
+		// 使镜像绘制精确落在点击面所属块的对称块上，而不是碰巧重合的其他块。
+		let getWorldCorners = (element) => {
+			let points = [];
+			if (element instanceof Cube) {
+				for (let cx of [element.from[0], element.to[0]])
+					for (let cy of [element.from[1], element.to[1]])
+						for (let cz of [element.from[2], element.to[2]])
+							points.push(new THREE.Vector3(cx, cy, cz));
+			} else {
+				let keys = Object.keys(element.vertices);
+				if (keys.length > 200) return null;	// 顶点过多时放弃块级优选，退回物理位置匹配
+				for (let vkey of keys) points.push(new THREE.Vector3().fromArray(element.vertices[vkey]));
+			}
+			return points.map(p => element.mesh.localToWorld(p));
+		};
+		let cornersMatchMirrored = (corners_a, corners_b) => {
+			if (!corners_a || !corners_b || corners_a.length != corners_b.length) return false;
+			let tol = 0.05;
+			let used = new Set();
+			for (let pa of corners_a) {
+				let mirrored = pa.clone();
+				mirror_vector.forEach((enabled, axis) => {
+					if (enabled) mirrored.setComponent(axis, 2 * grid_center - mirrored.getComponent(axis));
+				});
+				let found = corners_b.findIndex((pb, i) => !used.has(i) && pb.distanceTo(mirrored) <= tol);
+				if (found == -1) return false;
+				used.add(found);
+			}
+			return true;
+		};
+		let source_corners = getWorldCorners(source_element);
+		if (source_corners) {
+			let preferred = candidates.find(c => cornersMatchMirrored(source_corners, getWorldCorners(c.element)));
+			if (preferred) return preferred.target;
+		}
+		return candidates[0].target;
 	},
 	updateNslideValues() {
 		BarItems.slider_brush_size.update()
