@@ -2795,6 +2795,12 @@
 	"message.fixed_world_position_unsupported": "Fixed world position: %0 cube(s) cannot absorb the inverse rotation due to the single-axis rotation limit and were left rotating with the group",
 	"menu.mirror_painting.physical": "Physical Mirror (World Space)",
 	"menu.mirror_painting.physical.desc": "Match symmetric faces by world-space position and normal, so faces stay mirrored correctly after any rotation (e.g. 45° or multi-axis rotations). Replaces the Global/Local options.",
+	"action.check_overlapping_cubes": "Check Overlapping Cubes",
+	"action.check_overlapping_cubes.desc": "Check whether any of the selected cubes completely overlap (identical position and size)",
+	"message.overlapping_cubes": "%0 cubes completely overlap with other cubes (identical position and size) in %1 group(s). Textures painted on hidden cubes cannot be seen. You can select the cubes, or delete all but one cube per group.",
+	"message.overlapping_cubes.select": "Select Cubes",
+	"message.overlapping_cubes.delete": "Delete Overlapping Cubes",
+	"message.no_overlapping_cubes": "No completely overlapping cubes among the selected cubes",
 	"switches.autouv": "Auto UV",
 	"switches.autouv.alt": "Relative",
 

@@ -1037,6 +1037,7 @@ export class Cube extends OutlinerElement {
 		}},
 		'edit_material_instances',
 		'element_render_order',
+		'check_overlapping_cubes',
 		new MenuSeparator('manage'),
 		'rename',
 		'toggle_visibility',
