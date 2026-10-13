@@ -176,6 +176,12 @@ const BoneBatcher = {
 
 		let candidates = [];
 		for (let cube of ordered) {
+			// 元素级动画每帧直写 cube.mesh 的 TRS（不经过 updateTransform），
+			// 这些 cube 必须保持 matrixAutoUpdate，其余静态 cube 关闭（见 Cube setup，#83）
+			let animated = this.element_animated.has(cube.uuid);
+			if (cube.mesh && cube.mesh.matrixAutoUpdate !== animated) {
+				cube.mesh.matrixAutoUpdate = animated;
+			}
 			if (!this.eligible(cube)) {
 				if (cube.mesh) cube.mesh.layers.set(0);
 				continue;

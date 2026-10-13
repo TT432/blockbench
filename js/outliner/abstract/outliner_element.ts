@@ -289,9 +289,15 @@ export abstract class OutlinerElement extends OutlinerNode {
 
 		Object.defineProperty(constructor, 'all', {
 			get() {
-				return (Project.elements?.length && Project.elements.find(element => element instanceof constructor))
-					 ? Project.elements.filter(element => element instanceof constructor)
-					 : [];
+				// #83 性能：单遍收集。原实现 find+filter 最坏两次全扫（每次调用都新建数组），
+				// 播放循环里每帧多次调用（Mesh.all/NullObject.all 等），6k+ 元素时占比可观。
+				let result = [];
+				if (Project.elements?.length) {
+					for (let element of Project.elements) {
+						if (element instanceof constructor) result.push(element);
+					}
+				}
+				return result;
 			},
 			set(arr) {
 				console.warn('You cannot modify this')
@@ -299,9 +305,13 @@ export abstract class OutlinerElement extends OutlinerNode {
 		})
 		Object.defineProperty(constructor, 'selected', {
 			get() {
-				return (Project.selected_elements?.length && Project.selected_elements.find(element => element instanceof constructor))
-					 ? Project.selected_elements.filter(element => element instanceof constructor)
-					 : [];
+				let result = [];
+				if (Project.selected_elements?.length) {
+					for (let element of Project.selected_elements) {
+						if (element instanceof constructor) result.push(element);
+					}
+				}
+				return result;
 			},
 			set(group) {
 				console.warn('You cannot modify this')

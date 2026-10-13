@@ -1157,6 +1157,12 @@ new NodePreviewController(Cube, {
 		mesh.isElement = true;
 		mesh.visible = element.visibility;
 		mesh.rotation.order = Format.euler_order
+		// #83 性能：cube mesh 的局部变换只在编辑时变化（播放动画驱动的是骨骼组）。
+		// 默认 matrixAutoUpdate 会让渲染循环对每立方体每帧重做 TRS compose
+		// （YSM 级模型 6k+ 立方体时占帧耗 ~8%），改为关闭并在 updateTransform 里
+		// 显式 updateMatrix。被元素级动画直接驱动的 cube 由 BoneBatcher.rebuild
+		// 恢复为自动更新。
+		mesh.matrixAutoUpdate = false;
 
 		mesh.geometry.setAttribute('highlight', new THREE.BufferAttribute(new Uint8Array(24).fill(0), 1));
 
@@ -1168,6 +1174,8 @@ new NodePreviewController(Cube, {
 		line.visible = element.selected;
 		line.renderOrder = 2;
 		line.frustumCulled = false;
+		line.matrixAutoUpdate = false;
+		line.updateMatrix();
 		mesh.outline = line;
 		mesh.add(line);
 
@@ -1195,6 +1203,10 @@ new NodePreviewController(Cube, {
 		} else {
 			mesh.scale.set(1, 1, 1);
 		}
+
+		// matrixAutoUpdate=false（见 setup）：TRS/scale 变更后显式重组局部矩阵并刷新世界矩阵
+		mesh.updateMatrix();
+		mesh.updateMatrixWorld();
 
 		this.dispatchEvent('update_transform', {element});
 	},
@@ -1572,6 +1584,8 @@ new NodePreviewController(Cube, {
 		box.name = cube.uuid+'_grid_box';
 		box.renderOrder = 2;
 		box.frustumCulled = false;
+		box.matrixAutoUpdate = false;
+		box.updateMatrix();
 		mesh.grid_box = box;
 		mesh.add(box);
 

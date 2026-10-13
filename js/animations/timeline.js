@@ -321,7 +321,7 @@ export const Timeline = {
 		if (!body) return;
 		var scroll = body.scrollLeft;
 		var playhead = time * Timeline.vue._data.size + 8;
-		if (playhead < scroll || playhead > scroll + document.getElementById('timeline_vue').clientWidth - Timeline.vue._data.head_width) {
+		if (playhead < scroll || playhead > scroll + Timeline.viewport_width - Timeline.vue._data.head_width) {
 			body.scrollLeft = playhead-16;
 		} else if (time == 0) {
 			body.scrollLeft = 0;
@@ -687,7 +687,7 @@ export const Timeline = {
 		// the keyframes array identity (invalidated on any keyframe edit via
 		// Timeline.invalidateKeyframeCache), so it is cached separately from the
 		// cheap viewport/time terms that change per frame.
-		let width = (document.getElementById('timeline_vue')||0).clientWidth;
+		let width = Timeline.viewport_width;
 		let size = Timeline.vue._data.size;
 		let animation_length = Animation.selected ? Animation.selected.length : 0;
 		let keyframes = Timeline.keyframes;
@@ -711,6 +711,17 @@ export const Timeline = {
 		return max_length;
 	},
 	_max_length_cache: null,
+	// #83 性能：#timeline_vue 的 clientWidth 缓存。播放中每帧 setTime→getMaxLength/revealTime
+	// 都读 clientWidth，而播放头 DOM 写入使 layout 变脏，等于每帧强制同步重排。
+	// 宽度只随面板/窗口 resize 变化（onResize 时置 0 失效），此处惰性回读。
+	_viewport_width: 0,
+	get viewport_width() {
+		if (!Timeline._viewport_width) {
+			let node = document.getElementById('timeline_vue');
+			Timeline._viewport_width = node ? node.clientWidth : 0;
+		}
+		return Timeline._viewport_width;
+	},
 	updateSize() {
 		Timeline.vue.updateTimecodes();
 	},
@@ -1003,6 +1014,7 @@ Interface.definePanels(() => {
 			})
 		],
 		onResize() {
+			Timeline._viewport_width = 0;
 			Timeline.updateSize();
 			if (this.inside_vue.$el) {
 				this.inside_vue.timeline_height = this.inside_vue.$el.clientHeight;
