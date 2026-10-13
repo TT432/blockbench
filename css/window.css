@@ -742,6 +742,45 @@
 		box-shadow: 0 0 10px #00000080;
 		transition: none;
 	}
+	/* #78 标签页分组 */
+	#tab_bar .tab_group_chip {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		height: 20px;
+		margin: auto 2px;
+		padding: 0 8px;
+		border-radius: 4px;
+		cursor: pointer;
+		flex-shrink: 0;
+		color: #ffffff;
+		font-size: 12px;
+		user-select: none;
+		min-width: 14px;
+	}
+	#tab_bar .tab_group_chip label {
+		cursor: pointer;
+		pointer-events: none;
+	}
+	#tab_bar .tab_group_chip.collapsed {
+		outline: 1px solid #ffffff40;
+	}
+	#tab_bar .tab_group_chip.has_active {
+		outline: 2px solid var(--color-accent);
+	}
+	#tab_bar .tab_group_chip .tab_group_chip_count {
+		opacity: 0.85;
+		font-size: 11px;
+	}
+	#tab_bar .project_tab.group_target {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
+		border-top-left-radius: 8px;
+		border-top-right-radius: 8px;
+	}
+	#tab_bar .tab_group_chip.group_target {
+		outline: 2px solid var(--color-accent);
+	}
 	#tab_bar .project_tab.move_back {
 		left: calc(var(--tabwidth) * -1);
 	}

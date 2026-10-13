@@ -3,12 +3,13 @@ import { FormElementOptions } from "../interface/form";
 import { setProjectTitle } from "../interface/interface";
 import { Vue } from "../lib/libs";
 import { MultiFileRuleset } from "../multi_file_editing";
-import { currentwindow, ipcRenderer, shell } from "../native_apis";
+import { currentwindow, ipcRenderer, shell, fs } from "../native_apis";
 import { ReferenceImage, ReferenceImageMode } from "../preview/reference_images";
 import { Property } from "../util/property";
 import { silentReject, wait } from "../util/util";
 import { editUVSizeDialog } from "../uv/uv_size";
 import { ModelFormat } from "./format";
+import { loadModelFile } from "./io";
 
 interface ModelProjectOptions {
 	format?: ModelFormat
@@ -138,6 +139,8 @@ export class ModelProject {
 		this.export_codec = '';
 		this.export_options = {};
 		this.added_models = 0;
+		// #78 标签页分组：所属组 uuid（运行态，不写入模型文件）
+		this.tab_group = null;
 
 		this.format = options.format instanceof ModelFormat ? options.format : Formats.free;
 		this.mode = 'edit';
@@ -706,6 +709,29 @@ ModelProject.prototype.menu = new Menu([
 	'close_project',
 	'close_other_projects',
 	'close_projects_to_right',
+	new MenuSeparator('tab_group_sep'),
+	{
+		id: 'tab_group',
+		name: 'menu.tab_group',
+		icon: 'tab',
+		children(project: ModelProject) {
+			if (project.tab_group) {
+				return [
+					{id: 'remove_from_tab_group', name: 'menu.tab_group.remove_from', icon: 'tab_unselected', click: () => removeProjectFromTabGroup(project)},
+					{id: 'dissolve_tab_group', name: 'menu.tab_group.dissolve', icon: 'delete', click: () => {
+						let group = getProjectTabGroup(project);
+						if (group) dissolveTabGroup(group);
+					}}
+				];
+			}
+			let items = [{id: 'new_tab_group', name: 'menu.tab_group.create', icon: 'add', click: () => addProjectToTabGroup(project, new TabGroup())}];
+			for (let group of TabGroup.all) {
+				// 带参数（组名）的文案在打开菜单时预翻译，其余交给 Menu 渲染时惰性翻译
+				items.push({id: 'add_to_tab_group_' + group.uuid, name: tl('menu.tab_group.add_to', [group.displayName]), icon: 'circle', click: () => addProjectToTabGroup(project, group)});
+			}
+			return items;
+		}
+	},
 	new MenuSeparator('save'),
 	'save_project',
 	'save_project_as',
@@ -715,6 +741,183 @@ ModelProject.prototype.menu = new Menu([
 	new MenuSeparator('overview'),
 	'tab_overview',
 ])
+
+// MARK: Tab Groups (#78)
+// Edge 式标签页分组：拖动一个标签与另一个重合并停留片刻自动成组，或用标签右键菜单成组；
+// 组可折叠/改色/命名/删除；组成员关系与已保存工程路径持久化到 localStorage，
+// 重启后仅自动恢复组内模型（未入组的不保留）
+export const TAB_GROUP_COLORS: Record<string, string> = {
+	red: '#f14c4c', orange: '#e88b3a', yellow: '#d4b81c', green: '#4caf50',
+	cyan: '#2dc5c5', blue: '#3e90ff', purple: '#b146e0', pink: '#ff5fa2',
+};
+
+export class TabGroup {
+	uuid: UUID
+	name: string
+	color: string
+	collapsed: boolean
+	static all: TabGroup[] = []
+
+	constructor(data: {uuid?: UUID, name?: string, color?: string, collapsed?: boolean} = {}) {
+		this.uuid = data.uuid || guid();
+		this.name = data.name || '';
+		if (data.color && TAB_GROUP_COLORS[data.color]) {
+			this.color = data.color;
+		} else {
+			let used = TabGroup.all.map(g => g.color);
+			this.color = Object.keys(TAB_GROUP_COLORS).find(c => !used.includes(c)) || 'blue';
+		}
+		this.collapsed = !!data.collapsed;
+		TabGroup.all.push(this);
+	}
+	get projects(): ModelProject[] {
+		return ModelProject.all.filter(project => project.tab_group == this.uuid);
+	}
+	get displayName(): string {
+		return this.name || tl('tab_group.unnamed');
+	}
+	renameDialog() {
+		Blockbench.textPrompt(tl('tab_group.rename'), this.name, text => {
+			this.name = text.trim().substring(0, 40);
+			saveTabGroupSession();
+		});
+	}
+	setColor(color: string) {
+		this.color = color;
+		saveTabGroupSession();
+	}
+	toggleCollapsed() {
+		this.collapsed = !this.collapsed;
+		saveTabGroupSession();
+	}
+	contextMenu(event: Event) {
+		let scope = this;
+		new Menu([
+			{id: 'rename', name: tl('tab_group.rename'), icon: 'edit', click: () => scope.renameDialog()},
+			{id: 'collapse', name: tl(scope.collapsed ? 'tab_group.expand' : 'tab_group.collapse'), icon: scope.collapsed ? 'unfold_more' : 'unfold_less', click: () => scope.toggleCollapsed()},
+			{id: 'color', name: tl('tab_group.color'), icon: 'palette', children: Object.keys(TAB_GROUP_COLORS).map(color => ({
+				id: color,
+				name: tl('tab_group.color.' + color),
+				icon: scope.color == color ? 'check' : 'circle',
+				click: () => scope.setColor(color)
+			}))},
+			'_',
+			{id: 'ungroup', name: tl('tab_group.delete'), icon: 'delete', click: () => dissolveTabGroup(scope)},
+		]).open(event);
+	}
+}
+
+export function getProjectTabGroup(project: ModelProject): TabGroup | null {
+	return project.tab_group ? TabGroup.all.find(g => g.uuid == project.tab_group) || null : null;
+}
+
+function cleanupEmptyTabGroups() {
+	for (let group of TabGroup.all.slice()) {
+		if (!group.projects.length) TabGroup.all.remove(group);
+	}
+}
+
+/** 把工程移入组并吸附到组末尾（Edge 行为），处理跨组迁移与空组清理 */
+export function addProjectToTabGroup(project: ModelProject, group: TabGroup) {
+	project.tab_group = group.uuid;
+	let members = ModelProject.all.filter(p => p.tab_group == group.uuid && p != project);
+	if (members.length) {
+		ModelProject.all.remove(project);
+		ModelProject.all.splice(ModelProject.all.indexOf(members.last()) + 1, 0, project);
+	}
+	cleanupEmptyTabGroups();
+	saveTabGroupSession();
+}
+
+export function removeProjectFromTabGroup(project: ModelProject) {
+	project.tab_group = null;
+	cleanupEmptyTabGroups();
+	saveTabGroupSession();
+}
+
+export function dissolveTabGroup(group: TabGroup) {
+	for (let project of group.projects) project.tab_group = null;
+	TabGroup.all.remove(group);
+	saveTabGroupSession();
+}
+
+/** 拖拽重合落点成组：目标已有组则并入，否则以目标为锚点新建组 */
+export function groupProjectsTogether(project: ModelProject, target: ModelProject) {
+	let group = getProjectTabGroup(target);
+	if (!group) {
+		group = new TabGroup();
+		target.tab_group = group.uuid;
+	}
+	addProjectToTabGroup(project, group);
+}
+
+/** 标签被拖离组（重新排序后不再与任何组员相邻）时自动移出组 */
+export function updateTabGroupAfterReorder(project: ModelProject) {
+	if (!project.tab_group) return;
+	let index = ModelProject.all.indexOf(project);
+	let adjacent = ModelProject.all[index-1]?.tab_group == project.tab_group
+				|| ModelProject.all[index+1]?.tab_group == project.tab_group;
+	if (!adjacent) removeProjectFromTabGroup(project);
+}
+
+// 持久化：只保存有磁盘路径的工程（未保存工程没有可恢复载体）
+export function saveTabGroupSession() {
+	if (!isApp) return;
+	try {
+		let data = TabGroup.all.map(group => ({
+			uuid: group.uuid, name: group.name, color: group.color, collapsed: group.collapsed,
+			projects: group.projects.map(p => p.save_path).filter(path => !!path)
+		})).filter(group => group.projects.length);
+		localStorage.setItem('tab_group_session', JSON.stringify(data));
+	} catch (err) {}
+}
+
+export function restoreTabGroupSession() {
+	if (!isApp) return;
+	let data: {uuid: UUID, name: string, color: string, collapsed: boolean, projects: string[]}[];
+	try { data = JSON.parse(localStorage.getItem('tab_group_session') || '') } catch (err) {}
+	if (!data || !Array.isArray(data) || !data.length) return;
+	let entries: {group: TabGroup, path: string}[] = [];
+	let paths: string[] = [];
+	for (let gdata of data) {
+		let valid_paths = (gdata.projects || []).filter(path => typeof path == 'string' && fs.existsSync(path));
+		if (!valid_paths.length) continue;
+		let group = new TabGroup(gdata);
+		for (let path of valid_paths) {
+			entries.push({group, path});
+			paths.push(path);
+		}
+	}
+	if (!paths.length) {
+		cleanupEmptyTabGroups();
+		return;
+	}
+	Blockbench.read(paths, {}, files => {
+		for (let file of files) {
+			try { loadModelFile(file); } catch (err) { console.error('恢复标签页分组失败:', file.path, err); }
+		}
+		for (let entry of entries) {
+			let project = ModelProject.all.find(p => p.save_path == entry.path || p.export_path == entry.path);
+			if (project) project.tab_group = entry.group.uuid;
+		}
+		cleanupEmptyTabGroups();
+		saveTabGroupSession();
+	});
+}
+
+Blockbench.on('close_project', (event: {project: ModelProject, on_quit?: boolean}) => {
+	// 退出整窗（on_quit）时保留会话数据供下次启动恢复；仅响应正常关闭
+	if (event.on_quit) return;
+	if (event.project.tab_group) {
+		event.project.tab_group = null;
+		cleanupEmptyTabGroups();
+		saveTabGroupSession();
+	}
+})
+Blockbench.on('saved_state_changed', (event: {project: ModelProject, saved: boolean}) => {
+	// 工程保存后获得磁盘路径，刷新持久化使组会话可恢复
+	if (event.saved && event.project.tab_group) saveTabGroupSession();
+})
 
 // Setup ModelProject for loaded project
 export function setupProject(format: ModelFormat | string, uuid?: string): boolean {
@@ -934,6 +1137,9 @@ onVueSetup(() => {
 		el: '#tab_bar',
 		data: {
 			projects: ModelProject.all,
+			groups: TabGroup.all,
+			tab_group_colors: TAB_GROUP_COLORS,
+			group_intent_uuid: null as string | null,
 			drag_target_index: null,
 			drag_position_index: null,
 			close_tab_label: tl('projects.close_tab'),
@@ -943,7 +1149,27 @@ onVueSetup(() => {
 		},
 		computed: {
 			tabs() {
-				let tabs = this.projects.slice();
+				// #78：按 ModelProject.all 顺序展开，组首位置插入组芯片；折叠组的成员标签隐藏
+				type TabGroupChipItem = {is_tab_group_chip: true, uuid: string, group: TabGroup};
+				let tabs: (ModelProject | typeof new_tab | TabGroupChipItem)[] = [];
+				let last_group: TabGroup | null = null;
+				for (let project of this.projects) {
+					let group: TabGroup | null = project.tab_group
+						? this.groups.find((g: TabGroup) => g.uuid == project.tab_group) || null
+						: null;
+					if (group !== last_group) {
+						if (group) {
+							tabs.push({
+								is_tab_group_chip: true,
+								uuid: 'chip_' + group.uuid,
+								group,
+							});
+						}
+						last_group = group;
+					}
+					if (group && group.collapsed) continue;
+					tabs.push(project);
+				}
 				if (this.new_tab.visible) {
 					tabs.push(this.new_tab);
 				}
@@ -960,6 +1186,12 @@ onVueSetup(() => {
 			},
 			tabOverview() {
 				BarItems.tab_overview.trigger();
+			},
+			tabGroupStripeStyle(project: ModelProject) {
+				// #78：组内标签底部显示组色条
+				let group = getProjectTabGroup(project);
+				if (!group) return null;
+				return {boxShadow: `inset 0 -3px 0 ${TAB_GROUP_COLORS[group.color]}`};
 			},
 			mouseDown(tab, e1) {
 				convertTouchEvent(e1);
@@ -985,6 +1217,10 @@ onVueSetup(() => {
 				let last_event = e1;
 				let outside_tab_bar = false;
 				let drag_out_window_helper;
+				// #78 拖拽重合 dwell 成组：指针悬停在另一标签上超过 400ms 进入成组意图
+				let group_hover_uuid: string | null = null;
+				let group_hover_since = 0;
+				let tab_slot_rects: {el: Element, rect: DOMRect}[] = [];
 
 				let tab_node = e1.target;
 				if (!tab_node.classList.contains('project_tab') || ModelProject.all.indexOf(tab) < 0) return;
@@ -994,6 +1230,11 @@ onVueSetup(() => {
 				let activate = () => {
 					this.drag_target_index = ModelProject.all.indexOf(tab);
 					this.drag_position_index = 0;
+					// #78：快照拖拽前的槽位矩形——排序动画会移位其他标签，
+					// elementFromPoint 实时命中会随动画漂移，dwell 成组检测必须用原始槽位
+					tab_slot_rects = [...document.getElementById('tab_bar_list').children].map(el => ({
+						el, rect: el.getBoundingClientRect()
+					}));
 					if (Menu.open) Menu.open.hide();
 					active = true;
 				}
@@ -1042,6 +1283,32 @@ onVueSetup(() => {
 						if (outside_tab_bar) {
 							drag_out_window_helper.style.left = `${e2.clientX}px`;
 							drag_out_window_helper.style.top = `${e2.clientY}px`;
+							if (scope.group_intent_uuid) scope.group_intent_uuid = null;
+						} else {
+							// #78：用激活时快照的原始槽位矩形做命中（排序动画移位不影响判定）；
+							// 支持落在普通标签上（成组/并入其组）与折叠组芯片上（直接并入该组）
+							let hover_key: string | null = null;
+							let slot = tab_slot_rects.find(s =>
+								e2.clientX >= s.rect.left && e2.clientX <= s.rect.right &&
+								e2.clientY >= s.rect.top - 4 && e2.clientY <= s.rect.bottom + 4
+							);
+							if (slot) {
+								if (slot.el.classList.contains('project_tab')) {
+									hover_key = slot.el.getAttribute('data-project-uuid');
+								} else if (slot.el.classList.contains('tab_group_chip')) {
+									let chip_group = slot.el.getAttribute('data-group-uuid');
+									if (chip_group) hover_key = 'group:' + chip_group;
+								}
+							}
+							if (hover_key == tab.uuid || hover_key == scope.new_tab.uuid) hover_key = null;
+							if (hover_key != group_hover_uuid) {
+								group_hover_uuid = hover_key;
+								group_hover_since = e2.timeStamp;
+								if (scope.group_intent_uuid) scope.group_intent_uuid = null;
+							}
+							if (hover_key && !scope.group_intent_uuid && e2.timeStamp - group_hover_since > 400) {
+								scope.group_intent_uuid = hover_key;
+							}
 						}
 					}
 					last_event = e2;
@@ -1054,6 +1321,8 @@ onVueSetup(() => {
 					tab_node.style.left = null;
 					scope.drag_target_index = null;
 					scope.drag_position_index = null;
+					let group_intent_uuid = scope.group_intent_uuid;
+					scope.group_intent_uuid = null;
 
 					if (Blockbench.isTouch) clearTimeout(timeout);
 
@@ -1074,12 +1343,24 @@ onVueSetup(() => {
 						tab_node.style.visibility = null;
 						tab.detached = true;
 
+					} else if (group_intent_uuid) {
+						// #78：落点在 dwell 目标上 → 成组（目标有组则并入，否则以目标为锚点新建；芯片前缀直接并入该组）
+						if (group_intent_uuid.startsWith('group:')) {
+							let group = TabGroup.all.find(g => g.uuid == group_intent_uuid.substring(6));
+							if (group) addProjectToTabGroup(tab, group);
+						} else {
+							let target = ModelProject.all.find(p => p.uuid == group_intent_uuid);
+							if (target && target != tab) groupProjectsTogether(tab, target);
+						}
+
 					} else if (active && !Menu.open) {
 						convertTouchEvent(e2);
 						let index_offset = Math.trunc((e2.clientX - e1.clientX) / tab_node.clientWidth);
 						if (index_offset) {
 							ModelProject.all.splice(drag_target_index, 1);
 							ModelProject.all.splice(drag_target_index + index_offset, 0, tab);
+							// #78：拖离组（不再与组员相邻）自动移出组
+							updateTabGroupAfterReorder(tab);
 						}
 					}
 				}
@@ -1501,7 +1782,14 @@ const global = {
 	updateTabBarVisibility,
 	updateProjectResolution,
 	setStartScreen,
-	showUnsavedWorkDialog
+	showUnsavedWorkDialog,
+	TabGroup,
+	TAB_GROUP_COLORS,
+	addProjectToTabGroup,
+	removeProjectFromTabGroup,
+	dissolveTabGroup,
+	restoreTabGroupSession,
+	saveTabGroupSession
 };
 declare global {
 	type ModelProject = import('./project').ModelProject
@@ -1514,6 +1802,13 @@ declare global {
 	const updateProjectResolution: typeof global.updateProjectResolution
 	const setStartScreen: typeof global.setStartScreen
 	const showUnsavedWorkDialog: typeof global.showUnsavedWorkDialog
+	const TabGroup: typeof global.TabGroup
+	const TAB_GROUP_COLORS: typeof global.TAB_GROUP_COLORS
+	const addProjectToTabGroup: typeof global.addProjectToTabGroup
+	const removeProjectFromTabGroup: typeof global.removeProjectFromTabGroup
+	const dissolveTabGroup: typeof global.dissolveTabGroup
+	const restoreTabGroupSession: typeof global.restoreTabGroupSession
+	const saveTabGroupSession: typeof global.saveTabGroupSession
 	interface BarItemRegistry {
 		project_window: Action
 		close_project: Action

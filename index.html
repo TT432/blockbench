@@ -114,32 +114,49 @@
 
 		<div id="tab_bar" :class="{drag_mode: drag_target_index !== null}">
 			<div id="tab_bar_list" @wheel="mousewheelBar($event)" ref="tab_bar_list">
-				<div
-					class="project_tab"
-					v-for="(project, index) in tabs" :key="project.uuid"
-					:class="{
-						selected: project.selected,
-						new_tab: project.is_new_tab,
-						dragging: index == drag_target_index,
-						move_back:  (drag_position_index !== null && index > drag_target_index && drag_position_index >= index),
-						move_forth: (drag_position_index !== null && index < drag_target_index && drag_position_index <= index)
-					}"
-					:title="project.name || project.geometry_name || ''"
-					@dblclick="project.openSettings()"
-					@contextmenu="project.showContextMenu($event)"
-					@mousedown="mouseDown(project, $event)"
-					@mouseup="mouseUp(project, $event)"
-					@mouseenter="mouseEnter(project, $event)"
-					@mouseleave="mouseLeave(project, $event)"
-				>
-					<dynamic-icon :icon="project.format ? project.format.icon : 'home'"></dynamic-icon>
-					<label class="project_tab_session_badge" v-if="project.EditSession"><i class="material-icons">group</i>{{ project.EditSession.client_count }}</label>
-					<label>{{ project.getDisplayName(false) }}<span v-if="project.getFileExtension?.()">.{{ project.getFileExtension() }}</span></label>
-					<div class="project_tab_close_button" :class="{unsaved: !project.saved}" :title="close_tab_label" @click="project.close()">
-						<i class="material-icons close_icon">clear</i>
-						<i class="material-icons unsaved_icon" v-if="!project.saved">fiber_manual_record</i>
+				<template v-for="project in tabs">
+					<div v-if="project.is_tab_group_chip" :key="project.uuid"
+						class="tab_group_chip" :class="{collapsed: project.group.collapsed, has_active: project.group.projects.some(p => p.selected), group_target: group_intent_uuid === 'group:' + project.group.uuid}"
+						:style="{backgroundColor: tab_group_colors[project.group.color]}"
+						:data-group-uuid="project.group.uuid"
+						:title="project.group.displayName"
+						@click="project.group.toggleCollapsed()"
+						@contextmenu="project.group.contextMenu($event)"
+					>
+						<label v-if="project.group.name">{{ project.group.displayName }}</label>
+						<label v-if="project.group.collapsed" class="tab_group_chip_count">{{ project.group.projects.length }}</label>
 					</div>
-				</div>
+					<div v-else
+						class="project_tab"
+						:key="project.uuid"
+						:data-project-uuid="project.uuid"
+						:class="{
+							selected: project.selected,
+							new_tab: project.is_new_tab,
+							grouped: !!project.tab_group,
+							group_target: group_intent_uuid === project.uuid,
+							dragging: projects.indexOf(project) == drag_target_index,
+							move_back:  (drag_position_index !== null && projects.indexOf(project) > drag_target_index && drag_position_index >= projects.indexOf(project)),
+							move_forth: (drag_position_index !== null && projects.indexOf(project) < drag_target_index && drag_position_index <= projects.indexOf(project))
+						}"
+						:style="tabGroupStripeStyle(project)"
+						:title="project.name || project.geometry_name || ''"
+						@dblclick="project.openSettings()"
+						@contextmenu="project.showContextMenu($event)"
+						@mousedown="mouseDown(project, $event)"
+						@mouseup="mouseUp(project, $event)"
+						@mouseenter="mouseEnter(project, $event)"
+						@mouseleave="mouseLeave(project, $event)"
+					>
+						<dynamic-icon :icon="project.format ? project.format.icon : 'home'"></dynamic-icon>
+						<label class="project_tab_session_badge" v-if="project.EditSession"><i class="material-icons">group</i>{{ project.EditSession.client_count }}</label>
+						<label>{{ project.getDisplayName(false) }}<span v-if="project.getFileExtension?.()">.{{ project.getFileExtension() }}</span></label>
+						<div class="project_tab_close_button" :class="{unsaved: !project.saved}" :title="close_tab_label" @click="project.close()">
+							<i class="material-icons close_icon">clear</i>
+							<i class="material-icons unsaved_icon" v-if="!project.saved">fiber_manual_record</i>
+						</div>
+					</div>
+				</template>
 				<div id="new_tab_button" v-if="!new_tab.visible" @click="openNewTab()" :title="new_tab.name">
 					<i class="material-icons">add</i>
 				</div>

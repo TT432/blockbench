@@ -6,6 +6,7 @@ import { loadInstalledPlugins } from "./plugin_loader";
 import { animate, setupPreviews } from "./preview/preview";
 import { ipcRenderer, SystemInfo } from "./native_apis";
 import { initializeDesktopApp, loadOpenWithBlockbenchFile } from "./desktop";
+import { restoreTabGroupSession } from "./io/project";
 import { AutoBackup } from "./auto_backup";
 import { initReferenceImages } from "./preview/reference_images";
 import { initCanvas } from "./preview/canvas";
@@ -164,6 +165,8 @@ localStorage.setItem('last_version', Blockbench.version);
 		Settings.saveLocalStorages();
 		if (isApp) {
 			loadOpenWithBlockbenchFile();
+			// #78：插件加载完成后恢复标签页分组会话（仅组内已保存工程）
+			restoreTabGroupSession();
 			ipcRenderer.send('app-loaded');
 		} else {
 			loadInfoFromURL();
