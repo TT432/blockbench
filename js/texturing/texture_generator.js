@@ -257,9 +257,10 @@ export const TextureGenerator = {
 	//constructors
 	boxUVCubeTemplate: class BoxUVCubeTemplate {
 		constructor(obj, min_size) {
-			this.x = Math.round(obj.size(0, false) + 1e-6) || min_size;
-			this.y = Math.round(obj.size(1, false) + 1e-6) || min_size;
-			this.z = Math.round(obj.size(2, false) + 1e-6) || min_size;
+			// 箱型 UV 模板尺寸向上取整（#75），与 cube.js size('box_uv') 一致
+			this.x = Math.ceil(obj.size(0, false) - 1e-6) || min_size;
+			this.y = Math.ceil(obj.size(1, false) - 1e-6) || min_size;
+			this.z = Math.ceil(obj.size(2, false) - 1e-6) || min_size;
 			this.posx = obj.uv_offset[0];
 			this.posy = obj.uv_offset[1];
 			this.obj = obj;

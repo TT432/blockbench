@@ -279,8 +279,9 @@ export class Cube extends OutlinerElement {
 				return Math.floor(scope.to[axis] - scope.from[axis] + epsilon);
 
 			} else if (floored == 'box_uv' && Format.box_uv_float_size != true) {
-				// 箱型 UV 尺寸四舍五入（#75）：6.4→6、6.5→7；+epsilon 使浮点噪声的 x.4999999 按显示的 x.5 进位
-				return Math.round(scope.to[axis] - scope.from[axis] + epsilon);
+				// 箱型 UV 尺寸向上取整（#75 反馈：箱型 UV 用 ceil；逐面 UV 仍为 round）。
+				// -epsilon 使浮点噪声的整数值（6.0000001）不被进位成 7
+				return Math.ceil(scope.to[axis] - scope.from[axis] - epsilon);
 
 			} else {
 				return scope.to[axis] - scope.from[axis]

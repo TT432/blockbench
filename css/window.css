@@ -742,21 +742,31 @@
 		box-shadow: 0 0 10px #00000080;
 		transition: none;
 	}
-	/* #78 标签页分组 */
+	/* #78 标签页分组（颜色标记式：圈圈与文字着组色，背景中性） */
 	#tab_bar .tab_group_chip {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 5px;
 		height: 20px;
 		margin: auto 2px;
 		padding: 0 8px;
 		border-radius: 4px;
 		cursor: pointer;
 		flex-shrink: 0;
-		color: #ffffff;
+		background-color: var(--color-button);
 		font-size: 12px;
 		user-select: none;
 		min-width: 14px;
+	}
+	#tab_bar .tab_group_chip:hover {
+		background-color: var(--color-accent);
+	}
+	#tab_bar .tab_group_chip .tab_group_chip_dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		pointer-events: none;
 	}
 	#tab_bar .tab_group_chip label {
 		cursor: pointer;
