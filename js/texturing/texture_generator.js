@@ -257,9 +257,9 @@ export const TextureGenerator = {
 	//constructors
 	boxUVCubeTemplate: class BoxUVCubeTemplate {
 		constructor(obj, min_size) {
-			this.x = Math.ceil(obj.size(0, false) - 1e-6) || min_size;
-			this.y = Math.ceil(obj.size(1, false) - 1e-6) || min_size;
-			this.z = Math.ceil(obj.size(2, false) - 1e-6) || min_size;
+			this.x = Math.round(obj.size(0, false) + 1e-6) || min_size;
+			this.y = Math.round(obj.size(1, false) + 1e-6) || min_size;
+			this.z = Math.round(obj.size(2, false) + 1e-6) || min_size;
 			this.posx = obj.uv_offset[0];
 			this.posy = obj.uv_offset[1];
 			this.obj = obj;
@@ -465,7 +465,7 @@ export const TextureGenerator = {
 				// 旋转 90/270 的面：岛与写回 UV 使用四元面方向（axes 交换），drawCubeTexture 内部会再交换绘制
 				let swap = (this.rotation % 180) != 0;
 				// 本节所有尺寸均为新贴图的 UV 单位（res_multiple = 像素/UV单位），
-				// 岛尺寸向上对齐到新贴图的像素网格
+				// 岛尺寸对齐到新贴图的像素网格（默认分支四舍五入 #75，uv_lock 分支向上覆盖原像素域）
 				if (cube.uv_lock || this.face.uv_lock) {
 					// 锁定（编号65）：不改变 UV 大小范围——岛尺寸由面 UV 实际覆盖的像素域决定，
 					// 保留分数 extent 与部分覆盖的边缘像素列，避免重建后贴图漂移（编号46）
@@ -487,14 +487,18 @@ export const TextureGenerator = {
 					this.extent_w = (swap ? eh : ew);
 					this.extent_h = (swap ? ew : eh);
 				} else {
-					// 默认（编号58/64/69/70）：UV 大小自适应方块面实际尺寸——岛尺寸 = 面尺寸向上对齐像素网格；
+					// 默认（编号58/64/69/70/#75）：UV 大小自适应方块面实际尺寸——岛尺寸 = 面尺寸四舍五入到
+					// 像素网格（6.4→6、6.5→7；+1e-6 使浮点噪声的 x.4999999 按显示的 x.5 进位）；
 					// 写回 UV extent 不设（applyUV 回退为岛尺寸，整数、填满整个岛，与原版行为一致）：
 					// 绘制目标是整个岛，UV 必须覆盖整个岛；分数 extent 只引用岛的前段，
 					// 会在新建时产生分数 UV + 死边距（编号69），重建降采样时边缘列被挤出 UV 域导致丢线/错位（编号70）
 					let w_units = Math.abs(swap ? y : x);
 					let h_units = Math.abs(swap ? x : y);
-					this.width  = Math.ceil(w_units * res_multiple - 1e-6) / res_multiple;
-					this.height = Math.ceil(h_units * res_multiple - 1e-6) / res_multiple;
+					// 钳制先于取整（与上游一致）：不足 1 像素的非零面直接占 1 像素（0.4→1），其余四舍五入
+					let w_px = w_units * res_multiple;
+					let h_px = h_units * res_multiple;
+					this.width  = ((w_px >= 0.01 && w_px < 1) ? 1 : Math.round(w_px + 1e-6)) / res_multiple;
+					this.height = ((h_px >= 0.01 && h_px < 1) ? 1 : Math.round(h_px + 1e-6)) / res_multiple;
 					this.align_x = 0;
 					this.align_y = 0;
 				}
