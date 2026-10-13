@@ -117,14 +117,14 @@
 				<template v-for="project in tabs">
 					<div v-if="project.is_tab_group_chip" :key="project.uuid"
 						class="tab_group_chip" :class="{collapsed: project.group.collapsed, has_active: project.group.projects.some(p => p.selected), group_target: group_intent_uuid === 'group:' + project.group.uuid}"
-						:style="{backgroundColor: tab_group_colors[project.group.color]}"
 						:data-group-uuid="project.group.uuid"
 						:title="project.group.displayName"
 						@click="project.group.toggleCollapsed()"
 						@contextmenu="project.group.contextMenu($event)"
 					>
-						<label v-if="project.group.name">{{ project.group.displayName }}</label>
-						<label v-if="project.group.collapsed" class="tab_group_chip_count">{{ project.group.projects.length }}</label>
+						<span class="tab_group_chip_dot" :style="{backgroundColor: tab_group_colors[project.group.color]}"></span>
+						<label v-if="project.group.name" :style="{color: tab_group_colors[project.group.color]}">{{ project.group.displayName }}</label>
+						<label v-if="project.group.collapsed" class="tab_group_chip_count" :style="{color: tab_group_colors[project.group.color]}">{{ project.group.projects.length }}</label>
 					</div>
 					<div v-else
 						class="project_tab"
