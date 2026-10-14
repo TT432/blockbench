@@ -314,6 +314,12 @@ export class ReferenceImage {
 	update() {
 		if (!Interface.preview || this.removed) return this;
 		let shown = this.resolveCondition();
+		// #84：工程级参考图只允许在其宿主工程选中时附着到共享预览。
+		// 图片/视频异步加载完成（onload/loadeddata）会晚于工程切换触发本方法，
+		// 无此守卫时会把已 detach 的未选中工程参考图重新挂回当前工程预览。
+		if (shown && this.scope == 'project' && !(Project && Project.reference_images.includes(this))) {
+			shown = false;
+		}
 		if (!shown) {
 			if (this.node) this.node.remove();
 			if (this.scene_object) Canvas.scene.remove(this.scene_object);
