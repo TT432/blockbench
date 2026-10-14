@@ -404,11 +404,53 @@ new ValidatorCheck('zero_wide_uv_faces', {
 })
 
 // 完全重叠方块检测（编号74/77）：ValidatorCheck 全局检查与「检测完全重叠」动作共用。
-// 仅当渲染几何完全重合（from/to/inflate/rotation/origin 全等）才算重叠。
+// 仅当渲染几何完全重合才算重叠。指纹取自世界空间包围盒 8 顶点（经 1e-6 量化并排序）：
+// cube.mesh.matrixWorld 已含方块自身 origin/rotation/rescale 及全部父组变换，
+// 因此本地属性相同但父组变换不同的方块不会被误判（反馈#100），
+// 顶点排序也使指纹与枢轴分解方式无关，同位置同尺寸同旋转的真重叠仍会命中。
+const _overlap_vec = new THREE.Vector3();
+const _overlap_fallback_matrix = new THREE.Matrix4();
+function getCubeWorldGeometryFingerprint(cube) {
+	let from = cube.from.slice();
+	let to = cube.to.slice();
+	adjustFromAndToForInflateAndStretch(from, to, cube);
+	from.forEach((v, i) => from[i] -= cube.origin[i]);
+	to.forEach((v, i) => to[i] -= cube.origin[i]);
+	let matrix;
+	if (cube.mesh) {
+		// matrixWorld 可能滞后（matrixAutoUpdate 已关），与 bone_batch 相同沿父链刷新
+		cube.mesh.updateWorldMatrix(true, false);
+		matrix = cube.mesh.matrixWorld;
+	} else {
+		// 兜底（edit_mode 下正常不会发生）：只用方块自身 origin/rotation
+		matrix = _overlap_fallback_matrix.makeRotationFromEuler(new THREE.Euler(
+			Math.degToRad(cube.rotation[0]),
+			Math.degToRad(cube.rotation[1]),
+			Math.degToRad(cube.rotation[2]),
+			Format.euler_order
+		));
+		matrix.setPosition(cube.origin[0], cube.origin[1], cube.origin[2]);
+	}
+	let points = [];
+	for (let x of [from[0], to[0]]) {
+		for (let y of [from[1], to[1]]) {
+			for (let z of [from[2], to[2]]) {
+				_overlap_vec.set(x, y, z).applyMatrix4(matrix);
+				points.push([
+					Math.round(_overlap_vec.x * 1e6),
+					Math.round(_overlap_vec.y * 1e6),
+					Math.round(_overlap_vec.z * 1e6)
+				]);
+			}
+		}
+	}
+	points.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+	return JSON.stringify(points);
+}
 function findOverlappingCubes(cubes) {
 	let groups = {};
 	for (let cube of cubes) {
-		let key = JSON.stringify([cube.from, cube.to, cube.inflate || 0, cube.rotation, cube.origin]);
+		let key = getCubeWorldGeometryFingerprint(cube);
 		if (!groups[key]) groups[key] = [];
 		groups[key].push(cube);
 	}
@@ -474,4 +516,4 @@ new ValidatorCheck('overlapping_cubes', {
 	}
 })
 
-Object.assign(window, {Validator, ValidatorCheck});
+Object.assign(window, {Validator, ValidatorCheck, findOverlappingCubes});
