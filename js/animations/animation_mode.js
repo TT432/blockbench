@@ -1401,7 +1401,8 @@ Interface.definePanels(function() {
 						let [type, content] = match[0].substring(0, match[0].length - 1).split(/\(/);
 						let [id, ...args] = content.split(/\(|, */);
 						id = id.replace(/['"]/g, '');
-						if (this.buttons.find(b => b.id == id)) return;
+						// #88：重复 id 只跳过该控件，不能丢弃其后全部控件
+						if (this.buttons.find(b => b.id == id)) continue;
 
 						let variable = text.substring(0, match.index).match(/[\w.-]+ *= *$/);
 						variable = variable ? variable[0].replace(/[ =]+/g, '').replace(/^v\./i, 'variable.').replace(/^q\./i, 'query.').replace(/^t\./i, 'temp.').replace(/^c\./i, 'context.') : undefined;
@@ -1447,10 +1448,19 @@ Interface.definePanels(function() {
 					if (button.variable) {
 						delete Animator.MolangParser.variables[button.variable];
 					}
+					// #88：slider/toggle 的设定值立即写回工程属性，保证保存时不丢
+					if (button.type != 'impulse') this.syncButtonValuesToProject();
 					Animator.preview();
+				},
+				// #88：把控件当前值同步到 Project.variable_placeholder_buttons（保存时的数据源）
+				syncButtonValuesToProject() {
+					if (!Project) return;
+					Project.variable_placeholder_buttons.replace(this.buttons);
+					Project.saved = false;
 				},
 				slideButton(button, e1) {
 					convertTouchEvent(e1);
+					let self = this;
 					let last_event = e1;
 					let started = false;
 					let move_calls = 0;
@@ -1500,6 +1510,8 @@ Interface.definePanels(function() {
 						removeEventListeners(document, 'mousemove touchmove', move);
 						removeEventListeners(document, 'mouseup touchend', off);
 						Blockbench.setStatusBarText();
+						// #88：拖动结束写回工程属性，保证保存时不丢
+						self.syncButtonValuesToProject();
 					}
 					addEventListeners(document, 'mouseup touchend', off);
 					addEventListeners(document, 'mousemove touchmove', move);

@@ -363,6 +363,10 @@ var codec = new Codec('project', {
 		if (Interface.Panels.variable_placeholders.inside_vue._data.text) {
 			model.animation_variable_placeholders = Interface.Panels.variable_placeholders.inside_vue._data.text;
 		}
+		// #88：控件值直接取面板活数据，避免 Project 属性快照滞后
+		if (Interface.Panels.variable_placeholders.inside_vue.buttons.length) {
+			model.variable_placeholder_buttons = Interface.Panels.variable_placeholders.inside_vue.buttons.map(b => JSON.parse(JSON.stringify(b)));
+		}
 
 		if (Format.display_mode && Object.keys(Project.display_settings).length >= 1) {
 			var new_display = {}
