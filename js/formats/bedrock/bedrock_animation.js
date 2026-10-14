@@ -169,6 +169,8 @@ export const animation_codec = new AnimationCodec('bedrock', {
 							if (panel_vue.text.split('\n').find(line => line.substr(0, match.length) == match)) return;
 
 							let [space, name] = match.split(/\./);
+							// #88：动画自身赋值的变量是中间变量，不需要占位符控件
+							if (assigned_variables.has(name.split('(')[0])) return;
 							if (panel_vue.text != '' && panel_vue.text.substr(-1) !== '\n') panel_vue.text += '\n';
 							name = name.replace(/[')]/g, '').replace('(', ':');
 
@@ -212,6 +214,14 @@ export const animation_codec = new AnimationCodec('bedrock', {
 							}
 							return points;
 						}
+					}
+					// #88：先扫本动画的全部赋值左值（variable.x = ...），中间变量不生成占位符
+					let assigned_variables = new Set();
+					let animation_source = JSON.stringify(a).toLowerCase();
+					let assignment_regex = /(?:variable|temp|v|t)\.(\w+)\s*=(?!=)/g;
+					let assignment_match;
+					while ((assignment_match = assignment_regex.exec(animation_source)) !== null) {
+						assigned_variables.add(assignment_match[1]);
 					}
 					for (var bone_name in a.bones) {
 						var b = a.bones[bone_name]
