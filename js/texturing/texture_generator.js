@@ -81,6 +81,13 @@ export const TextureGenerator = {
 					toggle_default: false
 				},
 
+				adjust_uv: {
+					label: 'dialog.create_texture.adjust_uv',
+					description: 'dialog.create_texture.adjust_uv.desc',
+					type: 'checkbox',
+					value: false,
+					condition: (form) => (form.type == 'blank' && Outliner.elements.some(el => el.faces))
+				},
 				rearrange_uv: {
 					label: 'dialog.create_texture.rearrange_uv',
 					description: 'dialog.create_texture.rearrange_uv.desc',
@@ -222,7 +229,23 @@ export const TextureGenerator = {
 				after(texture)
 			}
 			if (options.type == 'blank') {
-				Undo.finishEdit('Create blank texture', {textures: [texture], selected_texture: true, bitmap: true})
+				if (options.adjust_uv_from) {
+					// 「按贴图尺寸调整 UV」：按新旧分辨率比例缩放现有元素的 UV，
+					// 并提前同步工程 UV 尺寸，保证 finishEdit 的 uv_mode 快照是最终值
+					let scaled_elements = TextureGenerator.adjustUVToTexture(options.resolution[0], options.resolution[1], options.adjust_uv_from);
+					Project.texture_width = options.resolution[0];
+					Project.texture_height = options.resolution[1];
+					Undo.finishEdit('Create blank texture', {
+						textures: [texture],
+						selected_texture: true,
+						bitmap: true,
+						elements: scaled_elements,
+						uv_only: true,
+						uv_mode: true
+					})
+				} else {
+					Undo.finishEdit('Create blank texture', {textures: [texture], selected_texture: true, bitmap: true})
+				}
 			}
 			return texture;
 		}
@@ -231,7 +254,20 @@ export const TextureGenerator = {
 		} else if (options.type == 'color_map') {
 			TextureGenerator.generateColorMapTemplate(options, makeTexture);
 		} else {
-			Undo.initEdit({textures: [], selected_texture: true})
+			if (options.adjust_uv && Outliner.elements.some(el => el.faces)) {
+				// initEdit 之后再按 Outliner.elements 现查元素，避免快照替换引用
+				let ref_texture = Texture.getDefault();
+				options.adjust_uv_from = [Project.getUVWidth(ref_texture), Project.getUVHeight(ref_texture)];
+				Undo.initEdit({
+					textures: [],
+					selected_texture: true,
+					elements: Outliner.elements.filter(el => el.faces),
+					uv_only: true,
+					uv_mode: true
+				})
+			} else {
+				Undo.initEdit({textures: [], selected_texture: true})
+			}
 			TextureGenerator.generateBlank(options.resolution[1], options.resolution[0], options.color, makeTexture);
 		}
 	},
@@ -1875,6 +1911,43 @@ export const TextureGenerator = {
 		})
 	},
 	//Misc
+	//「按贴图尺寸调整 UV」（创建贴图对话框可选项）：按新旧分辨率比例等比缩放所有元素的 UV。
+	//old_size 为创建前的 UV 尺寸 [width, height]；箱型 UV 缩放 uv_offset，逐面 UV 缩放 face.uv
+	adjustUVToTexture(new_width, new_height, old_size) {
+		let factor_x = new_width / old_size[0];
+		let factor_y = new_height / old_size[1];
+		let changed_elements = [];
+		if (factor_x === 1 && factor_y === 1) return changed_elements;
+
+		Outliner.elements.forEach(element => {
+			if (!element.faces) return;
+			if (element.box_uv && element.uv_offset) {
+				element.uv_offset[0] *= factor_x;
+				element.uv_offset[1] *= factor_y;
+			} else if (element.getTypeBehavior('cube_faces')) {
+				for (var key in element.faces) {
+					let uv = element.faces[key].uv;
+					uv[0] *= factor_x;
+					uv[2] *= factor_x;
+					uv[1] *= factor_y;
+					uv[3] *= factor_y;
+				}
+			} else if (element instanceof Mesh) {
+				for (var fkey in element.faces) {
+					let uv = element.faces[fkey].uv;
+					for (let vkey in uv) {
+						uv[vkey][0] *= factor_x;
+						uv[vkey][1] *= factor_y;
+					}
+				}
+			} else {
+				return;
+			}
+			element.preview_controller.updateUV(element);
+			changed_elements.push(element);
+		})
+		return changed_elements;
+	},
 	changeUVResolution(width, height, texture, element_list) {
 		let factor_x = width / Project.getUVWidth(texture);
 		let factor_y = height / Project.getUVHeight(texture);
