@@ -2935,6 +2935,7 @@
 	"uv_editor.no_faces": "None",
 	"uv_editor.rotated": "Rotated",
 	"uv_editor.rotate_uv": "Rotate UV",
+	"uv_editor.selection_cap_notice": "UV display paused for large selection (%0 elements)",
 	"uv_editor.scale_uv": "Scale UV",
 	"uv_editor.auto_cull": "Cullface To Self",
 	"uv_editor.copied": "Copied Face",

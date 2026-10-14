@@ -218,7 +218,7 @@ export class Collection {
 		}
 		let all = groups.concat(elements);
 		let state = all[0]?.visibility != true;
-		Undo.initEdit({groups, elements});
+		Undo.initEdit({groups, elements, element_fields: ['visibility'], group_fields: ['visibility']});
 		all.forEach(node => {
 			node.visibility = state;
 		})
@@ -242,7 +242,7 @@ export class Collection {
 		let elements = Outliner.elements.filter(node => typeof node.visibility == 'boolean');
 		if (!groups.length && !elements.length) return;
 		let restore = this.isIsolated();
-		Undo.initEdit({groups, elements});
+		Undo.initEdit({groups, elements, element_fields: ['visibility'], group_fields: ['visibility']});
 		groups.forEach(node => { node.visibility = restore || members.has(node); });
 		elements.forEach(node => { node.visibility = restore || members.has(node); });
 		Canvas.updateVisibility();

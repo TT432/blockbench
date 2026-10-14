@@ -311,7 +311,14 @@ UndoSystem.save = class {
 		if (aspects.elements) {
 			this.elements = {}
 			aspects.elements.forEach(function(obj) {
-				scope.elements[obj.uuid] = obj.getUndoCopy(aspects)
+				// #87：element_fields 窄快照——只记录指定字段（如 visibility 开关），跳过上二十个属性的全量拷贝
+				if (aspects.element_fields) {
+					let copy = {uuid: obj.uuid, type: obj.type};
+					for (let field of aspects.element_fields) copy[field] = obj[field];
+					scope.elements[obj.uuid] = copy;
+				} else {
+					scope.elements[obj.uuid] = obj.getUndoCopy(aspects)
+				}
 			})
 		}
 
@@ -320,7 +327,15 @@ UndoSystem.save = class {
 		}
 
 		if (aspects.groups) {
-			this.groups = aspects.groups.map(group => group.getChildlessCopy(true));
+			this.groups = aspects.groups.map(group => {
+				// #87：group_fields 窄快照（如 visibility 开关）
+				if (aspects.group_fields) {
+					let copy = {uuid: group.uuid};
+					for (let field of aspects.group_fields) copy[field] = group[field];
+					return copy;
+				}
+				return group.getChildlessCopy(true);
+			});
 		} else if (aspects.group) {
 			this.groups = [aspects.group.getChildlessCopy(true)];
 		} else if (aspects.outliner && aspects.groups != null && (Undo.current_save ? Undo.current_save._groups : Group.first_selected)) {
@@ -465,7 +480,16 @@ UndoSystem.save = class {
 
 				let new_element = OutlinerNode.uuids[uuid]
 				if (new_element) {
-					if (new_element instanceof SplineMesh) {
+					if (this.aspects.element_fields) {
+						// #87：窄快照恢复——只写回指定字段，不重建整个元素
+						for (let field of this.aspects.element_fields) {
+							new_element[field] = element[field];
+						}
+						if (this.aspects.element_fields.includes('visibility') && new_element.preview_controller.updateVisibility) {
+							new_element.preview_controller.updateVisibility(new_element);
+						}
+					}
+					else if (new_element instanceof SplineMesh) {
 						new_element.overwrite(element)
 						new_element.preview_controller.updateAll(new_element);
 					} 

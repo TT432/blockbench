@@ -1468,11 +1468,13 @@ new NodePreviewController(Cube, {
 	updatePixelGrid(cube) {
 		var mesh = cube.mesh;
 		if (mesh === undefined) return;
+		let grid_enabled = (Modes.paint && settings.painting_grid.value) || (Modes.edit && settings.pixel_grid.value)
+		// #87：无既有网格且当前不需要网格时直接返回，避免模式切换时对每个元素做 remove/dispose
+		if (!grid_enabled && !mesh.grid_box) return;
 		mesh.remove(mesh.grid_box);
 		if (mesh.grid_box?.geometry) mesh.grid_box.geometry.dispose();
 		if (cube.visibility == false) return;
 
-		let grid_enabled = (Modes.paint && settings.painting_grid.value) || (Modes.edit && settings.pixel_grid.value)
 		if (!grid_enabled) return;
 
 		var from = cube.from.slice();
