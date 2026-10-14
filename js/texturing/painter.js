@@ -183,6 +183,8 @@ export const Painter = {
 			let picked = Painter.attemptReferenceImageColorPick(e);
 			if (picked) return;
 		}
+		// 反馈#101：绘画模式下油漆桶按住 Ctrl 点击仅加选/减选方块，不触发填充
+		if (Toolbox.selected.id == 'fill_tool' && (e.ctrlOrCmd || Pressing.overrides.ctrl)) return;
 		if (!data.intersects || (data.element.locked && !Toolbox.selected.click_locked_elements)) return;
 		var texture = Painter.getTextureToEdit(data.element.faces[data.face].getTexture())
 		if (!texture || (texture.error && texture.error !== 2)) {
@@ -663,6 +665,8 @@ export const Painter = {
 		let color = tinycolor(ColorPanel.get()).toRgb();
 		let b_opacity = BarItems.slider_brush_opacity.get()/(settings.opacity_range.value == '255' ? 255 : 100);
 		let fill_mode = BarItems.fill_mode.get()
+		// 反馈#101：向后兼容——旧设置里的 'selected_elements' 已并入「元素」模式
+		if (fill_mode === 'selected_elements') fill_mode = 'element';
 		let blend_mode = BarItems.blend_mode.value;
 		let {element, offset} = Painter.current;
 		let {rect, uvFactorX, uvFactorY, w, h} = area;
@@ -672,7 +676,7 @@ export const Painter = {
 		if (!element && UVEditor) {
 			let hit = UVEditor.findFaceAtUV(texture, x, y, uvFactorX, uvFactorY);
 			if (hit) {
-				if (fill_mode === 'face' || fill_mode === 'element') {
+				if (fill_mode === 'face' || fill_mode === 'element' || fill_mode === 'same_color') {
 					Painter.current.element = hit.element;
 					Painter.current.face = hit.faceKey;
 					element = hit.element;
@@ -800,18 +804,21 @@ export const Painter = {
 			}
 		}
 
-		if ((element?.getTypeBehavior('cube_faces') || element instanceof Mesh || element instanceof SplineMesh) && (fill_mode === 'element' || fill_mode === 'face')) {
+		let paintable = (el) => el && (el.getTypeBehavior('cube_faces') || el instanceof Mesh || el instanceof SplineMesh);
+		if (fill_mode === 'element' && Outliner.selected.length > 1) {
+			// 反馈#101：「元素」模式在多选时对所有选中元素生效（原「选中的元素」模式并入此模式）
+			for (let selected_element of Outliner.selected) {
+				if (paintable(selected_element)) paintElement(selected_element);
+			}
+			if (paintable(element) && !Outliner.selected.includes(element)) paintElement(element);
+
+		} else if (paintable(element) && (fill_mode === 'element' || fill_mode === 'face')) {
 			paintElement(element);
 
 		} else if (fill_mode === 'face' || fill_mode === 'element' || fill_mode === 'selection') {
 			texture.selection.maskCanvas(ctx, offset);
 			ctx.fill();
 			ctx.restore();
-
-		} else if (fill_mode === 'selected_elements') {
-			for (let element of Outliner.selected) {
-				paintElement(element);
-			}
 
 		} else {
 			// Perf note: this branch handles both the "Same Color" (global) and
@@ -824,6 +831,74 @@ export const Painter = {
 			// same work with a single getImageData/putImageData round trip and
 			// flat typed arrays instead of per-pixel objects/array allocations.
 			let selection = texture.selection;
+			// 反馈#91/#101：「同色替换」——把命中像素颜色在目标元素所有面的 UV 区域内的
+			// 同色像素全部替换；多选时对所有选中元素生效。
+			let coverage_mask = null;
+			if (fill_mode === 'same_color') {
+				let targets = Outliner.selected.filter(el => paintable(el));
+				if (paintable(element) && !targets.includes(element)) targets.push(element);
+				if (targets.length) {
+					let canvas_w = ctx.canvas.width, canvas_h = ctx.canvas.height;
+					coverage_mask = new Uint8Array(canvas_w * canvas_h);
+					let animation_offset = texture.currentFrame * texture.display_height;
+					let mark_run = (x_start, x_end, y) => {
+						if (y < 0 || y >= canvas_h) return;
+						let a = x_start < 0 ? 0 : x_start;
+						let b = x_end >= canvas_w ? canvas_w - 1 : x_end;
+						if (a > b) return;
+						coverage_mask.fill(1, y * canvas_w + a, y * canvas_w + b + 1);
+					};
+					for (let target of targets) {
+						if (target.getTypeBehavior('cube_faces')) {
+							for (let fkey in target.faces) {
+								let face = target.faces[fkey];
+								if (Painter.getTextureToEdit(face.getTexture()) !== texture) continue;
+								let face_rect = getRectangle(
+									Math.roundTo(face.uv[0] * uvFactorX, 2),
+									Math.roundTo(face.uv[1] * uvFactorY, 2),
+									Math.roundTo(face.uv[2] * uvFactorX, 2),
+									Math.roundTo(face.uv[3] * uvFactorY, 2)
+								);
+								let x0 = Math.max(0, Math.floor(face_rect.ax));
+								let x1 = Math.min(canvas_w, Math.ceil(face_rect.bx));
+								let y0 = Math.max(0, Math.floor(face_rect.ay) + animation_offset);
+								let y1 = Math.min(canvas_h, Math.ceil(face_rect.by) + animation_offset);
+								for (let row = y0; row < y1; row++) {
+									coverage_mask.fill(1, row * canvas_w + x0, row * canvas_w + x1);
+								}
+							}
+						} else if (target instanceof Mesh || target instanceof SplineMesh) {
+							// 与 paintElement 的 Mesh 分支一致的面光栅化逻辑
+							for (let fkey in target.faces) {
+								let face = target.faces[fkey];
+								if (face.vertices.length <= 2 || Painter.getTextureToEdit(face.getTexture()) !== texture) continue;
+								let face_texture = face.getTexture();
+								let factor_x = face_texture ? (face_texture.width / face_texture.getUVWidth()) : 1;
+								let factor_y = face_texture ? (face_texture.display_height / face_texture.getUVHeight()) : 1;
+								let vertices = [];
+								for (let vkey of face.getSortedVertices()) {
+									let uv = face.uv[vkey];
+									if (!uv) { vertices = null; break; }
+									vertices.push([uv[0] * factor_x, uv[1] * factor_y]);
+								}
+								if (vertices && Painter.scanlineConvexPolygon(vertices, mark_run)) continue;
+								let matrix = Painter.current.face_matrices[target.uuid + fkey] || face.getOccupationMatrix(true, [0, 0]);
+								Painter.current.face_matrices[target.uuid + fkey] = matrix;
+								for (let mx in matrix) {
+									let px = parseInt(mx), column = matrix[mx];
+									for (let my in column) {
+										if (column[my]) mark_run(px, px, parseInt(my));
+									}
+								}
+							}
+						}
+					}
+					// 扫描整块画布，而非仅命中面的 UV 区域
+					rect = [0, 0];
+					w = canvas_w;
+					h = canvas_h;
+				}
+			}
 			let image_data = ctx.getImageData(x - offset[0], y - offset[1], 1, 1);
 			let target_r = image_data.data[0];
 			let target_g = image_data.data[1];
@@ -858,7 +933,7 @@ export const Painter = {
 						let i = (row_offset + col) * 4;
 						if (data[i] === target_r && data[i+1] === target_g && data[i+2] === target_b && data[i+3] === target_a) {
 							let px = scan_x + col;
-							if (selection.allow(px, py)) matches[row_offset + col] = 1;
+							if ((!coverage_mask || coverage_mask[py * ctx.canvas.width + px]) && selection.allow(px, py)) matches[row_offset + col] = 1;
 						}
 					}
 				}
@@ -3713,18 +3788,24 @@ BARS.defineActions(function() {
 			difference: true,
 		}
 	})
-	new BarSelect('fill_mode', {
+	let fill_mode_select = new BarSelect('fill_mode', {
 		category: 'paint',
 		condition: () => Toolbox && Toolbox.selected.id === 'fill_tool',
 		options: {
 			face: {name: true, condition: () => !Format.image_editor},
 			selection: {name: true, condition: () => Format.image_editor},
 			element: {name: true, condition: () => !Format.image_editor},
-			selected_elements: {name: true, condition: () => !Format.image_editor},
+			same_color: {name: true, condition: () => !Format.image_editor},
 			color_connected: true,
 			color: true,
 		}
 	})
+	// 反馈#101：「选中的元素」已并入「元素」模式，旧设置值自动映射
+	let fill_mode_select_set = fill_mode_select.set.bind(fill_mode_select);
+	fill_mode_select.set = function(key) {
+		if (key === 'selected_elements') key = 'element';
+		return fill_mode_select_set(key);
+	};
 	new BarSelect('copy_brush_mode', {
 		category: 'paint',
 		condition: () => Toolbox && ['copy_brush'].includes(Toolbox.selected.id),

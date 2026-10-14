@@ -1051,7 +1051,10 @@ export class Preview {
 			let loop_select = Keybinds.extra.preview_select.keybind.additionalModifierTriggered(event, 'loop_select');
 
 			if (Toolbox.selected.paintTool || Toolbox.selected.id == 'knife_tool') {
-				multi_select = group_select = loop_select = false;
+				// 反馈#101：绘画模式下油漆桶允许按住 Ctrl 多选/减选方块
+				if (!(Toolbox.selected.id == 'fill_tool' && multi_select)) {
+					multi_select = group_select = loop_select = false;
+				}
 			}
 
 			function unselectOtherNodes() {
@@ -1088,7 +1091,7 @@ export class Preview {
 					}
 				}
 				Blockbench.dispatchEvent('canvas_select', data)
-				if (Modes.paint && !(Toolbox.selected.id == 'fill_tool' && (BarItems.fill_mode as BarSelect).value == 'selected_elements')) {
+				if (Modes.paint && !(Toolbox.selected.id == 'fill_tool' && multi_select)) {
 					// @ts-expect-error
 					event = {};
 				}
@@ -1294,8 +1297,9 @@ export class Preview {
 								}
 							}
 						}
-					} else if (Toolbox.selected.id == 'fill_tool' && BarItems.fill_mode.value == 'selected_elements') {
-						if (!data.element.selected) {
+					} else if (Toolbox.selected.id == 'fill_tool') {
+						// 反馈#101：油漆桶普通点击不破坏已有多选；Ctrl+点击加选/减选
+						if (multi_select || !data.element.selected) {
 							data.element.select(event)
 						}
 					} else {
