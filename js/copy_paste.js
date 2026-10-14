@@ -2,6 +2,8 @@ import { clipboard } from "./native_apis";
 
 export const Clipbench = {
 	elements: [],
+	// #85：随结构复制一起携带的贴图数据（uuid + data URL），粘贴时导入目标工程
+	textures: [],
 	types: {
 		text: 'text',
 		display_slot: 'display_slot',
@@ -242,25 +244,56 @@ export const Clipbench = {
 	setGroups(groups) {
 		if (!groups || !groups.length) {
 			Clipbench.groups = undefined
+			Clipbench.textures = []
 			return;
 		}
 		Clipbench.groups = groups.map(group => group.getSaveCopy(true))
+		Clipbench.textures = Clipbench.getTexturesFromSaveCopies(Clipbench.groups)
 		if (isApp) {
-			clipboard.writeHTML(JSON.stringify({type: 'groups', content: Clipbench.groups}))
+			clipboard.writeHTML(JSON.stringify({type: 'groups', content: Clipbench.groups, textures: Clipbench.textures}))
 		}
 	},
 	setElements(arr) {
 		if (!arr) {
 			Clipbench.elements = []
+			Clipbench.textures = []
 			return;
 		}
 		arr.forEach(function(element) {
 			if (element.getTypeBehavior('duplicatable') == false) return;
 			Clipbench.elements.push(element.getSaveCopy())
 		})
+		Clipbench.textures = Clipbench.getTexturesFromSaveCopies(Clipbench.elements)
 		if (isApp) {
-			clipboard.writeHTML(JSON.stringify({type: 'elements', content: Clipbench.elements}))
+			clipboard.writeHTML(JSON.stringify({type: 'elements', content: Clipbench.elements, textures: Clipbench.textures}))
 		}
+	},
+	// 从元素/组存档里收集面引用的贴图 uuid，序列化成可跨工程导入的剪贴板数据
+	getTexturesFromSaveCopies(save_copies) {
+		let uuids = new Set();
+		(function walk(save) {
+			if (!save || typeof save !== 'object') return;
+			if (save.faces) {
+				for (let fkey in save.faces) {
+					let texture_uuid = save.faces[fkey] && save.faces[fkey].texture;
+					if (typeof texture_uuid === 'string' && texture_uuid) uuids.add(texture_uuid);
+				}
+			}
+			if (save.children instanceof Array) save.children.forEach(walk);
+		})({children: save_copies});
+		let textures = [];
+		uuids.forEach(uuid => {
+			let tex = Texture.all.find(t => t.uuid == uuid);
+			if (!tex || tex.error) return;
+			textures.push({
+				uuid: tex.uuid,
+				name: tex.name,
+				source: tex.getDataURL(),
+				uv_width: tex.uv_width,
+				uv_height: tex.uv_height,
+			});
+		});
+		return textures;
 	},
 	setText(text) {
 		if (isApp) {
@@ -326,7 +359,8 @@ export const Clipbench = {
 	},
 	pasteOutliner(event) {
 		let new_groups = [];
-		Undo.initEdit({outliner: true, elements: [], groups: new_groups, selection: true});
+		let new_textures = [];
+		Undo.initEdit({outliner: true, elements: [], groups: new_groups, selection: true, textures: []});
 		//Group
 		var target = 'root';
 		if (Group.first_selected) {
@@ -343,11 +377,25 @@ export const Clipbench = {
 				if (data.type === 'elements' && data.content) {
 					Clipbench.groups = undefined;
 					Clipbench.elements = data.content;
+					Clipbench.textures = data.textures || [];
 				} else if (data.type === 'groups' && data.content) {
 					Clipbench.groups = data.content;
 					Clipbench.elements = [];
+					Clipbench.textures = data.textures || [];
 				}
 			} catch (err) {}
+		}
+		// #85：先导入剪贴板携带的贴图，元素创建时面贴图 uuid 才能解析
+		if (Clipbench.textures instanceof Array) {
+			Clipbench.textures.forEach(saved => {
+				if (!saved || typeof saved.uuid !== 'string' || typeof saved.source !== 'string' || !saved.source) return;
+				if (Texture.all.find(t => t.uuid == saved.uuid)) return;
+				let texture = new Texture({name: saved.name || 'texture'}, saved.uuid);
+				texture.fromDataURL(saved.source).add(false);
+				if (saved.uv_width) texture.uv_width = saved.uv_width;
+				if (saved.uv_height) texture.uv_height = saved.uv_height;
+				new_textures.push(texture);
+			});
 		}
 		if (Clipbench.groups) {
 			function iterate(obj, parent) {
@@ -443,7 +491,7 @@ export const Clipbench = {
 			Canvas.updateView({elements, element_aspects: {transform: true}});
 		}
 
-		Undo.finishEdit('Paste Elements', {outliner: true, elements: selected, groups: new_groups, selection: true});
+		Undo.finishEdit('Paste Elements', {outliner: true, elements: selected, groups: new_groups, selection: true, textures: new_textures});
 	},
 	pasteImage() {
 		function loadFromDataUrl(dataUrl) {
