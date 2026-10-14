@@ -226,7 +226,9 @@ export const MenuBar = {
 				'import_bedrock_attachable',
 				'import_bedrock_voxel_shape',
 				'import_obj',
-				'extrude_texture'
+				'extrude_texture',
+				'import_sequence_frames',
+				'import_sequence_frames_clipboard',
 			]},
 			{name: 'generic.export', id: 'export', icon: 'insert_drive_file', condition: () => !!Project, children: [
 				'export_blockmodel',
