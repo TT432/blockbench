@@ -226,6 +226,29 @@ export class Collection {
 		Undo.finishEdit('Toggle collection visibility');
 	}
 	/**
+	 * #86：是否正处于「仅显示该集合」的独显状态
+	 */
+	isIsolated(): boolean {
+		let members = new Set(this.getAllChildren());
+		let nodes = [...Group.all, ...Outliner.elements].filter(node => typeof node.visibility == 'boolean');
+		return nodes.length > 0 && nodes.every(node => node.visibility === members.has(node));
+	}
+	/**
+	 * #86：一键独显——只显示集合成员；已独显时再次调用恢复全部显示
+	 */
+	isolateVisibility(): void {
+		let members = new Set(this.getAllChildren());
+		let groups = Group.all.filter(node => typeof node.visibility == 'boolean');
+		let elements = Outliner.elements.filter(node => typeof node.visibility == 'boolean');
+		if (!groups.length && !elements.length) return;
+		let restore = this.isIsolated();
+		Undo.initEdit({groups, elements});
+		groups.forEach(node => { node.visibility = restore || members.has(node); });
+		elements.forEach(node => { node.visibility = restore || members.has(node); });
+		Canvas.updateVisibility();
+		Undo.finishEdit('Isolate collection visibility');
+	}
+	/**
 	 * Opens the context menu
 	 */
 	showContextMenu(event) {
@@ -637,6 +660,47 @@ BARS.defineActions(() => {
 			Undo.finishEdit('Add selection to collection');
 		}
 	})
+	// #86：集合信息导出为独立 JSON 文件（bbmodel 工程本身已内嵌集合，此文件用于 json 模型等不落集合的格式）
+	new Action('export_collections', {
+		icon: 'file_export',
+		category: 'select',
+		condition: {modes: ['edit', 'paint', 'animate'], method: () => Collection.all.length > 0},
+		click() {
+			Blockbench.export({
+				resource_id: 'collection_data',
+				type: 'Collection Data',
+				extensions: ['json'],
+				name: (Project?.name || 'model') + '_collections',
+				content: compileJSON(Collection.all.map(collection => collection.getSaveCopy())),
+			});
+		}
+	})
+	new Action('import_collections', {
+		icon: 'file_import',
+		category: 'select',
+		condition: {modes: ['edit', 'paint', 'animate']},
+		click() {
+			Blockbench.import({
+				resource_id: 'collection_data',
+				type: 'Collection Data',
+				extensions: ['json'],
+				readtype: 'text',
+			}, files => {
+				let data = autoParseJSON(files[0].content);
+				if (!(data instanceof Array) || !data.length) return;
+				let new_collections: Collection[] = [];
+				Undo.initEdit({collections: new_collections});
+				for (let save of data) {
+					if (!save || typeof save != 'object') continue;
+					if (!save.uuid || Collection.all.find(c => c.uuid == save.uuid)) save.uuid = guid();
+					let collection = new Collection(save, save.uuid).add();
+					new_collections.push(collection);
+				}
+				Undo.finishEdit('Import collections', {collections: new_collections});
+				updateSelection();
+			});
+		}
+	})
 })
 
 Interface.definePanels(function() {
@@ -883,6 +947,9 @@ Interface.definePanels(function() {
 							<i v-if="collection.saved" class="material-icons">check_circle</i>
 							<i v-else class="material-icons">save</i>
 						</div>
+						<div class="in_list_button" @click.stop="collection.isolateVisibility()" @dblclick.stop title="${tl('action.isolate_collection')}">
+							<i class="fa fa-glasses icon" :class="{toggle_disabled: !collection.isIsolated()}"></i>
+						</div>
 						<div class="in_list_button" @click.stop="collection.toggleVisibility($event)" @dblclick.stop>
 							<i v-if="collection.getVisibility()" class="material-icons icon">visibility</i>
 							<i v-else class="material-icons icon toggle_disabled">visibility_off</i>
@@ -894,6 +961,9 @@ Interface.definePanels(function() {
 		menu: new Menu([
 			'create_collection',
 			'copy',
+			new MenuSeparator('data'),
+			'export_collections',
+			'import_collections',
 		])
 	})
 })
