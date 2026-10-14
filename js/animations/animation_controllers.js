@@ -188,7 +188,7 @@ export class AnimationControllerState {
 			})
 		}
 		['on_entry', 'on_exit'].forEach(type => {
-			if (!this[type] || this[type] == '\\n') return;
+			if (!this[type] || this[type] == '\n') return;
 			let lines = this[type].split('\n');
 			lines = lines.filter(script => !!script.replace(/[\n\s;.]+/g, ''));
 			lines = lines.map(line => (line.match(/;\s*$/) || line.startsWith('/')) ? line : (line+';'));
@@ -1555,6 +1555,16 @@ Interface.definePanels(() => {
 				toggleStateSection(state, section) {
 					state.fold[section] = !state.fold[section];
 				},
+				updateStateScript(state, key, value) {
+					// An emptied prism editor (contenteditable) reports a lone newline; normalize to empty
+					if (value && !value.trim()) value = '';
+					state[key] = value;
+				},
+				getScriptLineCount(text) {
+					// Ignore trailing empty lines so the badge matches the visible line count
+					let trimmed = text.replace(/\s+$/, '');
+					return trimmed ? trimmed.split('\n').length : 0;
+				},
 				openAnimationMenu(state, animation, target) {
 					let apply = anim => {
 						animation.key = anim.getShortName();
@@ -1624,7 +1634,9 @@ Interface.definePanels(() => {
 							icon: 'clear',
 							click() {
 								Undo.initEdit({animation_controller_state: state});
-								state.particles.remove(particle);
+								// Property.copy replaces array items during initEdit; re-find by uuid
+								particle = state.particles.find(p => p.uuid == particle.uuid);
+								if (particle) state.particles.remove(particle);
 								Undo.finishEdit('Remove particle from controller state');
 							}
 						}
@@ -1639,7 +1651,9 @@ Interface.definePanels(() => {
 							icon: 'clear',
 							click() {
 								Undo.initEdit({animation_controller_state: state});
-								state.sounds.remove(sound);
+								// Property.copy replaces array items during initEdit; re-find by uuid
+								sound = state.sounds.find(s => s.uuid == sound.uuid);
+								if (sound) state.sounds.remove(sound);
 								Undo.finishEdit('Remove sound from controller state');
 							}
 						}
@@ -1865,9 +1879,12 @@ Interface.definePanels(() => {
 					}
 				},
 				panCanvas(event) {
-					if (event.button) return;
 					if (event.target.closest('.controller_state') || event.target.closest('path') || event.target.closest('.ac_canvas_tools') || event.target.closest('#animation_controller_presets')) return;
-					if (event.shiftKey) return this.startMarquee(event);
+					if (!isTouchEvent(event)) {
+						// 反馈#93：框选与平移画布的按键可在 设置>键盘 中自定义（ac_box_select / ac_pan_canvas）
+						if (Keybinds.extra.ac_box_select.keybind.isTriggered(event)) return this.startMarquee(event);
+						if (!Keybinds.extra.ac_pan_canvas.keybind.isTriggered(event)) return;
+					}
 					convertTouchEvent(event);
 					let scope = this;
 					let start_x = event.clientX, start_y = event.clientY;
@@ -1939,7 +1956,8 @@ Interface.definePanels(() => {
 					addEventListeners(document, 'mouseup touchend', stop);
 				},
 				dragStateNode(state, event) {
-					if (event.button) return;
+					// 反馈#93：节点拖动按键可在 设置>键盘 中自定义（ac_move_state）
+					if (!isTouchEvent(event) && !Keybinds.extra.ac_move_state.keybind.isTriggered(event)) return;
 					convertTouchEvent(event);
 					if (event.type == 'mousedown') event.preventDefault();
 					event.stopPropagation();
@@ -1975,7 +1993,8 @@ Interface.definePanels(() => {
 				},
 				onStateClick(state, event) {
 					if (this.suppress_state_click) return;
-					if (event.ctrlOrCmd || Pressing.overrides.ctrl) {
+					// 反馈#93：多选修饰键可在 设置>键盘 中自定义（ac_move_state 的 multi_select 变体，默认 Ctrl）
+					if (Keybinds.extra.ac_move_state.keybind.additionalModifierTriggered(event, 'multi_select')) {
 						// Toggle in multi-selection
 						if (this.selected_states.includes(state.uuid)) {
 							this.selected_states.remove(state.uuid);
@@ -1995,6 +2014,8 @@ Interface.definePanels(() => {
 				},
 				deselect(event) {
 					if (!this.controller) return;
+					// 框选/平移/拖拽结束后的残余 click 不应清空选择（与 onStateClick 共用抑制标记）
+					if (this.suppress_state_click) return;
 					let target = event.target;
 					if (target.id !== 'animation_controllers_wrapper' && !target.classList?.contains('ac_canvas') && target.tagName !== 'svg') return;
 					this.controller.selected_state = null;
@@ -2085,7 +2106,8 @@ Interface.definePanels(() => {
 					]).open(event)
 				},
 				dragConnectionCurve(connection, event) {
-					if (event.button) return;
+					// 反馈#93：连线曲率拖拽按键可在 设置>键盘 中自定义（ac_adjust_curvature）
+					if (!isTouchEvent(event) && !Keybinds.extra.ac_adjust_curvature.keybind.isTriggered(event)) return;
 					convertTouchEvent(event);
 					let scope = this;
 					let state = this.controller.states[connection.state_index];
@@ -2119,6 +2141,8 @@ Interface.definePanels(() => {
 					addEventListeners(document, 'mouseup touchend', stop);
 				},
 				dragConnection(state, event) {
+					// 反馈#93：连线按键可在 设置>键盘 中自定义（ac_create_connection）
+					if (!isTouchEvent(event) && !Keybinds.extra.ac_create_connection.keybind.isTriggered(event)) return;
 					state.select();
 					convertTouchEvent(event);
 					event.preventDefault();
@@ -2183,6 +2207,8 @@ Interface.definePanels(() => {
 						let existing = isApp && files[0].path && ParticleAsset.all.find(a => a.path === files[0].path);
 						Undo.initEdit({animation_controller_state: state, particles: existing ? [existing] : []});
 						let asset = ParticleAsset.importFromFile(files[0]);
+						// Property.copy replaces array items during initEdit; re-find by uuid
+						particle_entry = state.particles.find(p => p.uuid == particle_entry.uuid) || particle_entry;
 						particle_entry.file = asset.getRef();
 						if (!particle_entry.effect) particle_entry.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
 						Undo.finishEdit('Change animation controller particle file', {particles: [asset]});
@@ -2207,6 +2233,8 @@ Interface.definePanels(() => {
 							Undo.cancelEdit();
 							return;
 						}
+						// Property.copy replaces array items during initEdit; re-find by uuid
+						sound_entry = state.sounds.find(s => s.uuid == sound_entry.uuid) || sound_entry;
 						sound_entry.file = asset.getRef();
 						if (!sound_entry.effect) sound_entry.effect = files[0].name.toLowerCase().replace(/\.[a-z]+$/, '').replace(/[^a-z0-9._]+/g, '');
 						Undo.finishEdit('Change animation controller audio file', {sounds: [asset]})
@@ -2464,12 +2492,13 @@ Interface.definePanels(() => {
 									<i v-if="state.fold.on_entry" class="icon-open-state fa fa-angle-right"></i>
 									<i v-else class="icon-open-state fa fa-angle-down"></i>
 									<label>${tl('animation_controllers.state.on_entry')}</label>
-									<span class="controller_state_section_info" v-if="state.on_entry">{{ state.on_entry.split('\\n').length }}</span>
+									<span class="controller_state_section_info" v-if="getScriptLineCount(state.on_entry)">{{ getScriptLineCount(state.on_entry) }}</span>
 								</div>
 								<vue-prism-editor
 									v-if="!state.fold.on_entry"
 									class="molang_input animation_controller_text_input tab_target"
-									v-model="state.on_entry"
+									:code="state.on_entry"
+									@change="updateStateScript(state, 'on_entry', $event)"
 									language="molang"
 									@contextmenu.stop="openMolangContextMenu($event, state, state, 'on_entry')"
 									:autocomplete="autocomplete"
@@ -2481,12 +2510,13 @@ Interface.definePanels(() => {
 									<i v-if="state.fold.on_exit" class="icon-open-state fa fa-angle-right"></i>
 									<i v-else class="icon-open-state fa fa-angle-down"></i>
 									<label>${tl('animation_controllers.state.on_exit')}</label>
-									<span class="controller_state_section_info" v-if="state.on_exit">{{ state.on_exit.split('\\n').length }}</span>
+									<span class="controller_state_section_info" v-if="getScriptLineCount(state.on_exit)">{{ getScriptLineCount(state.on_exit) }}</span>
 								</div>
 								<vue-prism-editor
 									v-if="!state.fold.on_exit"
 									class="molang_input animation_controller_text_input tab_target"
-									v-model="state.on_exit"
+									:code="state.on_exit"
+									@change="updateStateScript(state, 'on_exit', $event)"
 									language="molang"
 									@contextmenu.stop="openMolangContextMenu($event, state, state, 'on_exit')"
 									:autocomplete="autocomplete"
@@ -2625,6 +2655,31 @@ Object.defineProperty(AnimationItem, 'selected', {
 })
 
 BARS.defineActions(function() {
+	// 反馈#93：AC 面板画布的鼠标操作接入 Keybind 体系，可在 设置>键盘 中自定义。默认键位与原有硬编码行为一致。
+	// 修饰键默认用具体 false 而非 null，否则该修饰键会被锁定为“忽略”，用户无法在键盘设置里录制带修饰键的组合。
+	new KeybindItem('ac_move_state', {
+		category: 'animation',
+		keybind: new Keybind({key: 1}, {multi_select: 'ctrl'}),
+		variations: {
+			multi_select: {name: 'keybind.ac_move_state.multi_select'},
+		}
+	})
+	new KeybindItem('ac_pan_canvas', {
+		category: 'animation',
+		keybind: new Keybind({key: 1})
+	})
+	new KeybindItem('ac_box_select', {
+		category: 'animation',
+		keybind: new Keybind({key: 1, shift: true})
+	})
+	new KeybindItem('ac_create_connection', {
+		category: 'animation',
+		keybind: new Keybind({key: 1})
+	})
+	new KeybindItem('ac_adjust_curvature', {
+		category: 'animation',
+		keybind: new Keybind({key: 1})
+	})
 	new Action('add_animation_controller', {
 		icon: 'post_add',
 		category: 'animation',
