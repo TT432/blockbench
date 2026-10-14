@@ -2041,6 +2041,11 @@
 	"action.set_collection_content_to_selection.desc": "Set the selected groups and elements as the content of the collection",
 	"action.add_to_collection": "Add Selected to Collection",
 	"action.add_to_collection.desc": "Add the selected groups and elements to the collection",
+	"action.export_collections": "Export Collection Data",
+	"action.export_collections.desc": "Export all collections of this project to a JSON file",
+	"action.import_collections": "Import Collection Data",
+	"action.import_collections.desc": "Import collections from a collection data JSON file",
+	"action.isolate_collection": "Isolate Collection",
 
 	"action.adjust_brightness_contrast": "Adjust Brightness & Contrast...",
 	"action.adjust_brightness_contrast.desc": "Adjust the brightness and contrast of the selected texture",
