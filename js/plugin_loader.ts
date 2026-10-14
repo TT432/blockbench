@@ -24,7 +24,7 @@ export const Plugins = {
 	 * Data about which plugins are installed
 	 */
 	installed: [] as PluginInstallation[],
-	json: undefined,
+	json: undefined as Record<string, PluginOptions> | undefined,
 	download_stats: {} as Record<string, number>,
 	update_info: undefined as Record<string, {version: string, created: number, updated: number}> | undefined,
 	/**
@@ -35,9 +35,23 @@ export const Plugins = {
 	currently_loading: '',
 	loading_promise: null as null | Promise<void>,
 	/**
-	 * The currently used path to the plugin API
+	 * The currently used path to the official plugin API
 	 */
 	api_path: settings.cdn_mirror.value ? 'https://blckbn.ch/cdn/plugins' : 'https://cdn.jsdelivr.net/gh/JannisX11/blockbench-plugins/plugins',
+	/**
+	 * All plugin registry sources. The store merges the manifests of all sources; official wins on id conflicts.
+	 */
+	sources: {
+		official: {
+			api_path: settings.cdn_mirror.value ? 'https://blckbn.ch/cdn/plugins' : 'https://cdn.jsdelivr.net/gh/JannisX11/blockbench-plugins/plugins',
+			updates_url: 'https://cdn.jsdelivr.net/gh/JannisX11/blockbench-plugins/updates.json',
+			official: true,
+		},
+		community: {
+			api_path: 'https://cdn.jsdelivr.net/gh/TT432/blockbench-plugins/plugins',
+			updates_url: 'https://cdn.jsdelivr.net/gh/TT432/blockbench-plugins/updates.json',
+		},
+	} as Record<string, PluginRegistrySource>,
 	path: '',
 	/**
 	 * Plugin files saved on install, so the web app has its own copy the way the desktop app keeps one on disk
@@ -116,6 +130,13 @@ let session_plugin_installations = 0;
 
 type PluginVariant = 'desktop'|'web'|'both';
 type PluginSource = 'store'|'file'|'url';
+type PluginRegistrySource = {
+	api_path: string
+	updates_url?: string
+	official?: boolean
+	/** Set when the last manifest fetch failed; protects installed plugins of this source from auto-uninstall */
+	failed?: boolean
+}
 type PluginDetails = {
 	version: string,
 	last_modified: string,
@@ -138,6 +159,7 @@ type PluginInstallation = {
 	version: string
 	path: string
 	source: PluginSource
+	source_id?: string
 	dependencies?: string[]
 	disabled?: boolean
 }
@@ -222,6 +244,10 @@ interface PluginOptions {
 	contributors?: string[]
 	disabled?: boolean
 	/**
+	 * Registry source this entry came from; set internally by the manifest merge, not by registry files
+	 */
+	source_id?: string
+	/**
 	 * Runs when the plugin loads
 	 */
 	onload?(): void
@@ -264,6 +290,10 @@ export class Plugin {
 	repository: string
 	bug_tracker: string
 	source: PluginSource = 'store';
+	/**
+	 * ID of the registry source (key of Plugins.sources) this store plugin comes from
+	 */
+	source_id: string = 'official';
 	creation_date: number = 0
 	/**
 	 * Can be used to specify which features a plugin adds. This allows Blockbench to be aware of and suggest even plugins that are not installed.
@@ -326,6 +356,7 @@ export class Plugin {
 		Merge.string(this, data, 'website')
 		Merge.string(this, data, 'repository')
 		Merge.string(this, data, 'bug_tracker')
+		Merge.string(this, data, 'source_id')
 		Merge.boolean(this, data, 'await_loading');
 		Merge.boolean(this, data, 'has_changelog');
 		Merge.boolean(this, data, 'disabled');
@@ -389,8 +420,11 @@ export class Plugin {
 		Plugins.registered[this.id] = this;
 		return await new Promise<void>((resolve, reject) => {
 			let path = Plugins.path + scope.id + '.js';
-			if (!isApp && this.new_repository_format)  {
-				path = `${Plugins.path}${scope.id}/${scope.id}.js`;
+			if (!isApp && this.source == 'store')  {
+				let source_path = this.getSourceApiPath() + '/';
+				path = this.new_repository_format
+					? `${source_path}${scope.id}/${scope.id}.js`
+					: source_path + scope.id + '.js';
 			}
 			let loading = (!isApp && this.source == 'store')
 				? this.#runCachedFile(path)
@@ -483,7 +517,7 @@ export class Plugin {
 
 		var scope = this;
 		function register() {
-			if (!Plugins.json[scope.id]) return;
+			if (scope.source_id != 'official' || !Plugins.json[scope.id]) return;
 			jQuery.ajax({
 				url: 'https://blckbn.ch/api/event/install_plugin',
 				type: 'POST',
@@ -500,7 +534,7 @@ export class Plugin {
 
 		// Download files
 		async function copyFileToDrive(origin_filename?: string, target_filename?: string, end_callback?: () => void) {
-			let url = Plugins.api_path+'/'+origin_filename;
+			let url = scope.getSourceApiPath()+'/'+origin_filename;
 			await new Promise<void>((resolve, reject) => {
 				https.get(url, function(response) {
 					if (!(response.statusCode >= 200 && response.statusCode < 300)) {
@@ -665,6 +699,7 @@ export class Plugin {
 		entry.version = this.version;
 		entry.path = path;
 		entry.source = this.source;
+		entry.source_id = this.source == 'store' ? this.source_id : undefined;
 		entry.disabled = this.disabled ? true : undefined;
 		entry.dependencies = this.dependencies?.length ? this.dependencies.slice() : undefined;
 
@@ -854,6 +889,9 @@ export class Plugin {
 	hasImageIcon() {
 		return this.icon.endsWith('.png') || this.icon.endsWith('.svg');
 	}
+	getSourceApiPath(): string {
+		return Plugins.sources[this.source_id]?.api_path ?? Plugins.api_path;
+	}
 	getIcon() {
 		if (this.hasImageIcon()) {
 			if (isApp) {
@@ -863,7 +901,7 @@ export class Plugin {
 				if (this.source != 'store')
 					return this.path.replace(/\w+\.js$/, this.icon + (this.cache_version ? '?'+this.cache_version : ''));
 				}
-			return `${Plugins.api_path}/${this.id}/${this.icon}`;
+			return `${this.getSourceApiPath()}/${this.id}/${this.icon}`;
 		}
 		return this.icon;
 	}
@@ -885,7 +923,7 @@ export class Plugin {
 					console.error('failed to get about for plugin ' + this.id);
 				}
 			}
-			let url = `${Plugins.api_path}/${this.id}/about.md`;
+			let url = `${this.getSourceApiPath()}/${this.id}/about.md`;
 			let result = await fetch(url).catch(() => {
 				console.error('about.md missing for plugin ' + this.id);
 			});
@@ -915,7 +953,7 @@ export class Plugin {
 					console.error('failed to get changelog for plugin ' + this.id, err);
 				}
 			}
-			let url = `${Plugins.api_path}/${this.id}/changelog.json`;
+			let url = `${this.getSourceApiPath()}/${this.id}/changelog.json`;
 			let result = await fetch(url).catch(() => {
 				console.error('changelog.json missing for plugin ' + this.id);
 			});
@@ -964,7 +1002,7 @@ export class Plugin {
 			this.details[key] = date.short;
 			this.details[key + '_full'] = date.full;
 		}
-		if (this.source == 'store') {
+		if (this.source == 'store' && this.source_id == 'official') {
 			if (!this.details.bug_tracker) {
 				this.details.bug_tracker = `https://github.com/JannisX11/blockbench-plugins/issues/new?title=[${this.title.replace(/[+&]/g, 'and')}]`;
 			}
@@ -1130,53 +1168,88 @@ ExperimentalSettings.add(
 	'plugin_await_loading_timeout',
 	{type: 'number', label: 'Max plugin await-loading', description: 'Maximum time to wait for plugins to load before opening a project', min: 0.4, value: 2, step: 0.1}
 )
-Plugins.loading_promise = new Promise((resolve, reject) => {
+const {promise: plugin_loading_promise, resolve: resolve_plugin_loading} = Promise.withResolvers<void>();
+Plugins.loading_promise = plugin_loading_promise;
+{
 	const timeout_seconds = ExperimentalSettings.get('plugin_load_timeout') as number ?? 10;
-	$.ajax({
-		cache: false,
-		url: Plugins.api_path+'.json',
-		timeout: 1_000 * timeout_seconds,
-		dataType: 'json',
-		success(data) {
-			Plugins.json = data;
+	const timeout_ms = 1_000 * timeout_seconds;
+	const source_ids = Object.keys(Plugins.sources);
+	let pending = source_ids.length;
+	let merged: Record<string, PluginOptions> = {};
+	let any_success = false;
 
-			resolve();
-			Plugins.loading_promise = null;
-			
+	function onSourceSettled() {
+		pending--;
+		if (pending > 0) return;
+		if (any_success) {
+			Plugins.json = merged;
+		}
+		resolve_plugin_loading();
+		Plugins.loading_promise = null;
+
+		for (let sid of source_ids) {
+			let source = Plugins.sources[sid];
+			if (source.failed || !source.updates_url) continue;
 			$.ajax({
 				cache: false,
-				url: 'https://cdn.jsdelivr.net/gh/JannisX11/blockbench-plugins/updates.json',
-				timeout: 1_000 * timeout_seconds,
+				url: source.updates_url,
+				timeout: timeout_ms,
 				dataType: 'json',
 				success(data) {
-					Plugins.update_info = data;
-					resolve();
+					Plugins.update_info ??= {};
+					for (let id in data) {
+						if (!(id in Plugins.update_info)) Plugins.update_info[id] = data[id];
+					}
 				},
 				error(response, type) {
 					console.error('Failed to load plugin updates data', type, response)
 				}
 			});
-		},
-		error(response, type) {
-			console.error('Could not connect to plugin server:', type, response)
-			resolve();
-			Plugins.loading_promise = null;
-
-			if (settings.cdn_mirror.value == false && navigator.onLine) {
-				settings.cdn_mirror.set(true);
-				console.log('Switching to plugin CDN mirror. Restart to apply.');
-			}
-			if (Plugins.dialog) {
-				if (Plugins.dialog.content_vue) Plugins.dialog.content_vue._data.network_error = response.status;
-				Plugins.dialog.component.data.network_error = response.status;
-			}
 		}
-	});
+	}
+
+	for (let sid of source_ids) {
+		let source = Plugins.sources[sid];
+		$.ajax({
+			cache: false,
+			url: source.api_path+'.json',
+			timeout: timeout_ms,
+			dataType: 'json',
+			success(data) {
+				for (let id in data) {
+					if (merged[id]) {
+						console.warn(`Plugin id conflict: "${id}" from source "${sid}" ignored (already provided by source "${merged[id].source_id}")`);
+						continue;
+					}
+					data[id].source_id = sid;
+					merged[id] = data[id];
+				}
+				any_success = true;
+				onSourceSettled();
+			},
+			error(response, type) {
+				console.error(`Could not connect to plugin server (source "${sid}"):`, type, response)
+				source.failed = true;
+
+				if (source.official) {
+					if (settings.cdn_mirror.value == false && navigator.onLine) {
+						settings.cdn_mirror.set(true);
+						console.log('Switching to plugin CDN mirror. Restart to apply.');
+					}
+					if (Plugins.dialog) {
+						if (Plugins.dialog.content_vue) Plugins.dialog.content_vue._data.network_error = response.status;
+						Plugins.dialog.component.data.network_error = response.status;
+					}
+				}
+				onSourceSettled();
+			}
+		});
+	}
 	setTimeout(() => {
 		if (!Plugins.loading_promise) return;
 		console.warn(`Connecting to plugin API is taking longer than expected. Plugins will not load until a connection is made or the request times out after ${timeout_seconds} seconds.`)
 	}, 3000);
-})
+}
 
 $.getJSON('https://blckbn.ch/api/stats/plugins?weeks=2', data => {
 	Plugins.download_stats = data;
@@ -1313,13 +1386,18 @@ export async function loadInstalledPlugins() {
 					console.log(`🧩🛒 Loaded plugin "${installation.id}" from store`);
 
 				} else if (Plugins.json instanceof Object && navigator.onLine) {
-					console.log(`🧩 The plugin "${installation.id}" seems to no longer exist in the repository, uninstalling it instead.`);
-					Plugins.installed.remove(installation);
+					let installation_source = Plugins.sources[installation.source_id || 'official'];
+					if (installation_source?.failed) {
+						console.log(`🧩 The registry source "${installation.source_id || 'official'}" of plugin "${installation.id}" is unavailable, keeping it installed.`);
+					} else {
+						console.log(`🧩 The plugin "${installation.id}" seems to no longer exist in the repository, uninstalling it instead.`);
+						Plugins.installed.remove(installation);
+					}
 				}
 
 			} else if (installation.source == 'store') {
 				// Offline install store plugin
-				let plugin = new Plugin(installation.id, { version: installation.version });
+				let plugin = new Plugin(installation.id, { version: installation.version, source_id: installation.source_id });
 				let promise = plugin.load(false);
 				install_promises.push(promise);
 			} else {
