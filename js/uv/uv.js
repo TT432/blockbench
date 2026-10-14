@@ -92,6 +92,8 @@ export const UVEditor = {
 	sliders: {},
 	selected_element_faces: {},
 	previous_animation_frame: 1,
+	// #87：选中元素超过该数量时，UV 编辑器只显示贴图（逐个挂载组件会卡死界面）
+	max_displayed_elements: 250,
 	overlay_canvas: (() => {
 		let canvas = document.createElement('canvas');
 		canvas.classList.add('overlay_canvas');
@@ -4406,14 +4408,22 @@ Interface.definePanels(function() {
 						return (tex_coord / this.texture.width * this.inner_width + offset) + 'px';
 					}
 				},
-				getDisplayedUVElements() {
+			getDisplayedUVElements() {
 					if (this.mode == 'uv' || this.uv_overlay) {
-						return (this.display_uv === 'all_elements' || this.mode == 'paint')
-							 ? this.all_mappable_elements
-							 : this.mappable_elements;
+						if (this.display_uv === 'all_elements' || this.mode == 'paint') {
+							return this.all_mappable_elements;
+						}
+						// #87：超大选择集逐个挂载 UV 组件会卡死界面，超过上限只显示贴图本身
+						if (this.mappable_elements.length > UVEditor.max_displayed_elements) return [];
+						return this.mappable_elements;
 					} else {
 						return [];
 					}
+				},
+				isDisplayedUVElementsCapped() {
+					return (this.mode == 'uv' || this.uv_overlay)
+						&& this.display_uv !== 'all_elements' && this.mode != 'paint'
+						&& this.mappable_elements.length > UVEditor.max_displayed_elements;
 				},
 				getMeshFaceOutline(face) {
 					let coords = [];
@@ -5284,6 +5294,9 @@ Interface.definePanels(function() {
 								:mappable="mappable_elements_set.has(element)"
 								:revision="uv_revisions[element.uuid]"
 							></uv-editor-element>
+							<div v-if="isDisplayedUVElementsCapped()" style="position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); background: var(--color-back); opacity: 0.85; padding: 2px 8px; border-radius: 4px; pointer-events: none; white-space: nowrap;">
+								{{ tl('uv_editor.selection_cap_notice', [mappable_elements.length]) }}
+							</div>
 
 							<div id="uv_selection_frame" v-if="mode == 'uv' && isScalingAvailable()" :style="getUVSelectionFrameStyle()">
 								<div id="uv_rotate_handle" v-if="isRotatingAvailable()"

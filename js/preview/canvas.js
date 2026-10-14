@@ -518,10 +518,10 @@ export const Canvas = {
 		if (options.elements) {
 			let aspects = options.element_aspects || {};
 			options.elements.forEach(element => {
-				// TODO: No longer update all when visibility changes, but test in beta to catch issues
-				let update_all = !options.element_aspects || (aspects.visibility && element.visibility && !element.mesh.visible && !(element.constructor.animator));
+				// #87：可见性变化只更新可见性——隐藏期间几何/贴图/UV 仍被正常维护，无需全量重建
+				let update_all = !options.element_aspects;
 				let controller = element.constructor.preview_controller
-				
+
 				if (aspects.transform || update_all) {
 					controller.updateTransform(element);
 				}
@@ -534,7 +534,7 @@ export const Canvas = {
 				if ((aspects.uv || update_all)) {
 					if (controller.updateUV) controller.updateUV(element);
 				}
-				if ((aspects.painting_grid || aspects.geometry || aspects.transform || update_all) && Modes.paint && settings.painting_grid.value) {
+				if ((aspects.painting_grid || aspects.geometry || aspects.transform || aspects.visibility || update_all) && Modes.paint && settings.painting_grid.value) {
 					if (controller.updatePixelGrid) controller.updatePixelGrid(element);
 				}
 				if (aspects.visibility || update_all) {

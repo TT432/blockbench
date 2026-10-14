@@ -691,10 +691,10 @@ export function toggleElementProperty(key) {
 	} else {
 		state = !state
 	}
-	Undo.initEdit({
-		elements: affected,
-		mirror_modeling: false
-	})
+	Undo.initEdit(key === 'visibility'
+		? {elements: affected, mirror_modeling: false, element_fields: ['visibility']}
+		: {elements: affected, mirror_modeling: false}
+	)
 	affected.forEach(element => {
 		if (element[key] != undefined) {
 			element[key] = state;
@@ -895,7 +895,8 @@ SharedActions.add('select_all', {
 				}
 			}
 			selectable_elements.forEach(obj => {
-				obj.markAsSelected()
+				// #87：multiSelect 已选中子树，跳过避免 safePush 的 O(N²) includes
+				if (!obj.selected) obj.markAsSelected()
 			})
 			TickUpdates.selection = true;
 			Undo.finishSelection('Select all elements');
@@ -1220,15 +1221,16 @@ BARS.defineActions(function() {
 			let enabled = !Project.only_hidden_elements;
 
 			if (Project.only_hidden_elements) {
-				let affected = Project.elements.filter(el => typeof el.visibility == 'boolean' && Project.only_hidden_elements.includes(el.uuid));
-				Undo.initEdit({elements: affected})
+				let hidden_set = new Set(Project.only_hidden_elements);
+				let affected = Project.elements.filter(el => typeof el.visibility == 'boolean' && hidden_set.has(el.uuid));
+				Undo.initEdit({elements: affected, element_fields: ['visibility']})
 				affected.forEach(el => {
 					el.visibility = true;
 				})
 				delete Project.only_hidden_elements;
 			} else {
 				let affected = Project.elements.filter(el => typeof el.visibility == 'boolean' && !el.selected && el.visibility);
-				Undo.initEdit({elements: affected})
+				Undo.initEdit({elements: affected, element_fields: ['visibility']})
 				affected.forEach(el => {
 					el.visibility = false;
 				})

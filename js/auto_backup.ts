@@ -233,21 +233,38 @@ export const AutoBackup = {
 	 * whole model every interval stalls the UI for seconds.
 	 */
 	_backup_dirty: true,
+	// #87：备份的 compile+stringify 在大工程上是秒级长任务；用户正在交互时推迟到空闲，避免操作中途卡死
+	_last_input_time: 0,
+	_last_backup_time: 0,
 	backupProjectLoop(run_save: boolean = true) {
+		let interval = settings.recovery_save_interval.value as number;
 		if (run_save && AutoBackup._backup_dirty && Project && (Outliner.root.length || Project.textures.length)) {
+			// 最近 3 秒内有输入 → 推迟；但距离上次成功备份超过 3 个周期则强制执行（安全兜底）
+			let idle_enough = Date.now() - AutoBackup._last_input_time > 3000;
+			let overdue = Date.now() - AutoBackup._last_backup_time > Math.max(interval, 5) * 3000;
+			if (!idle_enough && !overdue && AutoBackup._last_backup_time) {
+				AutoBackup.loop_timeout = setTimeout(() => AutoBackup.backupProjectLoop(true), 2000);
+				return;
+			}
 			try {
 				AutoBackup.backupOpenProject();
 				AutoBackup._backup_dirty = false;
+				AutoBackup._last_backup_time = Date.now();
 			} catch (err) {
 				console.error('Unable to create backup. ', err)
 			}
 		}
-		let interval = settings.recovery_save_interval.value as number;
 		if (interval != 0) {
 			interval = Math.max(interval, 5);
 			AutoBackup.loop_timeout = setTimeout(() => AutoBackup.backupProjectLoop(true), interval * 1000);
 		}
 	}
+}
+// #87：跟踪用户输入时间，供备份空闲推迟判断
+for (let event_name of ['pointerdown', 'keydown', 'wheel']) {
+	document.addEventListener(event_name, () => {
+		AutoBackup._last_input_time = Date.now();
+	}, {capture: true, passive: true});
 }
 for (let event_name of ['finished_edit', 'undo', 'redo', 'load_undo_save', 'select_project', 'new_project']) {
 	Blockbench.on(event_name, () => {

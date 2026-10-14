@@ -163,8 +163,10 @@ export function updateSelection(options = {}) {
 			element.preview_controller.updateSelection(element);
 		}
 	})
+	// #87：Set 判定替代逐个 includes（O(N²) → O(N)）
+	let project_elements_set = new Set(Project.elements);
 	for (var i = Outliner.selected.length-1; i >= 0; i--) {
-		if (!Project.elements.includes(Outliner.selected[i])) {
+		if (!project_elements_set.has(Outliner.selected[i])) {
 			Outliner.selected.splice(i, 1)
 		}
 	}
@@ -240,10 +242,19 @@ export function unselectAllElements(exceptions) {
 		PreviewModel.transform_model = null;
 		ToastNotification.notifications.preview_model_transform?.delete();
 	}
-	Project.selected_elements.slice().forEach(obj => {
-		if (exceptions instanceof Array && exceptions.includes(obj)) return;
-		obj.unselect()
+	// #87：先批量置标志再一次性清空数组，避免每元素 indexOf+splice 的 O(N²)
+	let kept_exceptions = [];
+	Project.selected_elements.forEach(obj => {
+		if (exceptions instanceof Array && exceptions.includes(obj)) {
+			kept_exceptions.push(obj);
+			return;
+		}
+		obj.selected = false;
+		if (UVEditor.selected_element_faces[obj.uuid]) {
+			delete UVEditor.selected_element_faces[obj.uuid];
+		}
 	})
+	Project.selected_elements.replace(kept_exceptions);
 	for (let group of Group.multi_selected) {
 		group.unselect();
 	}
