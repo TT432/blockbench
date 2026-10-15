@@ -939,21 +939,11 @@ export function rotateOnAxis(modify, axis, slider) {
 				obj.rotation_axis = axis_letter
 			}
 		} else if (space == 2) {
-			if ([0, 1, 2].find(axis2 => axis2 !== axis && Math.abs(obj.rotation[axis2]) > 0.1) !== undefined) {
-				let old_order = mesh.rotation.order;
-				mesh.rotation.reorder(axis == 0 ? 'ZYX' : (axis == 1 ? 'ZXY' : 'XYZ'))
-				var obj_val = modify(Math.radToDeg(mesh.rotation[axis_letter]));
-				obj_val = Math.trimDeg(obj_val)
-				mesh.rotation[axis_letter] = Math.degToRad(obj_val);
-				mesh.rotation.reorder(old_order);
-	
-				obj.rotation[0] = Math.radToDeg(mesh.rotation.x);
-				obj.rotation[1] = Math.radToDeg(mesh.rotation.y);
-				obj.rotation[2] = Math.radToDeg(mesh.rotation.z);
-			} else {
-				var obj_val = modify(Math.radToDeg(mesh.rotation[axis_letter]));
-				obj.rotation[axis] = Math.trimDeg(obj_val);
-			}
+			// 反馈#104：统一为单分量累加。原实现在他轴 |角度|>0.1° 时走「欧拉序重排→改被拖分量→重排回」
+			// 并写回全部三个分量（数学上等价于绕局部轴旋转），导致只拖一个环却出现 2-3 个轴有数值，
+			// 且与阈值另一侧的单分量路径是两种不同旋转——同一操作偶发两种结果。
+			var obj_val = modify(Math.radToDeg(mesh.rotation[axis_letter]));
+			obj.rotation[axis] = Math.trimDeg(obj_val);
 
 		} else if (space instanceof OutlinerNode) {
 			let normal = axis == 0 ? THREE.NormalX : (axis == 1 ? THREE.NormalY : THREE.NormalZ)

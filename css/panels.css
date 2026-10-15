@@ -622,6 +622,17 @@
 		margin-left: 10px;
 		border-left: 2px solid var(--color-guidelines);
 		pointer-events: none;
+		display: none;
+	}
+	/* #87：line_guide 显隐由 CSS 按命令式维护的 selected/directly_selected class 驱动（原 v-if 会让选中变化触发整树重渲染） */
+	#cubes_list .outliner_node:has(> .outliner_object.selected:not(.group)) > ul > .outliner_line_guide {
+		display: block;
+	}
+	#cubes_list .outliner_node:has(> .outliner_object.selected) > ul > .outliner_node:has(> .outliner_object.selected:not(.group)) > ul > .outliner_line_guide {
+		display: none;
+	}
+	#cubes_list .outliner_node:has(> .outliner_object.directly_selected) > ul > .outliner_line_guide {
+		display: block;
 	}
 	.drag_hover[order]::before {
 		content: '';
@@ -781,13 +792,14 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		min-width: 0;
+		min-width: 56px;
+		flex-shrink: 10;
 	}
 	.collection_content_list {
 		display: flex;
 		gap: 4px;
 		overflow: hidden;
-		flex-shrink: 100;
+		flex-shrink: 1;
 		min-width: 0;
 	}
 	.collection_content_list > li {
@@ -802,10 +814,14 @@
 		white-space: nowrap;
 	}
 	.collection_content_list > li > i {
-		scale: 0.9;
+		font-size: 14px;
+		line-height: 18px;
+		height: 18px;
+		width: 16px;
+		text-align: center;
 	}
 	.collection_content_list > li > i.fa_big {
-		transform-origin: bottom;
+		font-size: 13px;
 	}
 	.collection i.toggle_disabled {
 		color: var(--color-subtle_text);

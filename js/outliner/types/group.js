@@ -73,6 +73,30 @@ export class Group extends OutlinerNode {
 		let multi_select = (event.ctrlOrCmd || Pressing.overrides.ctrl);
 
 		// 反馈#43：组的 shift 范围多选已移除（多选只保留 ctrl），shift+点击等同普通点击。
+		// 反馈#105：恢复受限版——仅当锚点与目标是同层级节点时，shift+点击范围选中区间内的全部同层级节点
+		if ((event.shiftKey === true || Pressing.overrides.shift) && is_outliner_click) {
+			let anchor = Outliner.selected.last() || Group.multi_selected.last();
+			if (anchor && anchor !== this && anchor.parent === this.parent) {
+				let siblings = this.parent === 'root' ? Outliner.root : this.parent.children;
+				let i1 = siblings.indexOf(anchor);
+				let i2 = siblings.indexOf(this);
+				if (i1 >= 0 && i2 >= 0) {
+					let [from, to] = i1 < i2 ? [i1, i2] : [i2, i1];
+					siblings.slice(from, to + 1).forEach(node => {
+						if (node instanceof Group) {
+							node.selected = true;
+							node.directly_selected = true;
+							Group.multi_selected.safePush(node);
+							node.children.forEach(c => c.markAsSelected(true));
+						} else {
+							node.markAsSelected(true);
+						}
+					})
+					updateSelection();
+					return this;
+				}
+			}
+		}
 		//Unselect others
 		if (!multi_select) {
 			unselectAllElements();
@@ -531,6 +555,7 @@ Group.addBehaviorOverride({
 		'add_locator',
 		new MenuSeparator('manage'),
 		'resolve_group',
+		'delete_empty_groups',
 		'rename',
 		'delete'
 	]);
@@ -1008,6 +1033,24 @@ BARS.defineActions(function() {
 				all_groups.remove(group);
 			}
 			Undo.finishEdit('Resolve group');
+		}
+	})
+	// 反馈#105：一键删除选中的空分组（没有任何子内容的组）
+	new Action('delete_empty_groups', {
+		icon: 'delete_sweep',
+		category: 'edit',
+		condition: {modes: ['edit', 'paint'], method: () => Group.all.some(g => g.selected && !g.children.length)},
+		click() {
+			let empty_groups = Group.all.filter(g => g.selected && !g.children.length);
+			if (!empty_groups.length) return;
+			// 对齐 SharedActions delete 的写法：initEdit 传引用、finishEdit 前 empty() 标记删除后状态
+			Undo.initEdit({outliner: true, groups: empty_groups, selection: true});
+			for (let group of empty_groups.slice()) {
+				group.remove(false);
+			}
+			empty_groups.empty();
+			Undo.finishEdit('Delete empty groups');
+			updateSelection();
 		}
 	})
 })

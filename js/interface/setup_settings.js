@@ -290,6 +290,8 @@ function setupSettings() {
 		step: 'action.keyframe_interpolation.step',
 	}});
 	new Setting('uniform_keyframe',					{category: 'defaults', value: true});
+	// #88：导入动画时是否自动为 molang 变量生成占位符控件（默认关，避免中间变量刷屏；手动编写的行不受影响）
+	new Setting('animation_auto_variable_placeholders', {category: 'defaults', value: false});
 	
 	//Dialogs
 	new Setting('new_project_dialog',		{category: 'dialogs', value: true});

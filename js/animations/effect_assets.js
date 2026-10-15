@@ -771,7 +771,8 @@ Interface.definePanels(function() {
 		icon: 'wand_shine',
 		growable: true,
 		resizable: true,
-		condition: {modes: ['edit', 'paint', 'animate'], method: () => !Format.image_editor},
+		// 反馈#111：粒子/声音面板只在动画模式出现
+		condition: {modes: ['animate'], method: () => !Format.image_editor},
 		default_position: {
 			slot: 'left_bar',
 			float_position: [0, 0],
@@ -834,13 +835,15 @@ Interface.definePanels(function() {
 		icon: 'music_note',
 		growable: true,
 		resizable: true,
-		condition: {modes: ['edit', 'paint', 'animate'], method: () => !Format.image_editor},
+		// 反馈#111：粒子/声音面板只在动画模式出现，默认与粒子面板合并为一组卡片
+		condition: {modes: ['animate'], method: () => !Format.image_editor},
 		default_position: {
 			slot: 'left_bar',
 			float_position: [0, 0],
 			float_size: [300, 300],
 			height: 300,
 			sidebar_index: 6,
+			attached_to: 'particles',
 		},
 		toolbars: [
 			new Toolbar('sound_asset_list', {

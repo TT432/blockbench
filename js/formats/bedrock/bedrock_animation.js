@@ -122,6 +122,14 @@ export const animation_codec = new AnimationCodec('bedrock', {
 						: string
 		}
 		if (!json) return new_animations;
+		// #88：文件级赋值扫描——任一动画/控制器内被赋值的变量都视为中间变量（跨动画赋值时单动画扫不到）
+		let file_assigned_variables = new Set();
+		let file_source = JSON.stringify(json.animations || {}).toLowerCase();
+		let file_assignment_regex = /(?:variable|temp|v|t)\.(\w+)\s*=(?!=)/g;
+		let file_assignment_match;
+		while ((file_assignment_match = file_assignment_regex.exec(file_source)) !== null) {
+			file_assigned_variables.add(file_assignment_match[1]);
+		}
 		if (typeof json.animations === 'object') {
 			for (let ani_name in json.animations) {
 				if (animation_filter && !animation_filter.includes(ani_name)) continue;
@@ -160,12 +168,17 @@ export const animation_codec = new AnimationCodec('bedrock', {
 					];
 					function processPlaceholderVariables(text) {
 						if (typeof text !== 'string') return;
-						text = text.replace(/v\./, 'variable.').replace(/q\./, 'query.').replace(/t\./, 'temp.').replace(/c\./, 'context.').toLowerCase();
-						let matches = text.match(/(query|variable|context|temp)\.\w+(\([^)]*\))?/gi);
+						// #88：自动生成占位符控件为可选项，默认关闭
+						if (!Settings.get('animation_auto_variable_placeholders')) return;
+						text = text.replace(/(^|\W)v\./g, '$1variable.').replace(/(^|\W)q\./g, '$1query.').replace(/(^|\W)t\./g, '$1temp.').replace(/(^|\W)c\./g, '$1context.').toLowerCase();
+						// #88：点分命名空间引用（如 variable.roaming.eyes）不匹配任何标量控件，完整保留供后续跳过
+						let matches = text.match(/(query|variable|context|temp)\.\w+(\.\w+)*(\([^)]*\))?/gi);
 						if (!matches) return;
 						matches.forEach(match => {
 							let panel_vue = Interface.Panels.variable_placeholders.inside_vue;
 							if (existing_variables.includes(match)) return;
+							// #88：命名空间引用（多段点分）没有对应标量控件，跳过
+							if (match.split('.').length > 2 && !match.includes('(')) return;
 							if (panel_vue.text.split('\n').find(line => line.substr(0, match.length) == match)) return;
 
 							let [space, name] = match.split(/\./);
@@ -215,14 +228,8 @@ export const animation_codec = new AnimationCodec('bedrock', {
 							return points;
 						}
 					}
-					// #88：先扫本动画的全部赋值左值（variable.x = ...），中间变量不生成占位符
-					let assigned_variables = new Set();
-					let animation_source = JSON.stringify(a).toLowerCase();
-					let assignment_regex = /(?:variable|temp|v|t)\.(\w+)\s*=(?!=)/g;
-					let assignment_match;
-					while ((assignment_match = assignment_regex.exec(animation_source)) !== null) {
-						assigned_variables.add(assignment_match[1]);
-					}
+					// #88：赋值扫描在文件级完成（loadFile 开头），这里直接引用
+					let assigned_variables = file_assigned_variables;
 					for (var bone_name in a.bones) {
 						var b = a.bones[bone_name]
 						let lowercase_bone_name = bone_name.toLowerCase();

@@ -1066,6 +1066,11 @@ export const TextureGenerator = {
 			if (makeTexture instanceof Texture) {
 				extend_x = makeTexture.width / res_multiple;
 				extend_y = makeTexture.height / res_multiple;
+				if (options.clear_unreferenced) {
+					// Snapshot the cells still referenced by faces, so pixels left behind by
+					// deleted elements can be cleared from the canvas before redrawing
+					append_occupancy_snapshot = {};
+				}
 				let affected_elements = Outliner.elements.filter(el => el.faces);
 				affected_elements.forEach(element => {
 					for (let fkey in element.faces) {
@@ -1084,19 +1089,23 @@ export const TextureGenerator = {
 								if (face_matrix && !face_matrix[x][y]) continue;
 								if (!fill_map[x]) fill_map[x] = {};
 								fill_map[x][y] = true;
+								if (append_occupancy_snapshot) {
+									if (!append_occupancy_snapshot[x]) append_occupancy_snapshot[x] = {};
+									append_occupancy_snapshot[x][y] = true;
+								}
+								// #103：填充选项下已有 UV 也向右/下外扩 1 格——新模板的填充只覆盖自身右/下侧，
+								// 不外扩的话新模板可以从左/上方向贴到旧 UV 上（没有 1px 间隙）
+								if (options.padding) {
+									if (!fill_map[x+1]) fill_map[x+1] = {};
+									fill_map[x+1][y] = true;
+									fill_map[x][y+1] = true;
+									fill_map[x+1][y+1] = true;
+								}
 							}
 						}
 						
 					}
 				})
-				if (options.clear_unreferenced) {
-					// Snapshot the cells still referenced by faces, so pixels left behind by
-					// deleted elements can be cleared from the canvas before redrawing
-					append_occupancy_snapshot = {};
-					for (let x in fill_map) {
-						append_occupancy_snapshot[x] = Object.assign({}, fill_map[x]);
-					}
-				}
 			}
 
 			

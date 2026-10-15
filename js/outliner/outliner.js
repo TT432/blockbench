@@ -25,6 +25,33 @@ export const Outliner = {
 	get nodes() {
 		return Project.groups.concat(Project.elements);
 	},
+	/**
+	 * #87：命令式把节点的 selected/visibility 状态同步到大纲 DOM。
+	 * 这些状态的 UI 更新不走 Vue 响应式（批量操作时数千节点逐个重渲染是大模型卡顿主因），
+	 * 统一在这里维护；节点组件 mounted/updated 时也会调用以保证 patch 后状态不丢。
+	 */
+	syncNodeDomState(node) {
+		if (!node || !node.uuid) return;
+		let li = document.getElementById(node.uuid);
+		if (!li) return;
+		let obj = li.querySelector(':scope > .outliner_object');
+		if (obj) {
+			obj.classList.toggle('selected', node.selected == true);
+			obj.classList.toggle('directly_selected', node.type == 'group' && node.directly_selected == true);
+			if (typeof node.visibility == 'boolean') {
+				let vis_btn = obj.querySelector(':scope .outliner_toggle[toggle="visibility"]');
+				if (vis_btn) {
+					vis_btn.classList.toggle('icon_off', !node.visibility);
+					let want = node.visibility ? 'visibility' : 'visibility_off';
+					if (!vis_btn.children.length && vis_btn.textContent != want) vis_btn.textContent = want;
+					vis_btn.title = tl('switches.visibility') + ': ' + tl(node.visibility ? 'generic.on' : 'generic.off');
+				}
+			}
+		}
+	},
+	syncAllNodeDomStates() {
+		for (let node of Outliner.nodes) Outliner.syncNodeDomState(node);
+	},
 	buttons: {
 		visibility: {
 			id: 'visibility',
@@ -1284,7 +1311,8 @@ Interface.definePanels(function() {
 			//Other Entries
 			'<ul v-if="node.children && node.isOpen">' +
 				'<vue-tree-item v-for="item in visible_children" :node="item" :depth="depth + 1" :options="options" :key="item.uuid"></vue-tree-item>' +
-				`<div class="outliner_line_guide" v-if="node.children && (node.type == 'group' ? node.directly_selected : (node.selected && !node.parent.selected))"></div>` +
+				// #87：恒渲染、由 CSS 按 selected/directly_selected 控制显隐——避免选中变化触发整树 Vue 重渲染
+				`<div class="outliner_line_guide" v-if="node.children"></div>` +
 			'</ul>' +
 		'</li>',
 		props: {
@@ -1313,7 +1341,7 @@ Interface.definePanels(function() {
 			getOutlinerNodeClasses(node) {
 				let classes = [];
 				if (node.type === 'group') classes.push('group');
-				if (node.selected == true) classes.push('selected');
+				// #87：selected class 由 Outliner.syncNodeDomState 命令式维护（批量选中时 1825+ 节点逐个触发 Vue 重渲染是大模型卡顿主因）
 				Blockbench.dispatchEvent('get_outliner_node_classes', {node, classes});
 				return classes;
 			},
@@ -1325,7 +1353,8 @@ Interface.definePanels(function() {
 				}
 			},
 			getButtonIcon: function (btn, node) {
-				let value = node.isIconEnabled(btn);
+				// #87：visibility 状态由 syncNodeDomState 命令式维护，render 不读 node.visibility（批量显隐不再触发整树重渲染）
+				let value = btn.id == 'visibility' ? true : node.isIconEnabled(btn);
 				let icon_string = '';
 				if (value === true) {
 					icon_string = typeof btn.icon == 'function' ? btn.icon(node) : btn.icon;
@@ -1337,7 +1366,7 @@ Interface.definePanels(function() {
 				return icon_string.trim().replace(/fa[rs]* /, '');
 			},
 			getButtonClasses: function (btn, node) {
-				let value = node.isIconEnabled(btn);
+				let value = btn.id == 'visibility' ? true : node.isIconEnabled(btn);
 				if (value === true) {
 					return ''
 				} else if (value === false) {
@@ -1347,7 +1376,7 @@ Interface.definePanels(function() {
 				}
 			},
 			getBtnTooltip: function (btn, node) {
-				let value = node.isIconEnabled(btn);
+				let value = btn.id == 'visibility' ? true : node.isIconEnabled(btn);
 				let text = btn.title + ': ';
 				if (value === true) {
 					return text + tl('generic.on');
@@ -1370,6 +1399,13 @@ Interface.definePanels(function() {
 			},
 			renameOutliner,
 			Condition
+		},
+		// #87：mount/patch 后命令式恢复 selected/visibility 的 DOM 状态（这些状态不再走响应式 render）
+		mounted() {
+			Outliner.syncNodeDomState(this.node);
+		},
+		updated() {
+			Outliner.syncNodeDomState(this.node);
 		}
 	});
 	Vue.component('vue-tree-item', VueTreeItem);
@@ -1739,6 +1775,7 @@ Interface.definePanels(function() {
 			new MenuSeparator('manage'),
 			'select_all',
 			'sort_outliner',
+			'delete_empty_groups',
 			'collapse_groups',
 			'unfold_groups',
 			'search_outliner',
