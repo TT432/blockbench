@@ -1858,6 +1858,29 @@ Interface.definePanels(() => {
 					if (!this.controller) return;
 					let tag = event.target.tagName;
 					if (tag == 'INPUT' || tag == 'TEXTAREA' || event.target.isContentEditable) return;
+					// 键盘平移视图（默认方向键，可在 设置>键盘 自定义）；方向语义与滚轮一致
+					let pan_step = 100;
+					if (Keybinds.extra.ac_pan_canvas_up.keybind.isTriggered(event)) {
+						event.preventDefault();
+						event.stopPropagation();
+						this.pan.y += pan_step;
+						return;
+					} else if (Keybinds.extra.ac_pan_canvas_down.keybind.isTriggered(event)) {
+						event.preventDefault();
+						event.stopPropagation();
+						this.pan.y -= pan_step;
+						return;
+					} else if (Keybinds.extra.ac_pan_canvas_left.keybind.isTriggered(event)) {
+						event.preventDefault();
+						event.stopPropagation();
+						this.pan.x += pan_step;
+						return;
+					} else if (Keybinds.extra.ac_pan_canvas_right.keybind.isTriggered(event)) {
+						event.preventDefault();
+						event.stopPropagation();
+						this.pan.x -= pan_step;
+						return;
+					}
 					if (event.key == 'Home' || event.code == 'NumpadDecimal') {
 						event.preventDefault();
 						event.stopPropagation();
@@ -2690,6 +2713,24 @@ BARS.defineActions(function() {
 	new KeybindItem('ac_adjust_curvature', {
 		category: 'animation',
 		keybind: new Keybind({key: 1})
+	})
+	// AC 画布视图的键盘平移接入 Keybind 体系（默认方向键，修饰键忽略），可在 设置>键盘 中自定义组合键。
+	// 方向语义与滚轮一致：按上 = 视图上移（内容下移）。
+	new KeybindItem('ac_pan_canvas_up', {
+		category: 'animation',
+		keybind: new Keybind({key: 38, ctrl: null, shift: null})
+	})
+	new KeybindItem('ac_pan_canvas_down', {
+		category: 'animation',
+		keybind: new Keybind({key: 40, ctrl: null, shift: null})
+	})
+	new KeybindItem('ac_pan_canvas_left', {
+		category: 'animation',
+		keybind: new Keybind({key: 37, ctrl: null, shift: null})
+	})
+	new KeybindItem('ac_pan_canvas_right', {
+		category: 'animation',
+		keybind: new Keybind({key: 39, ctrl: null, shift: null})
 	})
 	new Action('add_animation_controller', {
 		icon: 'post_add',
