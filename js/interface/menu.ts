@@ -602,7 +602,9 @@ export class Menu implements Deletable {
 				} else {
 					var icon = Blockbench.getIconNode(menu_item.icon, menu_item.color)
 				}
-				entry = Interface.createElement('li', {title: menu_item.description && tl(menu_item.description), menu_item: menu_item.id}, Interface.createElement('span', {}, tl(menu_item.name)));
+				// #78：带 color 的菜单项（颜色标记类）文字同步着色，圆圈与文字同色
+				let label_span = Interface.createElement('span', menu_item.color ? {style: `color: ${menu_item.color}`} : {}, tl(menu_item.name));
+				entry = Interface.createElement('li', {title: menu_item.description && tl(menu_item.description), menu_item: menu_item.id}, label_span);
 				entry.prepend(icon);
 				if (menu_item.marked && Condition(menu_item.marked, scope_context)) {
 					entry.classList.add('marked');
