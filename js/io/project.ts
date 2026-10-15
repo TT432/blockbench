@@ -727,7 +727,7 @@ ModelProject.prototype.menu = new Menu([
 			let items = [{id: 'new_tab_group', name: 'menu.tab_group.create', icon: 'add', click: () => addProjectToTabGroup(project, new TabGroup())}];
 			for (let group of TabGroup.all) {
 				// 带参数（组名）的文案在打开菜单时预翻译，其余交给 Menu 渲染时惰性翻译
-				items.push({id: 'add_to_tab_group_' + group.uuid, name: tl('menu.tab_group.add_to', [group.displayName]), icon: 'circle', click: () => addProjectToTabGroup(project, group)});
+				items.push({id: 'add_to_tab_group_' + group.uuid, name: tl('menu.tab_group.add_to', [group.displayName]), icon: 'circle', color: TAB_GROUP_COLORS[group.color], click: () => addProjectToTabGroup(project, group)});
 			}
 			return items;
 		}
@@ -799,6 +799,7 @@ export class TabGroup {
 				id: color,
 				name: tl('tab_group.color.' + color),
 				icon: scope.color == color ? 'check' : 'circle',
+				color: TAB_GROUP_COLORS[color],
 				click: () => scope.setColor(color)
 			}))},
 			'_',
