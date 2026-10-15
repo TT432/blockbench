@@ -118,6 +118,7 @@
 	"dialog.sequence_frames.frame_width": "单帧宽度（像素）",
 	"dialog.sequence_frames.frame_height": "单帧高度（像素）",
 	"dialog.sequence_frames.frame_count": "总帧数",
+	"dialog.sequence_frames.single_face": "仅顶面显示序列帧（单面导入）",
 	"dialog.sequence_frames.group_name": "生成的组的组名",
 	"dialog.sequence_frames.texture": "目标贴图",
 	"dialog.sequence_frames.texture.new": "新建贴图",
