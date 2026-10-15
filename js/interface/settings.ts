@@ -541,6 +541,9 @@ export const Settings = {
 				setting.set(data.settings[key]);
 			}
 		}
+		if (data.layout && typeof data.layout == 'object') {
+			applyLayoutSettings(data.layout);
+		}
 	},
 	/**
 	 * Returns the value of the specified setting

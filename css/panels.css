@@ -596,6 +596,11 @@
 	.outliner_object:hover {
 		color: var(--color-light);
 	}
+	/* #78：组行文字与折叠指示跟随标记色（行图标已由 dynamic-icon 着色） */
+	div.outliner_object > i.icon-open-state,
+	div.outliner_object > input.cube_name:not(.locked) {
+		color: var(--color-marker, inherit);
+	}
 	#cubes_list.drag_hover > li:last-child {
 		position: relative;
 	}
@@ -2042,7 +2047,7 @@
 #animation_controllers_wrapper {
 	flex-grow: 1;
 	background-color: var(--color-back);
-	overflow: hidden;
+	overflow: clip;
 	position: relative;
 }
 #animation_controller_presets {

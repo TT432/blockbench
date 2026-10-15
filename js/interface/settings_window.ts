@@ -82,7 +82,7 @@ BARS.defineActions(() => {
 				resource_id: 'config',
 				type: 'Blockbench Settings',
 				extensions: ['bbsettings'],
-				content: compileJSON({settings: settings_copy})
+				content: compileJSON({settings: settings_copy, layout: getLayoutSettings()})
 			})
 		}
 	})

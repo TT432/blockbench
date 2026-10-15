@@ -1245,7 +1245,7 @@ Interface.definePanels = function(callback) {
 	Interface.panel_definers.push(callback);
 };
 
-const StoredPanelData: Record<string, Record<string, PanelPositionData>> = {};
+const StoredPanelData: Record<string, Record<string, Partial<PanelPositionData>>> = {};
 try {
 	let data = JSON.parse(localStorage.getItem('panel_customization'));
 	if (data && typeof data == 'object') {
@@ -1257,6 +1257,184 @@ try {
 		});
 	}
 } catch (err) {}
+
+type InterfaceModeLayoutData = {
+	left_bar_width?: number
+	right_bar_width?: number
+}
+const INTERFACE_LAYOUT_NUMBER_KEYS = ['left_bar_width', 'right_bar_width', 'quad_view_x', 'quad_view_y', 'timeline_head', 'start_screen_width'] as const;
+type InterfaceLayoutData = {
+	[K in typeof INTERFACE_LAYOUT_NUMBER_KEYS[number]]?: number
+} & {
+	modes: Record<string, InterfaceModeLayoutData>
+}
+type LayoutSettingsData = {
+	version: 1
+	interface_data: InterfaceLayoutData
+	panel_customization: Record<string, Record<string, Partial<PanelPositionData>>>
+	toolbars: Record<string, string[]>
+}
+const PANEL_SLOTS: PanelSlot[] = ['left_bar', 'right_bar', 'top', 'bottom', 'float', 'hidden'];
+
+function sanitizePanelPositionData(data: unknown, panel_id: string): Partial<PanelPositionData> {
+	if (!data || typeof data != 'object' || Array.isArray(data)) return {};
+	let result: Partial<PanelPositionData> = {};
+	if ('slot' in data) {
+		let slot = PANEL_SLOTS.find(slot => slot == data.slot);
+		if (slot) result.slot = slot;
+	}
+	if ('float_position' in data) {
+		let value = data.float_position;
+		if (Array.isArray(value) && value.length >= 2 && value.every((item: unknown) => typeof item == 'number' && isFinite(item))) {
+			result.float_position = [value[0], value[1]];
+		}
+	}
+	if ('float_size' in data) {
+		let value = data.float_size;
+		if (Array.isArray(value) && value.length >= 2 && value.every((item: unknown) => typeof item == 'number' && isFinite(item) && item > 0)) {
+			result.float_size = [value[0], value[1]];
+		}
+	}
+	if ('height' in data && typeof data.height == 'number' && isFinite(data.height) && data.height >= 0) result.height = data.height;
+	if ('sidebar_index' in data && typeof data.sidebar_index == 'number' && isFinite(data.sidebar_index)) result.sidebar_index = data.sidebar_index;
+	if ('attached_index' in data && typeof data.attached_index == 'number' && isFinite(data.attached_index)) result.attached_index = data.attached_index;
+	if ('folded' in data && typeof data.folded == 'boolean') result.folded = data.folded;
+	if ('fixed_height' in data && typeof data.fixed_height == 'boolean') result.fixed_height = data.fixed_height;
+	if ('attached_to' in data && typeof data.attached_to == 'string' && data.attached_to && data.attached_to != panel_id && Panels[data.attached_to] && !Panels[data.attached_to].plugin) {
+		result.attached_to = data.attached_to;
+	}
+	if ('open_tab' in data && typeof data.open_tab == 'string' && data.open_tab && data.open_tab != panel_id && Panels[data.open_tab] && !Panels[data.open_tab].plugin) {
+		result.open_tab = data.open_tab;
+	}
+	return result;
+}
+function sanitizeInterfaceData(data: unknown): InterfaceLayoutData {
+	let result: InterfaceLayoutData = {modes: {}};
+	if (!data || typeof data != 'object' || Array.isArray(data)) return result;
+	for (let key of INTERFACE_LAYOUT_NUMBER_KEYS) {
+		if (!(key in data)) continue;
+		let value = data[key];
+		if (typeof value == 'number' && isFinite(value) && value >= 0) result[key] = value;
+	}
+	if ('modes' in data && data.modes && typeof data.modes == 'object' && !Array.isArray(data.modes)) {
+		for (let mode_id in data.modes) {
+			let mode_data = data.modes[mode_id];
+			if (!mode_data || typeof mode_data != 'object' || Array.isArray(mode_data)) continue;
+			let sanitized_mode: InterfaceModeLayoutData = {};
+			if ('left_bar_width' in mode_data && typeof mode_data.left_bar_width == 'number' && isFinite(mode_data.left_bar_width) && mode_data.left_bar_width >= 0) {
+				sanitized_mode.left_bar_width = mode_data.left_bar_width;
+			}
+			if ('right_bar_width' in mode_data && typeof mode_data.right_bar_width == 'number' && isFinite(mode_data.right_bar_width) && mode_data.right_bar_width >= 0) {
+				sanitized_mode.right_bar_width = mode_data.right_bar_width;
+			}
+			if (Object.keys(sanitized_mode).length) result.modes[mode_id] = sanitized_mode;
+		}
+	}
+	return result;
+}
+function sanitizeToolbarItems(items: unknown): string[] | undefined {
+	if (!Array.isArray(items)) return undefined;
+	let result: string[] = [];
+	items.forEach((item: unknown) => {
+		let item_id: string | undefined;
+		if (typeof item == 'string') {
+			item_id = item;
+		} else if (item && typeof item == 'object' && 'id' in item && typeof item.id == 'string') {
+			item_id = item.id;
+		}
+		if (!item_id) return;
+		if (item_id.match(/^[_+#]/)) {
+			result.push(item_id.substring(0, 1));
+		} else if (!BarItems[item_id]?.plugin) {
+			result.push(item_id);
+		}
+	})
+	return result;
+}
+
+export function getLayoutSettings(): LayoutSettingsData {
+	let panel_customization: LayoutSettingsData['panel_customization'] = {};
+	for (let panel_id in StoredPanelData) {
+		let panel = Panels[panel_id];
+		if (!panel || panel.plugin) continue;
+		let modes = StoredPanelData[panel_id];
+		if (!modes || typeof modes != 'object') continue;
+		let mode_map: Record<string, Partial<PanelPositionData>> = {};
+		for (let mode_id in modes) {
+			let data = sanitizePanelPositionData(modes[mode_id], panel_id);
+			if (Object.keys(data).length) mode_map[mode_id] = JSON.parse(JSON.stringify(data));
+		}
+		if (Object.keys(mode_map).length) panel_customization[panel_id] = mode_map;
+	}
+
+	let toolbars: LayoutSettingsData['toolbars'] = {};
+	for (let toolbar_id in BARS.stored) {
+		if (toolbar_id == '_known' || !Toolbars[toolbar_id]) continue;
+		let stored_items = BARS.stored[toolbar_id];
+		let items = sanitizeToolbarItems(stored_items);
+		if (!items) continue;
+		// 插件独占的工具栏不导出；用户手动清空的工具栏仍需导出空数组以覆盖默认值
+		if (stored_items instanceof Array && stored_items.length && !items.length) continue;
+		toolbars[toolbar_id] = items;
+	}
+
+	return {
+		version: 1,
+		interface_data: sanitizeInterfaceData(Interface.data),
+		panel_customization,
+		toolbars,
+	};
+}
+export function applyLayoutSettings(layout: Partial<LayoutSettingsData>) {
+	if (!layout || typeof layout != 'object') return;
+
+	if (layout.interface_data && typeof layout.interface_data == 'object') {
+		Interface.data = $.extend(true, {}, Interface.default_data, sanitizeInterfaceData(layout.interface_data));
+	}
+
+	if (layout.panel_customization && typeof layout.panel_customization == 'object') {
+		for (let panel_id in StoredPanelData) delete StoredPanelData[panel_id];
+		for (let panel_id in layout.panel_customization) {
+			let panel = Panels[panel_id];
+			let modes = layout.panel_customization[panel_id];
+			if (!panel || panel.plugin || !modes || typeof modes != 'object' || modes instanceof Array) continue;
+			for (let mode_id in modes) {
+				let data = sanitizePanelPositionData(modes[mode_id], panel_id);
+				if (!Object.keys(data).length) continue;
+				StoredPanelData[panel_id] ??= {};
+				StoredPanelData[panel_id][mode_id] = data;
+			}
+		}
+		for (let panel_id in Panels) {
+			Panels[panel_id].mode_position_data = {};
+			Panels[panel_id].updateSlot();
+		}
+	}
+
+	if (layout.toolbars && typeof layout.toolbars == 'object') {
+		let known_items = BARS.stored._known instanceof Array ? BARS.stored._known : [];
+		for (let toolbar_id in BARS.stored) {
+			if (toolbar_id != '_known') delete BARS.stored[toolbar_id];
+		}
+		BARS.stored._known = known_items;
+		for (let toolbar_id in layout.toolbars) {
+			if (!Toolbars[toolbar_id]) continue;
+			let items = sanitizeToolbarItems(layout.toolbars[toolbar_id]);
+			if (items) BARS.stored[toolbar_id] = items;
+		}
+		for (let toolbar_id in Toolbars) {
+			let toolbar = Toolbars[toolbar_id];
+			toolbar.build({children: toolbar.default_children, default_place: toolbar.default_place}).update(true);
+		}
+		localStorage.setItem('toolbars', JSON.stringify(BARS.stored));
+	}
+
+	Prop.show_left_bar = true;
+	Prop.show_right_bar = true;
+	updateInterfacePanels();
+	updateInterface();
+	Blockbench.dispatchEvent('reset_layout', {});
+}
 
 export function setupPanels() {
 	Interface.panel_definers.forEach((definer) => {
@@ -1455,10 +1633,12 @@ const global = {
 	updatePanelSelector,
 	setActivePanel,
 	setupMobilePanelSelector,
+	getLayoutSettings,
+	applyLayoutSettings,
 };
 declare global {
 	const Panel: typeof global.Panel
-	type Panel = import('./panels').Panel
+	type Panel = InstanceType<typeof global.Panel>
 	const Panels: typeof global.Panels
 	const setupPanels: typeof global.setupPanels
 	const updateInterfacePanels: typeof global.updateInterfacePanels
@@ -1466,5 +1646,7 @@ declare global {
 	const updatePanelSelector: typeof global.updatePanelSelector
 	const setActivePanel: typeof global.setActivePanel
 	const setupMobilePanelSelector: typeof global.setupMobilePanelSelector
+	const getLayoutSettings: typeof global.getLayoutSettings
+	const applyLayoutSettings: typeof global.applyLayoutSettings
 }
 Object.assign(window, global);

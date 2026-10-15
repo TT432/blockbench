@@ -177,12 +177,14 @@ export class AnimationControllerState {
 			name: this.name,
 		}
 		for (let key in AnimationControllerState.properties) {
-			AnimationControllerState.properties[key].copy(this, copy)
+			let property = AnimationControllerState.properties[key];
+			if (property.type == 'array') {
+				// #112：直接深拷贝数组，避免 Property.copy 在 focus 时替换活跃数组元素导致输入框被重渲染失焦
+				copy[key] = JSON.parse(JSON.stringify(this[key]));
+			} else {
+				property.copy(this, copy)
+			}
 		}
-		copy.animations = JSON.parse(JSON.stringify(copy.animations));
-		copy.transitions = JSON.parse(JSON.stringify(copy.transitions));
-		copy.particles = JSON.parse(JSON.stringify(copy.particles));
-		copy.sounds = JSON.parse(JSON.stringify(copy.sounds));
 		copy.position = this.position ? {x: this.position.x, y: this.position.y} : null;
 		return copy;
 	}
@@ -809,6 +811,7 @@ export class AnimationControllerState {
 		dialog.show();
 	}
 	openMenu(event) {
+		if (getFocusedTextInput()) return;
 		AnimationControllerState.prototype.menu.open(event, this);
 	}
 	getStateTime() {
@@ -1573,6 +1576,7 @@ Interface.definePanels(() => {
 					return trimmed ? trimmed.split('\n').length : 0;
 				},
 				openAnimationMenu(state, animation, target) {
+					if (getFocusedTextInput()) return;
 					let apply = anim => {
 						animation.key = anim.getShortName();
 						animation.animation = anim.uuid;
@@ -1610,6 +1614,7 @@ Interface.definePanels(() => {
 					menu.open(target);
 				},
 				openTransitionMenu(state, transition, event) {
+					if (getFocusedTextInput()) return;
 					let list = [];
 					this.controller.states.forEach(state2 => {
 						if (state2 == state) return;
@@ -1749,13 +1754,6 @@ Interface.definePanels(() => {
 						// Pan
 						this.pan.x -= event.deltaX + (event.shiftKey ? event.deltaY : 0);
 						this.pan.y -= event.shiftKey ? 0 : event.deltaY;
-					}
-				},
-				onCanvasScroll() {
-					// The canvas never scrolls; browsers may still scroll the wrapper to reveal focused inputs
-					if (this.$el.scrollTop || this.$el.scrollLeft) {
-						this.$el.scrollTop = 0;
-						this.$el.scrollLeft = 0;
 					}
 				},
 				getStatePosition(state) {
@@ -2351,7 +2349,7 @@ Interface.definePanels(() => {
 					:class="{connecting_controllers: connecting}"
 					:style="{'--blend-transition': controller && controller.last_state ? (controller.last_state.blend_transition / (playback_speed/100)) + 's' : 0}"
 					@mousedown="panCanvas($event)" @touchstart="panCanvas($event)"
-					@click="deselect($event)" @wheel="onMouseWheel($event)" @scroll="onCanvasScroll()" @keydown="onCanvasKeydown($event)"
+					@click="deselect($event)" @wheel="onMouseWheel($event)" @keydown="onCanvasKeydown($event)"
 				>
 
 					<div class="ac_canvas" :style="{transform: 'translate(' + pan.x + 'px, ' + pan.y + 'px) scale(' + zoom + ')'}">

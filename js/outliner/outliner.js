@@ -1281,7 +1281,7 @@ Interface.definePanels(function() {
 				:element_type="node.type"
 				@contextmenu.prevent.stop="node.showContextMenu($event)"
 				@click="node.clickSelect($event, true)"
-				:style="{'--color-scope': getScopeColor(node)}"
+				:style="{'--color-scope': getScopeColor(node), '--color-marker': getMarkerColor(node)}"
 				:title="node.title"
 				@dblclick.stop.self="!node.locked && renameOutliner(node)"
 			>` +
@@ -1391,6 +1391,11 @@ Interface.definePanels(function() {
 			getScopeColor(node) {
 				if (!node.scope) return '';
 				return ScopeColors[(node.scope-1) % ScopeColors.length];
+			},
+			getMarkerColor(node) {
+				// #78：组行的标记色同时用于名称文字与折叠指示（与行图标同源）
+				if (node.type != 'group' || !this.outliner_colors.value || !(node.color >= 0)) return 'inherit';
+				return markerColors[node.color % markerColors.length].pastel;
 			},
 			doubleClickIcon(node) {
 				if (node.children && node.children.length) {
