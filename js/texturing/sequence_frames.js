@@ -195,6 +195,13 @@ function importStripFrames(form, source) {
 		frame_positions.push({pos, sx, sy});
 	}
 
+	// #122：非内容面共享一个 1x1 UV，节省贴图空间；追加到已有贴图时占一个真实空闲 texel
+	let blank_x = 0, blank_y = 0;
+	if (target_texture) {
+		let blank_pos = placeRect(fill_map, 1, 1, uv_w, uv_h);
+		if (blank_pos) [blank_x, blank_y] = blank_pos;
+	}
+
 	// 开始实际修改
 	let cubes = [];
 	let groups = [];
@@ -239,24 +246,26 @@ function importStripFrames(form, source) {
 	}
 
 	let pixel_size = (Format.cube_size_limiter && !Format.integer_size) ? 16 / Math.max(fw, fh) : 1;
-	let depth_uv = Math.max(1, Math.round(fw_uv / fw));
+	// #122：块中心对齐工程原点，平躺卡片（内容在顶/底面），厚度沿 Y
+	let w = fw * pixel_size, h = fh * pixel_size, t = pixel_size;
 	let {frame_groups} = createFrameGroups(base_name, count, groups);
 	frame_positions.forEach(({pos}, i) => {
 		let [x, y] = pos;
+		let blank_face = () => ({uv: [blank_x, blank_y, blank_x + 1, blank_y + 1], texture});
 		let faces = {
-			south:	{uv: [x, y, x + fw_uv, y + fh_uv], texture},
-			north:	{uv: [x + fw_uv, y, x, y + fh_uv], texture},
-			up:		{uv: [x, y, x + fw_uv, y + depth_uv], texture},
-			down:	{uv: [x, y + fh_uv - depth_uv, x + fw_uv, y + fh_uv], texture},
-			east:	{uv: [x + fw_uv - depth_uv, y, x + fw_uv, y + fh_uv], texture},
-			west:	{uv: [x, y, x + depth_uv, y + fh_uv], texture},
+			up:		{uv: [x, y, x + fw_uv, y + fh_uv], texture},
+			down:	form.single_face ? blank_face() : {uv: [x + fw_uv, y, x, y + fh_uv], texture},
+			north:	blank_face(),
+			south:	blank_face(),
+			east:	blank_face(),
+			west:	blank_face(),
 		};
 		let cube = new Cube({
 			name: frame_groups[i].name,
 			autouv: 0,
 			box_uv: false,
-			from: [0, 0, 0],
-			to: [fw * pixel_size, fh * pixel_size, pixel_size],
+			from: [-w / 2, -t / 2, -h / 2],
+			to: [w / 2, t / 2, h / 2],
 			origin: [0, 0, 0],
 			faces
 		}).init();
@@ -636,6 +645,12 @@ function openDialog(source) {
 				type: 'number',
 				value: defaults.frame_count,
 				min: 1,
+				condition: (form) => form.mode == 'strip' && !!img,
+			},
+			single_face: {
+				label: 'dialog.sequence_frames.single_face',
+				type: 'checkbox',
+				value: false,
 				condition: (form) => form.mode == 'strip' && !!img,
 			},
 			model_source: {
