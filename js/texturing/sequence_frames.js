@@ -104,10 +104,13 @@ function computeStripDefaults(img, direction) {
 function createFrameGroups(base_name, count, groups) {
 	let root = new Group({name: base_name + '1'}).init();
 	let mid = new Group({name: base_name + '-1'}).init().addTo(root);
+	// addTo 只改数据层，需手动重挂 THREE 层级（约定见 outliner.js place()）
+	mid.preview_controller.updateTransform(mid);
 	groups.push(root, mid);
 	let frame_groups = [];
 	for (let i = 0; i < count; i++) {
 		let frame_group = new Group({name: `${base_name}-${i + 1}-1`}).init().addTo(mid);
+		frame_group.preview_controller.updateTransform(frame_group);
 		groups.push(frame_group);
 		frame_groups.push(frame_group);
 	}
@@ -258,6 +261,7 @@ function importStripFrames(form, source) {
 			faces
 		}).init();
 		cube.addTo(frame_groups[i]);
+		cube.preview_controller.updateTransform(cube);
 		cubes.push(cube);
 	});
 	Outliner.selected.replace(cubes);
@@ -504,6 +508,7 @@ function importModelFrames(form, model, source_textures) {
 			faces: faces_data
 		}).init();
 		cube.addTo(frame_groups[i]);
+		cube.preview_controller.updateTransform(cube);
 		cubes.push(cube);
 	});
 	Outliner.selected.replace(cubes);
