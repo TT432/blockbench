@@ -536,17 +536,33 @@ export class Plugin {
 		async function copyFileToDrive(origin_filename?: string, target_filename?: string, end_callback?: () => void) {
 			let url = scope.getSourceApiPath()+'/'+origin_filename;
 			await new Promise<void>((resolve, reject) => {
-				https.get(url, function(response) {
-					if (!(response.statusCode >= 200 && response.statusCode < 300)) {
-						let error = new Error(`Could not load plugin resource "${origin_filename}" from "${url}", error ${response.statusCode}`);
-						reject(response);
-						throw error;
+				let settled = false;
+				let fail = (error: unknown) => {
+					if (settled) return;
+					settled = true;
+					reject(error);
+				};
+				let request = https.get(url, function(response) {
+					if (typeof response.statusCode != 'number' || response.statusCode < 200 || response.statusCode >= 300) {
+						response.resume();
+						fail(new Error(`Could not load plugin resource "${origin_filename}" from "${url}", error ${response.statusCode}`));
+						return;
 					}
 					let file = fs.createWriteStream(PathModule.join(Plugins.path, target_filename));
+					response.on('error', fail);
+					file.on('error', fail);
+					file.on('finish', () => {
+						if (settled) return;
+						settled = true;
+						end_callback?.();
+						resolve();
+					});
 					response.pipe(file);
-					if (end_callback) response.on('end', end_callback);
-					resolve();
 				});
+				request.setTimeout(1000 * (Number(ExperimentalSettings.get('plugin_load_timeout')) || 10), () => {
+					request.destroy(new Error(`Timed out loading plugin resource "${origin_filename}" from "${url}"`));
+				});
+				request.on('error', fail);
 			});
 		}
 		return await new Promise<void>(async (resolve, reject) => {
@@ -1350,8 +1366,12 @@ export async function loadInstalledPlugins() {
 						let update_available = !up_to_date && !update_unsupported;
 
 						if (update_available && allow_updates) {
-							// Update
-							let promise = plugin.download();
+							// Update; fall back to the installed copy when the registry/CDN is unreachable
+							let promise = plugin.download().catch(async error => {
+								console.error(`Error updating plugin "${plugin.id}", falling back to installed copy:`, error);
+								plugin.update_available = plugin.version;
+								await plugin.load(false);
+							});
 							if (plugin.await_loading) {
 								install_promises.push(promise);
 							}
@@ -1389,6 +1409,16 @@ export async function loadInstalledPlugins() {
 					let installation_source = Plugins.sources[installation.source_id || 'official'];
 					if (installation_source?.failed) {
 						console.log(`🧩 The registry source "${installation.source_id || 'official'}" of plugin "${installation.id}" is unavailable, keeping it installed.`);
+						if (isApp) {
+							let path = Plugins.path + installation.id + '.js';
+							if (fs.existsSync(path)) {
+								let plugin = new Plugin(installation.id, {disabled: installation.disabled, version: installation.version});
+								plugin.source_id = installation.source_id || 'official';
+								plugin.installed = true;
+								install_promises.push(plugin.load(false));
+								load_counter++;
+							}
+						}
 					} else {
 						console.log(`🧩 The plugin "${installation.id}" seems to no longer exist in the repository, uninstalling it instead.`);
 						Plugins.installed.remove(installation);

@@ -400,7 +400,7 @@ export class Toolbar {
 		})
 		BARS.stored[this.id] = arr;
 		let identical_to_default = this.default_children.length == arr.length && this.default_children.allAre((item, i) => {
-			return arr[i] == item || (typeof item == 'string' && item.startsWith(item));
+			return arr[i] == item || (typeof arr[i] == 'string' && typeof item == 'string' && item.length == 1 && arr[i].startsWith(item));
 		})
 		if (identical_to_default) {
 			delete BARS.stored[this.id];
