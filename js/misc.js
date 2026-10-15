@@ -234,6 +234,8 @@ export function updateSelection(options = {}) {
 
 	BARS.updateConditions();
 	MenuBar.update()
+	// #87：selected/visibility 的大纲 DOM 状态走命令式同步（不经 Vue 响应式）
+	Outliner.syncAllNodeDomStates();
 	delete TickUpdates.selection;
 	Blockbench.dispatchEvent('update_selection');
 }

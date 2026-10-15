@@ -40,6 +40,14 @@ export class AnimationControllerState {
 		this.controller.states.safePush(this);
 	}
 	extend(data = 0) {
+		// #97：Bedrock 文件中 on_entry/on_exit 是字符串数组；先合并为多行字符串，避免 Property.merge 按逗号拼成一行
+		if (data && typeof data == 'object') {
+			for (let key of ['on_entry', 'on_exit']) {
+				if (data[key] instanceof Array) {
+					data = {...data, [key]: data[key].join('\n')};
+				}
+			}
+		}
 		for (let key in AnimationControllerState.properties) {
 			if (AnimationControllerState.properties[key].type == 'array') continue;
 			AnimationControllerState.properties[key].merge(this, data)
@@ -1556,8 +1564,7 @@ Interface.definePanels(() => {
 					state.fold[section] = !state.fold[section];
 				},
 				updateStateScript(state, key, value) {
-					// An emptied prism editor (contenteditable) reports a lone newline; normalize to empty
-					if (value && !value.trim()) value = '';
+					// 原样写回，保持「模型 === 编辑器内容」不变量；行数徽标侧自行忽略尾部空行
 					state[key] = value;
 				},
 				getScriptLineCount(text) {
@@ -1726,7 +1733,8 @@ Interface.definePanels(() => {
 				onMouseWheel(event) {
 					if (!this.controller) return;
 					event.preventDefault();
-					if (Keybinds.extra.uv_editor_scroll_zoom.keybind.isTriggered(event)) {
+					// 反馈#108：使用 AC 面板专属的缩放快捷键
+					if (Keybinds.extra.ac_scroll_zoom.keybind.isTriggered(event)) {
 						// Zoom around the cursor
 						let old_zoom = this.zoom;
 						let zoom = Math.clamp(old_zoom * (event.deltaY < 0 ? 1.1 : 0.9), 0.2, 2);
@@ -2667,6 +2675,11 @@ BARS.defineActions(function() {
 	new KeybindItem('ac_pan_canvas', {
 		category: 'animation',
 		keybind: new Keybind({key: 1})
+	})
+	// 反馈#108：AC 画布视图缩放独立快捷键（此前硬编码复用 UV 编辑器的缩放键，无法单独自定义）
+	new KeybindItem('ac_scroll_zoom', {
+		category: 'animation',
+		keybind: new Keybind({key: 1001, ctrl: true})
 	})
 	new KeybindItem('ac_box_select', {
 		category: 'animation',

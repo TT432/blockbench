@@ -551,6 +551,10 @@ export const Canvas = {
 		if (options.selection) {
 			updateSelection();
 		}
+		// #87：显隐变更后命令式同步大纲按钮状态
+		if (options.element_aspects?.visibility || options.group_aspects?.visibility) {
+			Outliner.syncAllNodeDomStates();
+		}
 		Blockbench.dispatchEvent('update_view', options);
 	},
 	updateViewMode() {
