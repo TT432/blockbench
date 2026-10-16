@@ -939,11 +939,26 @@ export function rotateOnAxis(modify, axis, slider) {
 				obj.rotation_axis = axis_letter
 			}
 		} else if (space == 2) {
-			// 反馈#104：统一为单分量累加。原实现在他轴 |角度|>0.1° 时走「欧拉序重排→改被拖分量→重排回」
-			// 并写回全部三个分量（数学上等价于绕局部轴旋转），导致只拖一个环却出现 2-3 个轴有数值，
-			// 且与阈值另一侧的单分量路径是两种不同旋转——同一操作偶发两种结果。
-			var obj_val = modify(Math.radToDeg(mesh.rotation[axis_letter]));
-			obj.rotation[axis] = Math.trimDeg(obj_val);
+			// 反馈#132：自身坐标系旋转 = 绕物体当前自身的轴旋转（四元数后乘 = 内旋），
+			// 写回时按网格欧拉序分解。#104 的单分量累加在已有他轴旋转时实际绕欧拉中间轴
+			// 旋转，视觉歪斜；原上游「阈值+欧拉序重排」路径则是真局部轴但有阈值两侧不一致
+			// 问题。统一为四元数路径：任何初始姿态下绕同一环旋转结果一致。注意：真局部轴
+			// 旋转在欧拉分量上的表现就是多个分量同时变化，这是数学必然，不是串轴。
+			let angle = Math.degToRad(modify(0));
+			let q_axis = new THREE.Quaternion().setFromAxisAngle(
+				axis == 0 ? THREE.NormalX : (axis == 1 ? THREE.NormalY : THREE.NormalZ), angle);
+			let order = mesh.rotation.order || Format.euler_order || 'ZYX';
+			let q = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+				Math.degToRad(obj.rotation[0]),
+				Math.degToRad(obj.rotation[1]),
+				Math.degToRad(obj.rotation[2]),
+				order
+			));
+			q.multiply(q_axis);
+			let e = new THREE.Euler().setFromQuaternion(q, order);
+			obj.rotation[0] = Math.trimDeg(Math.radToDeg(e.x));
+			obj.rotation[1] = Math.trimDeg(Math.radToDeg(e.y));
+			obj.rotation[2] = Math.trimDeg(Math.radToDeg(e.z));
 
 		} else if (space instanceof OutlinerNode) {
 			let normal = axis == 0 ? THREE.NormalX : (axis == 1 ? THREE.NormalY : THREE.NormalZ)
