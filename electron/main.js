@@ -106,7 +106,7 @@ function createWindow(second_instance, options = {}) {
 
 		let template = [
 			{
-				"label": "βlockβench",
+				"label": "Blockbench Community",
 				"submenu": [
 					{
 						"role": "hide"

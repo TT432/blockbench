@@ -1572,20 +1572,22 @@
 	#timeline_playhead {
 		position: absolute;
 		z-index: 3;
-		/* Events pass through to the ruler (drag playhead) or to the channel row
-		   below (MI-style click/double-click); the handle itself must not swallow
-		   clicks now that single clicks move the playhead under the cursor. */
-		pointer-events: none;
 
 		height: 26px;
 		width: 18px;
 		top: 0;
 		margin-left: -8px;
 
+
 		border-right: 9px solid transparent;
 		border-left: 9px solid transparent;
 		border-top: 12px solid var(--color-accent);
 		border-radius: 2px;
+	}
+	/* 社区版 MI 交互（#81 开关 community_timeline_clickthrough_playhead）：
+	   播放头手柄不接收事件，点击穿透到标尺（拖播放头）或通道行（单击/双击） */
+	body.community_clickthrough_playhead #timeline_playhead {
+		pointer-events: none;
 	}
 	#timeline_playhead::after {
 		content: "";

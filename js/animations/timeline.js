@@ -220,7 +220,8 @@ export const Timeline = {
 				// 单击 channel 行空白（未触发框选）：取消当前关键帧选中 + 播放头移到点击位置
 				// （MI 式交互，反馈问题28）。取消选中在此区域不依赖 canvas_unselect 设置。
 				let start_target = Timeline.selector.start_event.target;
-				let is_section_click = !!(start_target && start_target.classList && start_target.classList.contains('keyframe_section'));
+				let is_section_click = !!(start_target && start_target.classList && start_target.classList.contains('keyframe_section'))
+					&& settings.community_timeline_click_seek.value;
 				if (settings.canvas_unselect.value || is_section_click) {
 					Timeline.selected.empty();
 					updateKeyframeSelection();
@@ -439,11 +440,13 @@ export const Timeline = {
 				updateKeyframeSelection();
 				// Shift+拖动 → 范围选择模式（功能反馈：全选时间范围内所有骨骼关键帧）
 				// 超过阈值后由 mousemove 激活；未超过则保持原有 shift+单击行为
-				Timeline.ruler_range_select = {
-					start_time: time,
-					start_x: e.clientX,
-					active: false,
-				};
+				if (settings.community_timeline_shift_range_select.value) {
+					Timeline.ruler_range_select = {
+						start_time: time,
+						start_x: e.clientX,
+						active: false,
+					};
+				}
 				}
 			}
 		})
@@ -1264,6 +1267,23 @@ Interface.definePanels(() => {
 					this.length = Timeline.getMaxLength();
 
 					var step = 1
+					if (!settings.community_ruler_step_candidates.value) {
+						// 上游步长表（硬编码秒级档位 + sqrt 启发式取整）
+						if (this.size < 1) {step = 1}
+						else if (this.size < 20) {step = 4}
+						else if (this.size < 40) {step = 2}
+						else if (this.size < 100) {step = 1}
+						else if (this.size < 256) {step = 0.5}
+						else if (this.size < 520) {step = 0.25}
+						else if (this.size < 660) {step = 0.2}
+						else if (this.size < 860) {step = 0.1}
+						else {step = 0.05}
+						if (step < 1) {
+							let substep_simplification = Math.max((Math.floor(Math.sqrt(step / Timeline.getStep()))-1), 1);
+							var FPS = Timeline.getStep() / substep_simplification;
+							step = Math.round(step/FPS) * FPS
+						}
+					} else {
 					// 步长从规整候选序列选取（反馈#35：旧秒级硬编码表+sqrt启发式取整在 15fps 下产生
 					// 8→15→30 帧的非规整跳变，间距感知错乱）。帧显模式用帧候选，秒显模式用秒候选，
 					// 取像素间距 ≥80px 的最小档；步长恒为整帧倍数以保持与吸附网格对齐。
@@ -1279,6 +1299,7 @@ Interface.definePanels(() => {
 						step = candidates.find(s => s * this.size >= min_spacing) || candidates[candidates.length-1]
 						// 亚秒档对齐整帧（整秒档天然是整帧倍数）
 						if (step < 1) step = Math.max(Math.round(step / frame_time), 1) * frame_time
+					}
 					}
 
 					// Substep simplification
@@ -1369,6 +1390,7 @@ Interface.definePanels(() => {
 				},
 				getVisibleKeyframes(animator, channel) {
 					let keyframes = animator[channel];
+					if (!settings.community_keyframe_density_culling.value) return keyframes;
 					if (!keyframes || keyframes.length == 0) return keyframes;
 					let size = this.size;
 					if (!size || !isFinite(size)) return keyframes;
@@ -1951,6 +1973,7 @@ Interface.definePanels(() => {
 				},
 				createKeyframeAt(animator, channel, event) {
 					if (!Animation.selected) return;
+					if (!settings.community_timeline_double_click_keyframe.value) return;
 					let time = Math.max((event.offsetX - 8) / this.size, 0);
 					// 吸附位置已有关键帧时选中它而不是新建：createKeyframe 的
 					// replaceOthers 会静默删除同时间关键帧并按点击处插值重建，

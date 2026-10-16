@@ -287,7 +287,9 @@ export class NodePreviewController extends EventSystem {
 		mesh.name = element.uuid;
 		mesh.type = element.type;
 		mesh.isElement = true;
-		mesh.visible = !!(element.visibility && !(element.parent instanceof Group && !element.parent.isVisibleInPreview()));
+		mesh.visible = settings.community_group_visibility_direct_only.value
+			? !!(element.visibility && !(element.parent instanceof Group && !element.parent.isVisibleInPreview()))
+			: element.visibility;
 		mesh.rotation.order = Format.euler_order;
 		this.updateTransform(element);
 
@@ -361,8 +363,12 @@ export class NodePreviewController extends EventSystem {
 		// 父组隐藏只隐藏其直属元素；子组内的元素由子组自身的开关独立控制，
 		// 不受更上层祖先组影响。元素自身的 visibility 标志不被组开关改写，
 		// 组重新显示后元素按各自标志恢复。
-		let group_hidden = element.parent instanceof Group && !element.parent.isVisibleInPreview();
-		element.mesh.visible = !!(element.visibility && !group_hidden);
+		if (settings.community_group_visibility_direct_only.value) {
+			let group_hidden = element.parent instanceof Group && !element.parent.isVisibleInPreview();
+			element.mesh.visible = !!(element.visibility && !group_hidden);
+		} else {
+			element.mesh.visible = element.visibility;
+		}
 
 		this.dispatchEvent('update_visibility', {element});
 	}
@@ -1528,7 +1534,7 @@ Interface.definePanels(function() {
 									// 反馈#124：组的眼睛开关只翻转组自身标志，不再级联改写后代
 									// （隐藏组只隐藏其直属元素，由预览可见性规则实现，后代标志
 									// 与撤销记录保持原样；子组内容的显隐完全由子组自身开关决定）。
-									if (toggle_config.change_children != false && (key != 'visibility' || node instanceof Group == false)) {
+									if (toggle_config.change_children != false && (!settings.community_group_visibility_direct_only.value || key != 'visibility' || node instanceof Group == false)) {
 										node.forEachChild(node => {
 											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
 										});

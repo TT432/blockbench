@@ -139,7 +139,9 @@ export abstract class OutlinerElement extends OutlinerNode {
 		//Shift
 		var just_selected = [];
 		// 反馈#101：绘画模式下油漆桶支持 Ctrl 加选/减选（原仅限「选中的元素」填充模式）
-		let allow_multi_select = (!Modes.paint || Toolbox.selected.id == 'fill_tool');
+		let allow_multi_select = (!Modes.paint || (settings.community_paint_fill_multi_select.value
+			? Toolbox.selected.id == 'fill_tool'
+			: (Toolbox.selected.id == 'fill_tool' && (BarItems.fill_mode as BarSelect).value == 'selected_elements')));
 		if (Toolbox.selected.id == 'knife_tool') allow_multi_select = false;
 		if (
 			event &&
