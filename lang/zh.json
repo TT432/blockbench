@@ -1058,6 +1058,8 @@
 	"settings.render_sides.auto": "自动",
 	"settings.render_sides.front": "外面",
 	"settings.render_sides.double": "内面与外面",
+	"settings.negative_size_front_faces": "负尺寸块按「外面」渲染",
+	"settings.negative_size_front_faces.desc": "开启后，尺寸为负的块（任意轴 from 大于 to）始终按「外面」方式渲染；普通块仍遵循上面的渲染面设置",
 	"generic.enable": "启用",
 	"generic.disable": "禁用",
 	"generic.redacted": "已隐藏",

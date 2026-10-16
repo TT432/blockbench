@@ -731,6 +731,7 @@ export class Texture {
 			variant.side = mat.side;
 			variant.blending = mat.blending;
 		});
+		if (this.material_front_faces) this.material_front_faces.blending = mat.blending;
 		this.refreshTranslucency();
 		// Map
 		mat.map.needsUpdate = true;
@@ -890,6 +891,22 @@ export class Texture {
 		let group = this.getGroup();
 		if (group?.is_material && BarItems.view_mode.value == 'material') {
 			return group.getMaterial();
+		}
+		// #117：设置开启后，负尺寸块（任一轴 from>to）始终用 FrontSide 材质变体渲染，
+		// 不受全局/贴图渲染面设置影响；普通块不受影响。
+		if (element && element.type == 'cube' && settings.negative_size_front_faces
+			&& settings.negative_size_front_faces.value
+			&& (element.size(0) < 0 || element.size(1) < 0 || element.size(2) < 0)) {
+			let mat = this.material_front_faces;
+			if (!mat) {
+				mat = this.material.clone();
+				mat.uniforms = this.material.uniforms;
+				this.material_front_faces = mat;
+			}
+			mat.name = this.material.name;
+			mat.blending = this.material.blending;
+			mat.side = THREE.FrontSide;
+			return mat;
 		}
 		if (render_order !== 'default') {
 			this._used_with_render_order = true;
