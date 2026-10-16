@@ -7,7 +7,7 @@ import { sort_collator } from "./misc";
 import { separateThousands } from "./util/math_util";
 import { getDateDisplay } from "./util/util";
 import { Filesystem } from "./file_system";
-import { app, fs, getPluginPermissions, getPluginScopedRequire, https, revokePluginPermissions } from "./native_apis";
+import { app, fs, getPluginPermissions, getPluginScopedRequire, revokePluginPermissions } from "./native_apis";
 import { Panels } from "./interface/panels";
 import VersionUtil from './util/version_util'
 import { ModelLoader } from "./io/model_loader";
@@ -542,27 +542,32 @@ export class Plugin {
 					settled = true;
 					reject(error);
 				};
-				let request = https.get(url, function(response) {
-					if (typeof response.statusCode != 'number' || response.statusCode < 200 || response.statusCode >= 300) {
-						response.resume();
-						fail(new Error(`Could not load plugin resource "${origin_filename}" from "${url}", error ${response.statusCode}`));
-						return;
-					}
-					let file = fs.createWriteStream(PathModule.join(Plugins.path, target_filename));
-					response.on('error', fail);
-					file.on('error', fail);
-					file.on('finish', () => {
+				// #128：用 fetch（Chromium 网络栈）替代 Node https.get——后者不读系统代理/PAC，
+				// 开代理环境下直连 jsDelivr 卡死并被 10s 超时掐断。
+				let controller = new AbortController();
+				let timeout = setTimeout(() => controller.abort(), 1000 * (Number(ExperimentalSettings.get('plugin_load_timeout')) || 10));
+				fetch(url, {signal: controller.signal}).then(async response => {
+					try {
+						if (!response.ok) {
+							fail(new Error(`Could not load plugin resource "${origin_filename}" from "${url}", error ${response.status}`));
+							return;
+						}
+						let buffer = Buffer.from(await response.arrayBuffer());
+						fs.writeFileSync(PathModule.join(Plugins.path, target_filename), buffer);
 						if (settled) return;
 						settled = true;
 						end_callback?.();
 						resolve();
-					});
-					response.pipe(file);
-				});
-				request.setTimeout(1000 * (Number(ExperimentalSettings.get('plugin_load_timeout')) || 10), () => {
-					request.destroy(new Error(`Timed out loading plugin resource "${origin_filename}" from "${url}"`));
-				});
-				request.on('error', fail);
+					} catch (error) {
+						fail(error);
+					}
+				}).catch(error => {
+					if (error && error.name === 'AbortError') {
+						fail(new Error(`Timed out loading plugin resource "${origin_filename}" from "${url}"`));
+					} else {
+						fail(error);
+					}
+				}).finally(() => clearTimeout(timeout));
 			});
 		}
 		return await new Promise<void>(async (resolve, reject) => {
@@ -691,17 +696,14 @@ export class Plugin {
 				Plugins.source_cache.save(this.id, content);
 			}
 			if (isApp) {
-				await new Promise((resolve, reject) => {
-					https.get(url, (response) => {
-						if (!(response.statusCode >= 200 && response.statusCode < 300)) {
-							console.error(`Could not load plugin ${this.id} from`, url);
-							return;
-						}
-						let file = fs.createWriteStream(Plugins.path+this.id+'.js');
-						response.pipe(file);
-						response.on('end', resolve)
-					}).on('error', reject);
-				})
+				// 同 copyFileToDrive：fetch 走 Chromium 网络栈，遵循系统代理
+				let response = await fetch(url);
+				if (!response.ok) {
+					console.error(`Could not load plugin ${this.id} from`, url);
+				} else {
+					let buffer = Buffer.from(await response.arrayBuffer());
+					fs.writeFileSync(Plugins.path+this.id+'.js', buffer);
+				}
 			}
 		}
 		return this;
