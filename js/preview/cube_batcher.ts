@@ -711,13 +711,19 @@ export const CubeBatcher = {
 		let scene = Canvas.scene;
 		let model = Project.model_3d;
 		if (scene.matrixAutoUpdate) scene.updateMatrix();
+		// #138：必须与渲染器场景级联语义一致——scene 重组后 force=true 会级联到所有
+		// 非模型子树。brush_outline 等 gizmo 以 matrixAutoUpdate=false + 直写 matrix
+		// 的方式更新（不置 matrixWorldNeedsUpdate），只靠这个级联重组 matrixWorld；
+		// 此处若以 force=false 遍历，它们会被永久冻结（笔刷光标消失/线框错位的根因）。
+		let force = false;
 		if (scene.matrixWorldNeedsUpdate) {
 			scene.matrixWorld.copy(scene.matrix);
 			scene.matrixWorldNeedsUpdate = false;
+			force = true;
 		}
 		for (let child of scene.children) {
 			if (child === model) continue;
-			child.updateMatrixWorld(false);
+			child.updateMatrixWorld(force);
 		}
 		this.updateModelNode(model, false);
 	},
