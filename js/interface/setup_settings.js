@@ -184,6 +184,9 @@ function setupSettings() {
 	}});
 	new Setting('stretch_linked',			{category: 'edit', value: true});
 	new Setting('auto_keyframe',			{category: 'edit', value: true});
+	// 社区版：复制骨骼动画时同步 molang 变量数字后缀（#136）——新旧骨骼名尾部数字不同则
+	// 把复制出的关键帧里 v.xxxNN / temp.xxxNN 的两位数字后缀同步改为新骨骼的数字。默认关。
+	new Setting('community_duplicate_bone_var_suffix', {category: 'edit', value: false});
 	new Setting('detect_flipbook_textures',	{category: 'edit', value: true});
 
 	//Paint
@@ -356,8 +359,10 @@ function setupSettings() {
 	new Setting('community_keyframe_density_culling', {category: 'community', value: true, onChange() {
 		if (typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.$forceUpdate();
 	}});
-	new Setting('community_group_visibility_direct_only', {category: 'community', value: true, onChange() {
-		if (typeof Canvas !== 'undefined' && typeof Outliner !== 'undefined') {
+	// 反馈#124/#133：默认恢复级联隐藏（隐藏父组级联隐藏整个子树，后代开关可单独再开）。
+	// 直属限定模式保留为可选开关。
+	new Setting('community_group_visibility_direct_only', {category: 'community', value: false, onChange() {
+		if (typeof Project !== 'undefined' && Project && typeof Canvas !== 'undefined' && typeof Outliner !== 'undefined' && Outliner.elements) {
 			Canvas.updateView({elements: Outliner.elements, element_aspects: {visibility: true}});
 		}
 	}});

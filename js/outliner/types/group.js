@@ -508,7 +508,8 @@ export class Group extends OutlinerNode {
 	}
 	/**
 	 * Whether this group is effectively visible in the preview.
-	 * 反馈#124：组的隐藏只作用于直接挂在该组下的元素，不级联影响子组内容，
+	 * 仅在开启 community_group_visibility_direct_only（反馈#124 的可选模式）时使用：
+	 * 组的隐藏只作用于直接挂在该组下的元素，不级联影响子组内容，
 	 * 因此这里只判定自身标志，不再沿祖先链上溯。元素的预览可见性 =
 	 * 自身 visibility && 直属父组的 isVisibleInPreview()（见 NodePreviewController）。
 	 */
