@@ -714,6 +714,7 @@ ModelProject.prototype.menu = new Menu([
 		id: 'tab_group',
 		name: 'menu.tab_group',
 		icon: 'tab',
+		condition: () => settings.community_tab_groups.value,
 		children(project: ModelProject) {
 			if (project.tab_group) {
 				return [
@@ -1155,7 +1156,7 @@ onVueSetup(() => {
 				let tabs: (ModelProject | typeof new_tab | TabGroupChipItem)[] = [];
 				let last_group: TabGroup | null = null;
 				for (let project of this.projects) {
-					let group: TabGroup | null = project.tab_group
+					let group: TabGroup | null = (settings.community_tab_groups.value && project.tab_group)
 						? this.groups.find((g: TabGroup) => g.uuid == project.tab_group) || null
 						: null;
 					if (group !== last_group) {
@@ -1190,6 +1191,7 @@ onVueSetup(() => {
 			},
 			tabGroupStripeStyle(project: ModelProject) {
 				// #78：组内标签底部显示组色条
+				if (!settings.community_tab_groups.value) return null;
 				let group = getProjectTabGroup(project);
 				if (!group) return null;
 				return {boxShadow: `inset 0 -3px 0 ${TAB_GROUP_COLORS[group.color]}`};
@@ -1289,6 +1291,7 @@ onVueSetup(() => {
 							// #78：用激活时快照的原始槽位矩形做命中（排序动画移位不影响判定）；
 							// 支持落在普通标签上（成组/并入其组）与折叠组芯片上（直接并入该组）
 							let hover_key: string | null = null;
+							if (settings.community_tab_groups.value) {
 							let slot = tab_slot_rects.find(s =>
 								e2.clientX >= s.rect.left && e2.clientX <= s.rect.right &&
 								e2.clientY >= s.rect.top - 4 && e2.clientY <= s.rect.bottom + 4
@@ -1309,6 +1312,7 @@ onVueSetup(() => {
 							}
 							if (hover_key && !scope.group_intent_uuid && e2.timeStamp - group_hover_since > 400) {
 								scope.group_intent_uuid = hover_key;
+							}
 							}
 						}
 					}

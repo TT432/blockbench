@@ -1052,7 +1052,7 @@ export class Preview {
 
 			if (Toolbox.selected.paintTool || Toolbox.selected.id == 'knife_tool') {
 				// 反馈#101：绘画模式下油漆桶允许按住 Ctrl 多选/减选方块
-				if (!(Toolbox.selected.id == 'fill_tool' && multi_select)) {
+				if (!(settings.community_paint_fill_multi_select.value && Toolbox.selected.id == 'fill_tool' && multi_select)) {
 					multi_select = group_select = loop_select = false;
 				}
 			}
@@ -1297,7 +1297,7 @@ export class Preview {
 								}
 							}
 						}
-					} else if (Toolbox.selected.id == 'fill_tool') {
+					} else if (settings.community_paint_fill_multi_select.value && Toolbox.selected.id == 'fill_tool') {
 						// 反馈#101：油漆桶普通点击不破坏已有多选；Ctrl+点击加选/减选
 						if (multi_select || !data.element.selected) {
 							data.element.select(event)

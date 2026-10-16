@@ -386,7 +386,7 @@ export const Clipbench = {
 			} catch (err) {}
 		}
 		// #85：先导入剪贴板携带的贴图，元素创建时面贴图 uuid 才能解析
-		if (Clipbench.textures instanceof Array) {
+		if (settings.community_paste_with_textures.value && Clipbench.textures instanceof Array) {
 			Clipbench.textures.forEach(saved => {
 				if (!saved || typeof saved.uuid !== 'string' || typeof saved.source !== 'string' || !saved.source) return;
 				if (Texture.all.find(t => t.uuid == saved.uuid)) return;

@@ -24,7 +24,7 @@
   "build": {
     "afterSign": "scripts/notarize.js",
     "appId": "blockbench-community",
-    "productName": "βlockβench",
+    "productName": "Blockbench Community",
     "artifactName": "Blockbench-Community_${version}.${ext}",
     "directories": {
       "output": "dist-electron"

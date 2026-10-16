@@ -295,7 +295,7 @@ function setupSettings() {
 	}});
 	new Setting('uniform_keyframe',					{category: 'defaults', value: true});
 	// #88：导入动画时是否自动为 molang 变量生成占位符控件（默认关，避免中间变量刷屏；手动编写的行不受影响）
-	new Setting('animation_auto_variable_placeholders', {category: 'defaults', value: false});
+	new Setting('animation_auto_variable_placeholders', {category: 'community', value: false});
 	
 	//Dialogs
 	new Setting('new_project_dialog',		{category: 'dialogs', value: true});
@@ -343,6 +343,37 @@ function setupSettings() {
 	new Setting('model_export_scale',	{category: 'export', value: 16, type: 'number', min: 0.0001, max: 4096});
 	new Setting('sketchfab_token', 		{category: 'export', value: '', type: 'password'});
 	new Setting('credit', 				{category: 'export', value: 'Made with Blockbench', type: 'text'});
+
+	//Community（#81：社区版改原版操作的功能开关，默认开启=社区版行为，关闭=恢复上游行为）
+	new Setting('community_timeline_click_seek', {category: 'community', value: true});
+	new Setting('community_timeline_double_click_keyframe', {category: 'community', value: true});
+	new Setting('community_timeline_shift_range_select', {category: 'community', value: true});
+	new Setting('community_timeline_clickthrough_playhead', {category: 'community', value: true, onChange(value) {
+		document.body.classList.toggle('community_clickthrough_playhead', !!value);
+	}});
+	document.body.classList.toggle('community_clickthrough_playhead', !!settings.community_timeline_clickthrough_playhead.value);
+	new Setting('community_animate_group_multi_select', {category: 'community', value: true});
+	new Setting('community_keyframe_density_culling', {category: 'community', value: true, onChange() {
+		if (typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.$forceUpdate();
+	}});
+	new Setting('community_group_visibility_direct_only', {category: 'community', value: true, onChange() {
+		if (typeof Canvas !== 'undefined' && typeof Outliner !== 'undefined') {
+			Canvas.updateView({elements: Outliner.elements, element_aspects: {visibility: true}});
+		}
+	}});
+	new Setting('community_animation_list_multi_select', {category: 'community', value: true});
+	new Setting('community_paint_fill_multi_select', {category: 'community', value: true, onChange() {
+		if (typeof BARS !== 'undefined') BARS.updateConditions();
+	}});
+	new Setting('community_mirror_paint_block_matching', {category: 'community', value: true});
+	new Setting('community_paste_with_textures', {category: 'community', value: true});
+	new Setting('community_tab_groups', {category: 'community', value: true, onChange() {
+		if (typeof Interface !== 'undefined' && Interface.tab_bar) Interface.tab_bar.$forceUpdate();
+	}});
+	new Setting('community_ruler_step_candidates', {category: 'community', value: true, onChange() {
+		if (typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.updateTimecodes();
+	}});
+	new Setting('community_playhead_wrap_effective_length', {category: 'community', value: true});
 
 	Blockbench.onUpdateTo('5.0.0', () => {
 		settings.antialiasing_bleed_fix.set(true);

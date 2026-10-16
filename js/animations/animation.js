@@ -231,8 +231,12 @@ export class Animation extends AnimationItem {
 			// re-select of such an animation (undo selection restore, entering
 			// animate mode, clicking the animation list). Wrap by the effective
 			// length instead; for empty animations keep the playhead where it is.
-			let wrap_length = this.length || this.getMaxLength();
-			if (wrap_length > 0) Timeline.setTime(Timeline.time % wrap_length);
+			if (settings.community_playhead_wrap_effective_length.value) {
+				let wrap_length = this.length || this.getMaxLength();
+				if (wrap_length > 0) Timeline.setTime(Timeline.time % wrap_length);
+			} else {
+				Timeline.setTime(Timeline.time % this.length);
+			}
 		}
 		Animator.MolangParser.resetVariables();
 		this.selected = true;
@@ -1840,7 +1844,7 @@ Interface.definePanels(function() {
 					this.$forceUpdate();
 				},
 				clickAnimation(animation, event) {
-					if (event && (event.shiftKey || event.ctrlOrCmd || Pressing.overrides.ctrl || Pressing.overrides.shift)) {
+					if (settings.community_animation_list_multi_select.value && event && (event.shiftKey || event.ctrlOrCmd || Pressing.overrides.ctrl || Pressing.overrides.shift)) {
 						if (event.shiftKey || Pressing.overrides.shift) {
 							let visible = Array.from(this.$el.querySelectorAll('#animations_list .animation'))
 								.map(node => AnimationItem.all.find(a => a.uuid == node.getAttribute('anim_id')))

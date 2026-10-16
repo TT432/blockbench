@@ -184,7 +184,7 @@ export const Painter = {
 			if (picked) return;
 		}
 		// 反馈#101：绘画模式下油漆桶按住 Ctrl 点击仅加选/减选方块，不触发填充
-		if (Toolbox.selected.id == 'fill_tool' && (e.ctrlOrCmd || Pressing.overrides.ctrl)) return;
+		if (settings.community_paint_fill_multi_select.value && Toolbox.selected.id == 'fill_tool' && (e.ctrlOrCmd || Pressing.overrides.ctrl)) return;
 		if (!data.intersects || (data.element.locked && !Toolbox.selected.click_locked_elements)) return;
 		var texture = Painter.getTextureToEdit(data.element.faces[data.face].getTexture())
 		if (!texture || (texture.error && texture.error !== 2)) {
@@ -666,7 +666,7 @@ export const Painter = {
 		let b_opacity = BarItems.slider_brush_opacity.get()/(settings.opacity_range.value == '255' ? 255 : 100);
 		let fill_mode = BarItems.fill_mode.get()
 		// 反馈#101：向后兼容——旧设置里的 'selected_elements' 已并入「元素」模式
-		if (fill_mode === 'selected_elements') fill_mode = 'element';
+		if (settings.community_paint_fill_multi_select.value && fill_mode === 'selected_elements') fill_mode = 'element';
 		let blend_mode = BarItems.blend_mode.value;
 		let {element, offset} = Painter.current;
 		let {rect, uvFactorX, uvFactorY, w, h} = area;
@@ -805,7 +805,8 @@ export const Painter = {
 		}
 
 		let paintable = (el) => el && (el.getTypeBehavior('cube_faces') || el instanceof Mesh || el instanceof SplineMesh);
-		if (fill_mode === 'element' && Outliner.selected.length > 1) {
+		let community_fill = settings.community_paint_fill_multi_select.value;
+		if (community_fill && fill_mode === 'element' && Outliner.selected.length > 1) {
 			// 反馈#101：「元素」模式在多选时对所有选中元素生效（原「选中的元素」模式并入此模式）
 			for (let selected_element of Outliner.selected) {
 				if (paintable(selected_element)) paintElement(selected_element);
@@ -819,6 +820,12 @@ export const Painter = {
 			texture.selection.maskCanvas(ctx, offset);
 			ctx.fill();
 			ctx.restore();
+
+		} else if (!community_fill && fill_mode === 'selected_elements') {
+			// 上游独立模式：对所有选中元素填充
+			for (let selected_element of Outliner.selected) {
+				if (paintable(selected_element)) paintElement(selected_element);
+			}
 
 		} else {
 			// Perf note: this branch handles both the "Same Color" (global) and
@@ -1957,6 +1964,7 @@ export const Painter = {
 		}
 		if (!candidates.length) return;
 		if (candidates.length == 1) return candidates[0].target;
+		if (!settings.community_mirror_paint_block_matching.value) return candidates[0].target;
 
 		// #80：多个面在物理空间重合时（如 0.1 厚度片挡住目标块的面），
 		// 优先选择「源块的物理镜像块」上的面——用世界空间角点集合判断是否互为镜像，
@@ -3796,6 +3804,7 @@ BARS.defineActions(function() {
 			selection: {name: true, condition: () => Format.image_editor},
 			element: {name: true, condition: () => !Format.image_editor},
 			same_color: {name: true, condition: () => !Format.image_editor},
+			selected_elements: {name: true, condition: () => !Format.image_editor && !settings.community_paint_fill_multi_select.value},
 			color_connected: true,
 			color: true,
 		}
@@ -3803,7 +3812,7 @@ BARS.defineActions(function() {
 	// 反馈#101：「选中的元素」已并入「元素」模式，旧设置值自动映射
 	let fill_mode_select_set = fill_mode_select.set.bind(fill_mode_select);
 	fill_mode_select.set = function(key) {
-		if (key === 'selected_elements') key = 'element';
+		if (settings.community_paint_fill_multi_select.value && key === 'selected_elements') key = 'element';
 		return fill_mode_select_set(key);
 	};
 	new BarSelect('copy_brush_mode', {

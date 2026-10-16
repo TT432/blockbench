@@ -166,7 +166,7 @@ localStorage.setItem('last_version', Blockbench.version);
 		if (isApp) {
 			loadOpenWithBlockbenchFile();
 			// #78：插件加载完成后恢复标签页分组会话（仅组内已保存工程）
-			restoreTabGroupSession();
+			if (settings.community_tab_groups.value) restoreTabGroupSession();
 			ipcRenderer.send('app-loaded');
 		} else {
 			loadInfoFromURL();
