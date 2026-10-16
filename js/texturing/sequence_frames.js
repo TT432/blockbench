@@ -358,6 +358,25 @@ function importModelFrames(form, model, source_textures) {
 		Blockbench.showQuickMessage(tl('message.sequence_frames.no_cubes'));
 		return;
 	}
+	// 反馈#123：模型模式的帧数设置——每个方块一帧，限制只取前 N 个方块
+	let frame_limit = Math.floor(form.frame_limit) || 0;
+	if (frame_limit > 0 && elements.length > frame_limit) {
+		elements = elements.slice(0, frame_limit);
+	}
+	// 反馈#123：无限制且数量异常大时先确认，避免误选普通模型后一次创建上千个帧组
+	if (elements.length > 200 && !form._frames_confirmed) {
+		Blockbench.showMessageBox({
+			title: tl('dialog.sequence_frames.title'),
+			message: tl('message.sequence_frames.too_many_frames', [elements.length]),
+			icon: 'warning',
+			buttons: ['dialog.confirm', 'dialog.cancel'],
+		}, button => {
+			if (button === 0) {
+				importModelFrames(Object.assign({}, form, {_frames_confirmed: true}), model, source_textures);
+			}
+		});
+		return;
+	}
 	let base_name = (form.group_name || '').trim() || 'frames';
 	let copy_first = form.uv_mode != 'blank';
 
@@ -658,6 +677,13 @@ function openDialog(source) {
 				type: 'select',
 				options: model_options,
 				condition: (form) => form.mode == 'model' && !preset_model,
+			},
+			frame_limit: {
+				label: 'dialog.sequence_frames.frame_limit',
+				type: 'number',
+				value: 0,
+				min: 0,
+				condition: (form) => form.mode == 'model',
 			},
 			uv_mode: {
 				label: 'dialog.sequence_frames.uv_mode',

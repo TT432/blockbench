@@ -296,6 +296,12 @@ export const Animator = {
 		for (let animation of Animation.all) {
 			if (animation.playing) key_parts.push(animation.uuid, animation.loop, animation.length);
 		}
+		// 状态机驱动的姿态不经过 playing 列表，须把控制器/状态与其内部时间纳入指纹
+		if (AnimationController.selected?.selected_state) {
+			let {selected_state, last_state} = AnimationController.selected;
+			key_parts.push(AnimationController.selected.uuid, selected_state.uuid, +selected_state.getStateTime().toFixed(4));
+			if (last_state) key_parts.push(last_state.uuid, +last_state.getStateTime().toFixed(4), last_state.blend_transition);
+		}
 		for (let variable in Animator.MolangParser.variables) {
 			key_parts.push(variable, Animator.MolangParser.variables[variable]);
 		}
@@ -369,7 +375,7 @@ export const Animator = {
 		for (let time of times) {
 			Timeline.time = time;
 			Animator.showDefaultPose(true);
-			Animator.stackAnimations(Animation.all.filter(a => a.playing), false);
+			Animator.stackActiveAnimations(false, time - last_time);
 			Animator.displayMeshDeformation();
 
 			elements.forEach(obj => {
@@ -391,7 +397,7 @@ export const Animator = {
 		}
 		Timeline.time = last_time;
 		Animator.showDefaultPose(true);
-		Animator.stackAnimations(Animation.all.filter(a => a.playing), false);
+		Animator.stackActiveAnimations(false);
 
 		// Dispose pooled ghosts that were not needed by this build
 		for (let [uuid, pool] of Animator.onion_skin_pool) {
@@ -580,28 +586,23 @@ export const Animator = {
 		if (ev.render_frame && ev.render_frame.length > 0) return false;
 		return true;
 	},
-	preview(in_loop) {
-		// Any full pose pipeline run outside the controller fast path invalidates
-		// the cached clean pose (timeline playback, scrubbing, edits, UI events).
-		// The controller fast path re-marks the state right after calling this.
-		Animator._controller_static_pose_clean = false;
-		// Reset
-		Animator.showDefaultPose(true);
-		if (!Project) return;
-
-		// Controller
+	// 按当前激活的姿态来源堆叠动画：选中状态机状态时按状态（含过渡混合）求值，
+	// 否则堆叠所有 playing 动画。preview() 与 updateOnionSkin() 共用，保证洋葱皮
+	// 残影姿态与实时预览一致（反馈#126：状态机驱动时 playing 列表为空，残影曾
+	// 退化为未变换的默认姿态块）。
+	// state_time_offset：洋葱皮采样前后帧时对状态机内部时间的偏移（秒）。
+	stackActiveAnimations(in_loop, state_time_offset = 0) {
 		if (AnimationController.selected?.selected_state) {
-			let controller_blend_values, animations_to_play;
 			let controller = AnimationController.selected;
 			let {selected_state, last_state} = controller;
-			let state_time = selected_state.getStateTime();
+			let state_time = Math.max(0, selected_state.getStateTime() + state_time_offset);
 			let blend_progress = (last_state && last_state.blend_transition) ? Math.clamp(state_time / last_state.blend_transition, 0, 1) : 1;
 			let blend_value = last_state?.calculateBlendValue(blend_progress) ?? blend_progress;
 
 			// Active State
 			Timeline.time = state_time;
-			controller_blend_values = {};
-			animations_to_play = [];
+			let controller_blend_values = {};
+			let animations_to_play = [];
 
 			selected_state.animations.forEach(a => {
 				let animation = Animator.getAnimationByUuid(a.animation);
@@ -614,7 +615,7 @@ export const Animator = {
 
 			// Last State
 			if (blend_value < 1 && last_state) {
-				Timeline.time = last_state.getStateTime();
+				Timeline.time = Math.max(0, last_state.getStateTime() + state_time_offset);
 				controller_blend_values = {};
 				animations_to_play = [];
 
@@ -631,6 +632,17 @@ export const Animator = {
 		} else {
 			Animator.stackAnimations(Animation.all.filter(a => a.playing), in_loop, 0, false);
 		}
+	},
+	preview(in_loop) {
+		// Any full pose pipeline run outside the controller fast path invalidates
+		// the cached clean pose (timeline playback, scrubbing, edits, UI events).
+		// The controller fast path re-marks the state right after calling this.
+		Animator._controller_static_pose_clean = false;
+		// Reset
+		Animator.showDefaultPose(true);
+		if (!Project) return;
+
+		Animator.stackActiveAnimations(in_loop);
 
 
 		// 姿态应用之后的全部环境/装饰步骤包进 try/catch（反馈#36）：任何一步抛异常都不得中断
