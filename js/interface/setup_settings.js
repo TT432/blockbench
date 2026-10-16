@@ -115,6 +115,10 @@ function setupSettings() {
 	}, onChange() {
 		Canvas.updateRenderSides();
 	}});
+	// #117：负尺寸块（from>to）始终按「外面」渲染，普通块仍跟随渲染面设置
+	new Setting('negative_size_front_faces', {category: 'preview', value: false, onChange() {
+		if (typeof Canvas !== 'undefined') Canvas.updateAllFaces();
+	}});
 	new Setting('constant_outlines', 		{category: 'preview', value: false, onChange() { updateSelection() }});
 	new Setting('tone_mapping', 			{category: 'preview', value: 'none', type: 'select', options: {
 		none: tl('generic.none'),
