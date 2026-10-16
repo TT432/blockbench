@@ -357,9 +357,10 @@ export class NodePreviewController extends EventSystem {
 		this.dispatchEvent('update_transform', {element});
 	}
 	updateVisibility(element) {
-		// A hidden group hides all descendant elements in the preview.
-		// The element's own visibility state stays untouched, so it is
-		// restored independently when the group is shown again.
+		// 反馈#124：元素的预览可见性 = 自身标志 && 直属父组自身标志。
+		// 父组隐藏只隐藏其直属元素；子组内的元素由子组自身的开关独立控制，
+		// 不受更上层祖先组影响。元素自身的 visibility 标志不被组开关改写，
+		// 组重新显示后元素按各自标志恢复。
 		let group_hidden = element.parent instanceof Group && !element.parent.isVisibleInPreview();
 		element.mesh.visible = !!(element.visibility && !group_hidden);
 
@@ -1524,7 +1525,10 @@ Interface.definePanels(function() {
 							} else if (!affected.includes(node) && (!node.locked || key == 'locked' || key == 'visibility')) {
 								let new_affected = [node];
 								if (node.forEachChild) {
-									if (toggle_config.change_children != false) {
+									// 反馈#124：组的眼睛开关只翻转组自身标志，不再级联改写后代
+									// （隐藏组只隐藏其直属元素，由预览可见性规则实现，后代标志
+									// 与撤销记录保持原样；子组内容的显隐完全由子组自身开关决定）。
+									if (toggle_config.change_children != false && (key != 'visibility' || node instanceof Group == false)) {
 										node.forEachChild(node => {
 											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
 										});
