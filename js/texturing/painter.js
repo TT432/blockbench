@@ -4005,6 +4005,163 @@ BARS.defineActions(function() {
 		})
 	})
 	Painter.mirror_painting_options = BarItems.mirror_painting.tool_config.options;
+
+	// #127/#131：事后镜像补救（忘记开镜像绘画时）
+	// 收集作用面：选中元素的 UV 编辑器选中面（无面选择=全部面），限当前贴图、限 Cube
+	function getMirrorRemedyFaces(texture) {
+		let result = [];
+		let elements = (Project.selected_elements && Project.selected_elements.length)
+			? Project.selected_elements
+			: (Painter.current.element ? [Painter.current.element] : []);
+		for (let element of elements) {
+			if (!(element instanceof Cube)) continue;
+			let fkeys = UVEditor.getSelectedFaces(element);
+			if (!fkeys.length) fkeys = Object.keys(element.faces);
+			for (let fkey of fkeys) {
+				let face = element.faces[fkey];
+				if (!face || face.texture === null) continue;
+				if (face.getTexture() !== texture) continue;
+				result.push({element, fkey, face});
+			}
+		}
+		return result;
+	}
+	// 面的 UV 矩形 → 贴图像素矩形（与 setupRectFromFace 同规则，含序列帧偏移）
+	function getFacePixelRect(face, texture) {
+		let uvFactorX = texture.width / texture.getUVWidth();
+		let uvFactorY = texture.display_height / texture.getUVHeight();
+		let anim_offset = texture.frameCount > 1 ? texture.currentFrame * texture.display_height : 0;
+		return [
+			Math.floor(Math.min(face.uv[0], face.uv[2]) * uvFactorX),
+			Math.floor(Math.min(face.uv[1], face.uv[3]) * uvFactorY) + anim_offset,
+			Math.ceil(Math.max(face.uv[0], face.uv[2]) * uvFactorX),
+			Math.ceil(Math.max(face.uv[1], face.uv[3]) * uvFactorY) + anim_offset,
+		];
+	}
+	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到镜像绘画对应的对称 UV
+	new Action('paint_symmetric_texture', {
+		icon: 'flip_to_back',
+		category: 'paint',
+		condition: () => (Modes.paint || Modes.edit) && Texture.getDefault(),
+		click() {
+			let texture = Texture.getDefault();
+			let faces = getMirrorRemedyFaces(texture);
+			if (!faces.length) {
+				Blockbench.showQuickMessage(tl('action.paint_symmetric_texture.no_faces'));
+				return;
+			}
+			let copied = 0;
+			let skipped_cross_texture = 0;
+			let options = Painter.mirror_painting_options;
+			let old_texture_frames = options.texture_frames;
+			options.texture_frames = false;
+			texture.edit((canvas, current) => {
+				let ctx = current.ctx;
+				let cw = canvas.width, ch = canvas.height;
+				let full = ctx.getImageData(0, 0, cw, ch);
+				let out = new ImageData(new Uint8ClampedArray(full.data), cw, ch);
+				let old_element = Painter.current.element, old_face = Painter.current.face;
+				for (let {element, fkey, face} of faces) {
+					let rect = getFacePixelRect(face, texture);
+					Painter.current.element = element;
+					Painter.current.face = fkey;
+					for (let y = Math.max(0, rect[1]); y < Math.min(ch, rect[3]); y++) {
+						for (let x = Math.max(0, rect[0]); x < Math.min(cw, rect[2]); x++) {
+							let targets = Painter.getMirrorPaintTargets(texture, x, y, face.uv);
+							for (let target of targets) {
+								if (!target || !(target.element instanceof Cube) || !target.face) continue;
+								let tface = target.element.faces[target.face];
+								if (!tface || tface.getTexture() !== texture) {
+									skipped_cross_texture++;
+									continue;
+								}
+								let tx = Math.round(target.x), ty = Math.round(target.y);
+								if (tx < 0 || ty < 0 || tx >= cw || ty >= ch) continue;
+								if (tx === x && ty === y) continue;
+								let si = (y * cw + x) * 4, ti = (ty * cw + tx) * 4;
+								out.data[ti] = full.data[si];
+								out.data[ti+1] = full.data[si+1];
+								out.data[ti+2] = full.data[si+2];
+								out.data[ti+3] = full.data[si+3];
+								copied++;
+							}
+						}
+					}
+				}
+				Painter.current.element = old_element;
+				Painter.current.face = old_face;
+				ctx.putImageData(out, 0, 0);
+			}, {edit_name: tl('action.paint_symmetric_texture')});
+			options.texture_frames = old_texture_frames;
+			Blockbench.showQuickMessage(tl('action.paint_symmetric_texture.result', [copied]));
+		}
+	})
+	// #131 面内镜像复制：把所选面 UV 矩形的一半镜像复制到另一半
+	function mirrorCopyFaceRect(ctx, canvas, rect, mode) {
+		let x1 = Math.max(0, rect[0]), y1 = Math.max(0, rect[1]);
+		let x2 = Math.min(canvas.width, rect[2]), y2 = Math.min(canvas.height, rect[3]);
+		let w = x2 - x1, h = y2 - y1;
+		let horizontal = (mode == 'ltr' || mode == 'rtl');
+		let half = horizontal ? Math.floor(w / 2) : Math.floor(h / 2);
+		if (half < 1) return false;
+		let sx = mode == 'rtl' ? x2 - half : x1;
+		let sy = mode == 'btt' ? y2 - half : y1;
+		let sw = horizontal ? half : w;
+		let sh = horizontal ? h : half;
+		let tmp = document.createElement('canvas');
+		tmp.width = sw; tmp.height = sh;
+		tmp.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+		let dx = mode == 'ltr' ? x2 - half : x1;
+		let dy = mode == 'ttb' ? y2 - half : y1;
+		ctx.save();
+		if (horizontal) {
+			ctx.translate(dx + sw / 2, dy);
+			ctx.scale(-1, 1);
+			ctx.drawImage(tmp, -sw / 2, 0);
+		} else {
+			ctx.translate(dx, dy + sh / 2);
+			ctx.scale(1, -1);
+			ctx.drawImage(tmp, 0, -sh / 2);
+		}
+		ctx.restore();
+		return true;
+	}
+	new Action('paint_face_mirror_copy', {
+		icon: 'flip',
+		category: 'paint',
+		condition: () => (Modes.paint || Modes.edit) && Texture.getDefault(),
+		click() {
+			let texture = Texture.getDefault();
+			let faces = getMirrorRemedyFaces(texture);
+			if (!faces.length) {
+				Blockbench.showQuickMessage(tl('action.paint_face_mirror_copy.no_faces'));
+				return;
+			}
+			new Dialog('face_mirror_copy', {
+				title: 'action.paint_face_mirror_copy',
+				id: 'face_mirror_copy',
+				form: {
+					mode: {type: 'select', label: 'dialog.face_mirror_copy.mode', value: 'ltr', options: {
+						ltr: 'dialog.face_mirror_copy.mode.ltr',
+						rtl: 'dialog.face_mirror_copy.mode.rtl',
+						ttb: 'dialog.face_mirror_copy.mode.ttb',
+						btt: 'dialog.face_mirror_copy.mode.btt',
+					}},
+					info: {type: 'info', text: 'dialog.face_mirror_copy.desc'},
+				},
+				onConfirm(result) {
+					let done = 0;
+					texture.edit((canvas, current) => {
+						for (let {face} of faces) {
+							let rect = getFacePixelRect(face, texture);
+							if (mirrorCopyFaceRect(current.ctx, canvas, rect, result.mode)) done++;
+						}
+					}, {edit_name: tl('action.paint_face_mirror_copy')});
+					Blockbench.showQuickMessage(tl('action.paint_face_mirror_copy.result', [done]));
+				}
+			}).show();
+		}
+	})
 	new Toggle('color_erase_mode', {
 		icon: 'remove_circle',
 		category: 'paint',
