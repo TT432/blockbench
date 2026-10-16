@@ -2961,6 +2961,8 @@ Interface.definePanels(function() {
 					'uv_rotation',
 					//Box
 					'toggle_mirror_uv',
+					'paint_symmetric_texture',
+					'paint_face_mirror_copy',
 				]
 			})
 		],

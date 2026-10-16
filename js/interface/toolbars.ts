@@ -613,6 +613,8 @@ export const BARS = {
 				'brush_shape',
 				'blend_mode',
 				'mirror_painting',
+				'paint_symmetric_texture',
+				'paint_face_mirror_copy',
 				'color_erase_mode',
 				'lock_alpha',
 				'painting_grid',
