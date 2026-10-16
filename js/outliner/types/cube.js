@@ -1640,6 +1640,108 @@ new NodePreviewController(Cube, {
 })
 
 BARS.defineActions(function() {
+	// 反馈#135：负尺寸描边——为选中的块/选中的组内所有块，创建各轴扩大「宽度」格的
+	// 负尺寸壳块（from > to，游戏里反面渲染形成描边），并按参数填充颜色与分配 UV。
+	new Action('negative_outline', {
+		icon: 'border_outer',
+		category: 'edit',
+		condition: () => Modes.edit && Project && Format.edit_mode !== false && !Format.image_editor
+			&& (Outliner.selected.some(el => el instanceof Cube) || Group.multi_selected.length > 0),
+		click: function () {
+			let targets = new Set();
+			Outliner.selected.forEach(el => { if (el instanceof Cube) targets.add(el); });
+			Group.multi_selected.forEach(g => {
+				g.forEachChild(el => { if (el instanceof Cube) targets.add(el); });
+			});
+			if (!targets.size) return;
+			new Dialog({
+				id: 'negative_outline',
+				title: 'action.negative_outline',
+				width: 420,
+				form: {
+					width: {label: 'dialog.negative_outline.width', type: 'number', value: 1, min: 0.05, step: 0.05},
+					uv_mode: {label: 'dialog.negative_outline.uv_mode', type: 'select', value: 'shared', options: {
+						shared: 'dialog.negative_outline.uv_mode.shared',
+						individual: 'dialog.negative_outline.uv_mode.individual',
+					}},
+					color: {label: 'dialog.negative_outline.color', type: 'color', value: ColorPanel.get()},
+				},
+				onConfirm(form) {
+					let w = Math.max(0.05, Number(form.width) || 0);
+					let color = form.color;
+					let cube_list = [...targets];
+
+					Undo.initEdit({elements: [], outliner: true, textures: Texture.getDefault() ? [Texture.getDefault()] : [], bitmap: true});
+
+					// 目标贴图：默认贴图，没有则新建 16x16
+					let texture = Texture.getDefault();
+					if (!texture) {
+						let canvas = document.createElement('canvas');
+						canvas.width = canvas.height = 16;
+						texture = new Texture({name: 'outline', mode: 'bitmap', keep_size: true, folder: 'block'})
+							.fromDataURL(canvas.toDataURL('image/png')).fillParticle();
+						texture.add(false, true);
+						if (Format.per_texture_uv_size) {
+							texture.uv_width = 16;
+							texture.uv_height = 16;
+						}
+					} else {
+						// initEdit 快照会替换活跃数组内的对象，按 uuid 重查
+						texture = Texture.all.find(t => t.uuid == texture.uuid);
+					}
+					let uv_w = texture.getUVWidth();
+					let uv_h = texture.getUVHeight();
+
+					// UV 单元分配：shared 全部块共用 (0,0)；individual 逐块一个单元
+					// （超出贴图 UV 容量时回绕复用——平面填充色不受影响，仅独立改色粒度下降）
+					let cells = cube_list.map((el, i) => form.uv_mode == 'individual'
+						? [i % uv_w, Math.floor(i / uv_w) % uv_h]
+						: [0, 0]);
+
+					// 填充颜色到分配的贴图像素（直绘画布：texture.edit 会自建独立撤销条目，
+					// 与本动作的撤销拆分；外层 Undo.initEdit 已含 bitmap 快照）
+					if (!texture.internal) texture.convertToInternal();
+					let {canvas: tex_canvas} = texture.getActiveCanvas();
+					let tex_ctx = tex_canvas.getContext('2d');
+					tex_ctx.imageSmoothingEnabled = false;
+					tex_ctx.fillStyle = color;
+					cells.forEach(([u, v]) => {
+						tex_ctx.fillRect(
+							Math.round(u * tex_canvas.width / uv_w),
+							Math.round(v * tex_canvas.height / uv_h),
+							Math.max(1, Math.round(tex_canvas.width / uv_w)),
+							Math.max(1, Math.round(tex_canvas.height / uv_h)));
+					});
+					texture.updateChangesAfterEdit();
+
+					let new_cubes = [];
+					cube_list.forEach((cube, i) => {
+						let [u, v] = cells[i];
+						let faces_data = {};
+						['up', 'down', 'north', 'south', 'east', 'west'].forEach(fkey => {
+							faces_data[fkey] = {uv: [u, v, u + 1, v + 1], texture};
+						});
+						let shell = new Cube({
+							name: (cube.name || 'cube') + '_outline',
+							autouv: 0,
+							box_uv: false,
+							// 负尺寸：from > to；用 max/min 计算以兼容源块本身已是负尺寸的情况
+							from: [Math.max(cube.from[0], cube.to[0]) + w, Math.max(cube.from[1], cube.to[1]) + w, Math.max(cube.from[2], cube.to[2]) + w],
+							to: [Math.min(cube.from[0], cube.to[0]) - w, Math.min(cube.from[1], cube.to[1]) - w, Math.min(cube.from[2], cube.to[2]) - w],
+							rotation: cube.rotation.slice(),
+							origin: cube.origin.slice(),
+							faces: faces_data,
+						}).init();
+						shell.addTo(cube.parent instanceof Group ? cube.parent : undefined);
+						shell.preview_controller.updateTransform(shell);
+						new_cubes.push(shell);
+					});
+					Outliner.selected.replace(new_cubes);
+					Undo.finishEdit('Create negative outline', {elements: new_cubes, outliner: true, textures: [texture], bitmap: true});
+				}
+			}).show();
+		}
+	})
 	new Action({
 		id: 'add_cube',
 		icon: 'add_box',
