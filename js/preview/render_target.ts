@@ -1,6 +1,8 @@
 /**
  * Utility to render the current viewport into a buffer, where each pixel contains the UV coords as well as which mesh and face was hit
  */
+import { CubeBatcher } from './cube_batcher';
+
 export class RenderTargetSnapshot {
 	preview: Preview
 	meshes: THREE.Mesh[]
@@ -45,6 +47,8 @@ export class RenderTargetSnapshot {
 		this.meshes = meshes;
 
 		// Render scene to offscreen buffer
+		// cube_batcher：拾取渲染需命中原 cube mesh（合批代理网格隐藏，原 mesh 回渲染层）
+		CubeBatcher.enterPicking();
 		renderer.setRenderTarget(this.render_target);
 		renderer.clear();
 		renderer.render(scene, camera);
@@ -57,6 +61,7 @@ export class RenderTargetSnapshot {
 			this.render_target.height,
 			this.pixel_buffer
 		);
+		CubeBatcher.exitPicking();
 
 		// Restore
 		meshes.forEach((mesh) => {

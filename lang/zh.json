@@ -228,6 +228,8 @@
 	"settings.community_ruler_step_candidates.desc": "标尺时间步长从与整帧对齐的规整候选序列选取。关闭后使用原版硬编码步长表。",
 	"settings.community_playhead_wrap_effective_length": "动画：重选动画保持播放头",
 	"settings.community_playhead_wrap_effective_length.desc": "重新选中零长度（基岩版）动画时保持播放头位置，而不是跳回第 0 帧（原版行为）。",
+	"settings.community_cube_batching": "性能：按材质合批渲染方块",
+	"settings.community_cube_batching.desc": "把共享同一材质的静态方块合并为每材质一个网格，大模型下大幅减少绘制调用。关闭后每个方块单独渲染（原版行为）。",
 	"settings.language": "语言",
 	"settings.language.desc": "界面语言",
 	"settings.backup_interval": "备份间隔",

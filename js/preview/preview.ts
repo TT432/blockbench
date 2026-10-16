@@ -733,10 +733,14 @@ export class Preview {
 	}
 	render() {
 		this.controls.update();
+		// 社区版 cube 合批：watcher 在渲染前刷新矩阵并增量重烘（内部幂等，关闭时零开销早退）
+		CubeBatcher.beforeRender(this);
 		// Animator.preview() this frame already ran Canvas.scene.updateMatrixWorld(); skip the duplicate traversal inside renderer.render
-		let skip_matrix_update = Animator._scene_matrices_fresh === true;
+		// CubeBatcher.beforeRender 同理：watcher 已刷新场景矩阵时跳过渲染器内的重复遍历
+		let skip_matrix_update = Animator._scene_matrices_fresh === true || CubeBatcher._scene_matrices_fresh === true;
 		if (skip_matrix_update) {
 			Animator._scene_matrices_fresh = false;
+			CubeBatcher._scene_matrices_fresh = false;
 			Canvas.scene.autoUpdate = false;
 		}
 		try {

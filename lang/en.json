@@ -1143,6 +1143,8 @@
 	"settings.community_ruler_step_candidates.desc": "Ruler time steps come from a regular candidate sequence aligned to whole frames. When off, the stock hard-coded step table is used.",
 	"settings.community_playhead_wrap_effective_length": "Animations: Keep Playhead on Animation Reselect",
 	"settings.community_playhead_wrap_effective_length.desc": "Reselecting a zero-length (Bedrock) animation keeps the current playhead position instead of jumping back to frame 0 (stock behavior).",
+	"settings.community_cube_batching": "Performance: Batch Cubes by Material",
+	"settings.community_cube_batching.desc": "Merges all static cubes sharing a material into one mesh per material, cutting draw calls drastically on large models. When off, every cube renders individually (stock behavior).",
 
 	"settings.language": "Language",
 	"settings.language.desc": "Interface language",

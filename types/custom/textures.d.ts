@@ -201,6 +201,23 @@ declare global {
 		get material(): THREE.ShaderMaterial
 		set material(value: THREE.ShaderMaterial)
 
+		/**
+		 * 半透明内容判定（社区版）：贴图是否含 0<alpha<255 的 texel（additive 恒为 true）
+		 */
+		hasTranslucency(): boolean
+		/**
+		 * 半透明内容判定（社区版）：该元素各面 UV 区域内是否含半透明 texel
+		 */
+		elementHasTranslucency(element: OutlinerElement): boolean
+		/**
+		 * 半透明内容判定（社区版）：指定 UV 区域内是否含半透明 texel
+		 */
+		uvAreaHasTranslucency(u0: number, v0: number, u1: number, v1: number): boolean
+		/**
+		 * 半透明内容缓存（社区版）：undefined 表示未判定/已失效（贴图像素变化后重算）
+		 */
+		_has_translucency?: boolean
+
 		getErrorMessage(): string
 		extend(data: TextureData): this
 

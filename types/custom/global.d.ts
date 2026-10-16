@@ -1,5 +1,7 @@
 /// <reference types="./blockbench"/>
 
+import type { CubeBatcher as CubeBatcherType } from '../../js/preview/cube_batcher';
+
 declare global {
 	// const Prism: typeof import('prismjs')
 	/**
@@ -174,6 +176,13 @@ declare global {
 
 	interface Event {
 		shiftKey?: boolean
+	}
+
+	const CubeBatcher: typeof CubeBatcherType
+	/** bone_batch.js 的全局合批器（JS 模块，此处仅声明 CubeBatcher 互斥压制所需的最小面） */
+	const BoneBatcher: {
+		enabled: boolean
+		setEnabled(value: boolean): void
 	}
 }
 
