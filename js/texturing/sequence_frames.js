@@ -351,23 +351,21 @@ function extractFacePixels(face_info, source_textures) {
 	return canvas;
 }
 
-// #94：模型帧导入（每个方块视为一帧）
+// #94/#123：模型帧导入——整个模型视为一帧，按帧数克隆完整模型（保留分组层级，
+// 组名逐帧加 -1/-2/… 后缀）；原模型的 UV 布局视为一个不可变整体逐帧平铺排开，
+// 方便绘画模式框选某一帧的全部 UV 做整体调整
 function importModelFrames(form, model, source_textures) {
 	let elements = (model.elements || []).filter(el => (!el.type || el.type == 'cube') && el.from && el.to);
 	if (!elements.length) {
 		Blockbench.showQuickMessage(tl('message.sequence_frames.no_cubes'));
 		return;
 	}
-	// 反馈#123：模型模式的帧数设置——每个方块一帧，限制只取前 N 个方块
-	let frame_limit = Math.floor(form.frame_limit) || 0;
-	if (frame_limit > 0 && elements.length > frame_limit) {
-		elements = elements.slice(0, frame_limit);
-	}
-	// 反馈#123：无限制且数量异常大时先确认，避免误选普通模型后一次创建上千个帧组
-	if (elements.length > 200 && !form._frames_confirmed) {
+	let frame_count = Math.max(1, Math.floor(form.frame_limit) || 1);
+	// 反馈#123：帧数异常大时先确认，避免误操作一次创建上千个帧组
+	if (frame_count > 200 && !form._frames_confirmed) {
 		Blockbench.showMessageBox({
 			title: tl('dialog.sequence_frames.title'),
-			message: tl('message.sequence_frames.too_many_frames', [elements.length]),
+			message: tl('message.sequence_frames.too_many_frames', [frame_count]),
 			icon: 'warning',
 			buttons: ['dialog.confirm', 'dialog.cancel'],
 		}, button => {
@@ -380,14 +378,23 @@ function importModelFrames(form, model, source_textures) {
 	let base_name = (form.group_name || '').trim() || 'frames';
 	let copy_first = form.uv_mode != 'blank';
 
-	let frames = elements.map(el => ({el, faces: extractFrameFaces(el, model)}));
-	// 首帧各面的像素内容（copy_first 时复制到所有帧）
-	let first_face_canvases = {};
-	if (copy_first && frames[0]) {
-		frames[0].faces.forEach(face_info => {
-			first_face_canvases[face_info.fkey] = extractFacePixels(face_info, source_textures);
+	// 提取每个方块的面数据（所有帧共享同一份原始 UV 布局）
+	let el_map = {};
+	let min_u = Infinity, min_v = Infinity, max_u = -Infinity, max_v = -Infinity;
+	elements.forEach(el => {
+		let faces = extractFrameFaces(el, model);
+		el_map[el.uuid] = {el, faces};
+		faces.forEach(f => {
+			if (f.enabled === false) return;
+			let [ax, ay, bx, by] = f.uv_rect;
+			if (bx - ax <= 0 || by - ay <= 0) return;
+			min_u = Math.min(min_u, ax); min_v = Math.min(min_v, ay);
+			max_u = Math.max(max_u, bx); max_v = Math.max(max_v, by);
 		});
-	}
+	});
+	if (min_u > max_u) { min_u = min_v = 0; max_u = max_v = 1; }
+	let block_w = Math.max(1, Math.ceil(max_u - min_u));
+	let block_h = Math.max(1, Math.ceil(max_v - min_v));
 
 	// 解析目标贴图：单贴图格式用默认贴图（没有则新建），否则按选择
 	let target_texture = null;
@@ -404,37 +411,68 @@ function importModelFrames(form, model, source_textures) {
 	let has_content = Texture.all.length > 0 || Outliner.elements.some(el => el.faces);
 	let adjust_project_uv = !Format.per_texture_uv_size && !target_texture && !has_content;
 
-	// 纯计算：排布所有帧的所有面
-	let fill_map, uv_w, uv_h, extent_x = 0, extent_y = 0;
+	// 纯计算：逐帧排布整块 UV（已有贴图整块装箱；新贴图网格平铺）
+	let uv_w, uv_h, frame_positions;
 	if (target_texture) {
 		uv_w = target_texture.getUVWidth();
 		uv_h = target_texture.getUVHeight();
-		fill_map = buildOccupancyMap(target_texture);
-	} else if (Format.per_texture_uv_size || adjust_project_uv) {
-		uv_w = 16384;
-		uv_h = 16384;
-		fill_map = {};
-	} else {
-		// 共享 UV 空间且已有内容：新贴图沿用工程 UV 尺寸
-		uv_w = Project.texture_width;
-		uv_h = Project.texture_height;
-		fill_map = {};
-	}
-	for (let frame of frames) {
-		for (let face_info of frame.faces) {
-			let w = Math.max(1, Math.ceil(face_info.uv_rect[2] - face_info.uv_rect[0]));
-			let h = Math.max(1, Math.ceil(face_info.uv_rect[3] - face_info.uv_rect[1]));
-			let pos = placeRect(fill_map, w, h, uv_w, uv_h);
+		let fill_map = buildOccupancyMap(target_texture);
+		frame_positions = [];
+		for (let i = 0; i < frame_count; i++) {
+			let pos = placeRect(fill_map, block_w, block_h, uv_w, uv_h);
 			if (!pos) {
 				Blockbench.showQuickMessage(tl('message.sequence_frames.no_space'));
 				return;
 			}
-			face_info.width = w;
-			face_info.height = h;
-			face_info.pos = pos;
-			extent_x = Math.max(extent_x, pos[0] + w);
-			extent_y = Math.max(extent_y, pos[1] + h);
+			frame_positions.push(pos);
 		}
+	} else if (Format.per_texture_uv_size || adjust_project_uv) {
+		let cols = Math.ceil(Math.sqrt(frame_count));
+		let rows = Math.ceil(frame_count / cols);
+		uv_w = block_w * cols;
+		uv_h = block_h * rows;
+		frame_positions = [];
+		for (let i = 0; i < frame_count; i++) {
+			frame_positions.push([(i % cols) * block_w, Math.floor(i / cols) * block_h]);
+		}
+	} else {
+		// 共享 UV 空间且已有内容：新贴图沿用工程 UV 尺寸，整块装箱
+		uv_w = Project.texture_width;
+		uv_h = Project.texture_height;
+		let fill_map = {};
+		frame_positions = [];
+		for (let i = 0; i < frame_count; i++) {
+			let pos = placeRect(fill_map, block_w, block_h, uv_w, uv_h);
+			if (!pos) {
+				Blockbench.showQuickMessage(tl('message.sequence_frames.no_space'));
+				return;
+			}
+			frame_positions.push(pos);
+		}
+	}
+
+	// 各面的来源像素（copy_first 时复制到所有帧的对应位置）
+	let face_canvases = {};
+	if (copy_first) {
+		elements.forEach(el => {
+			el_map[el.uuid].faces.forEach(face_info => {
+				face_canvases[el.uuid + ':' + face_info.fkey] = extractFacePixels(face_info, source_textures);
+			});
+		});
+	}
+	function paintAllFrames(ctx, r_x, r_y) {
+		elements.forEach(el => {
+			el_map[el.uuid].faces.forEach(face_info => {
+				let src = face_canvases[el.uuid + ':' + face_info.fkey];
+				if (!src) return;
+				let [ax, ay, bx, by] = face_info.uv_rect;
+				frame_positions.forEach(pos => {
+					ctx.drawImage(src, 0, 0, src.width, src.height,
+						(pos[0] + ax - min_u) * r_x, (pos[1] + ay - min_v) * r_y,
+						(bx - ax) * r_x, (by - ay) * r_y);
+				});
+			});
+		});
 	}
 
 	let cubes = [];
@@ -454,25 +492,15 @@ function importModelFrames(form, model, source_textures) {
 		texture = Texture.all.find(t => t.uuid == target_texture.uuid);
 		if (copy_first) {
 			paintOnTexture(texture, (ctx, canvas) => {
-				let r_x = canvas.width / uv_w;
-				let r_y = canvas.height / uv_h;
-				frames.forEach(frame => {
-					frame.faces.forEach(face_info => {
-						let src = first_face_canvases[face_info.fkey];
-						if (!src || !face_info.pos) return;
-						ctx.drawImage(src, 0, 0, src.width, src.height,
-							face_info.pos[0] * r_x, face_info.pos[1] * r_y,
-							face_info.width * r_x, face_info.height * r_y);
-					});
-				});
+				paintAllFrames(ctx, canvas.width / uv_w, canvas.height / uv_h);
 			});
 		}
 	} else {
 		// 新建贴图：先组好画布再创建，避免异步加载竞争
 		let tex_w, tex_h;
 		if (Format.per_texture_uv_size || adjust_project_uv) {
-			tex_w = Math.max(16, Math.ceil(extent_x / 16) * 16);
-			tex_h = Math.max(16, Math.ceil(extent_y / 16) * 16);
+			tex_w = Math.max(16, Math.ceil(uv_w / 16) * 16);
+			tex_h = Math.max(16, Math.ceil(uv_h / 16) * 16);
 		} else {
 			tex_w = Project.texture_width;
 			tex_h = Project.texture_height;
@@ -482,16 +510,7 @@ function importModelFrames(form, model, source_textures) {
 		canvas.height = tex_h;
 		let ctx = canvas.getContext('2d');
 		ctx.imageSmoothingEnabled = false;
-		if (copy_first) {
-			frames.forEach(frame => {
-				frame.faces.forEach(face_info => {
-					let src = first_face_canvases[face_info.fkey];
-					if (!src || !face_info.pos) return;
-					ctx.drawImage(src, 0, 0, src.width, src.height,
-						face_info.pos[0], face_info.pos[1], face_info.width, face_info.height);
-				});
-			});
-		}
+		if (copy_first) paintAllFrames(ctx, tex_w / uv_w, tex_h / uv_h);
 		texture = new Texture({
 			mode: 'bitmap',
 			keep_size: true,
@@ -508,36 +527,78 @@ function importModelFrames(form, model, source_textures) {
 		}
 	}
 
-	let {frame_groups} = createFrameGroups(base_name, frames.length, groups);
-	frames.forEach((frame, i) => {
+	let {frame_groups} = createFrameGroups(base_name, frame_count, groups);
+
+	// 克隆来源模型的组树与方块到指定帧组，组名加帧后缀
+	function cloneChildren(children, parent_group, suffix, frame_index) {
+		(children || []).forEach(node => {
+			if (typeof node == 'string') {
+				let entry = el_map[node];
+				if (!entry) return;	// 非方块元素（网格等）或缺失引用
+				cloneCube(entry, parent_group, frame_index);
+			} else if (node && typeof node == 'object') {
+				let group = new Group({name: (node.name || 'group') + suffix}).init();
+				if (node.origin instanceof Array) group.origin = node.origin.slice();
+				if (node.rotation instanceof Array && group.rotation instanceof Array) group.rotation = node.rotation.slice();
+				if (node.visibility === false) group.visibility = false;
+				if (node.locked) group.locked = true;
+				group.addTo(parent_group);
+				group.preview_controller.updateTransform(group);
+				groups.push(group);
+				cloneChildren(node.children, group, suffix, frame_index);
+			}
+		});
+	}
+	function cloneCube(entry, parent_group, frame_index) {
+		let pos = frame_positions[frame_index];
 		let faces_data = {};
-		frame.faces.forEach(face_info => {
-			if (!face_info.pos) return;
+		entry.faces.forEach(face_info => {
+			if (face_info.enabled === false) return;
+			let [ax, ay, bx, by] = face_info.uv_rect;
+			if (bx - ax <= 0 || by - ay <= 0) return;
 			let data = {
-				uv: [face_info.pos[0], face_info.pos[1], face_info.pos[0] + face_info.width, face_info.pos[1] + face_info.height],
+				uv: [pos[0] + ax - min_u, pos[1] + ay - min_v, pos[0] + bx - min_u, pos[1] + by - min_v],
 				texture,
 				rotation: face_info.rotation,
 			};
-			if (face_info.enabled === false) data.enabled = false;
 			faces_data[face_info.fkey] = data;
 		});
-		// 退化面（零尺寸）不设贴图，避免占用默认 UV
+		// 退化面（零尺寸/禁用）不设贴图，避免占用默认 UV
 		for (let fkey of FACE_KEYS) {
 			if (!faces_data[fkey]) faces_data[fkey] = {uv: [0, 0, 0, 0], texture: null};
 		}
 		let cube = new Cube({
-			name: frame.el.name || frame_groups[i].name,
+			name: entry.el.name || parent_group.name,
 			autouv: 0,
 			box_uv: false,
-			from: frame.el.from.slice(),
-			to: frame.el.to.slice(),
-			rotation: (frame.el.rotation || [0, 0, 0]).slice(),
-			origin: (frame.el.origin || [0, 0, 0]).slice(),
+			from: entry.el.from.slice(),
+			to: entry.el.to.slice(),
+			rotation: (entry.el.rotation || [0, 0, 0]).slice(),
+			origin: (entry.el.origin || [0, 0, 0]).slice(),
 			faces: faces_data
 		}).init();
-		cube.addTo(frame_groups[i]);
+		if (entry.el.inflate) cube.inflate = entry.el.inflate;
+		if (entry.el.visibility === false) cube.visibility = false;
+		if (entry.el.locked) cube.locked = true;
+		cube.addTo(parent_group);
 		cube.preview_controller.updateTransform(cube);
 		cubes.push(cube);
+	}
+	let outliner_tree = model.outliner instanceof Array ? model.outliner : elements.map(el => el.uuid);
+	frame_groups.forEach((frame_group, i) => {
+		let suffix = '-' + (i + 1);
+		let visited = new Set();
+		(function mark(list) {
+			(list || []).forEach(node => {
+				if (typeof node == 'string') visited.add(node);
+				else if (node && typeof node == 'object') mark(node.children);
+			});
+		})(outliner_tree);
+		cloneChildren(outliner_tree, frame_group, suffix, i);
+		// outliner 未引用的方块兜底进帧组
+		elements.forEach(el => {
+			if (!visited.has(el.uuid)) cloneCube(el_map[el.uuid], frame_group, i);
+		});
 	});
 	Outliner.selected.replace(cubes);
 	Undo.finishEdit('Import model frames', {
@@ -681,8 +742,8 @@ function openDialog(source) {
 			frame_limit: {
 				label: 'dialog.sequence_frames.frame_limit',
 				type: 'number',
-				value: 0,
-				min: 0,
+				value: 1,
+				min: 1,
 				condition: (form) => form.mode == 'model',
 			},
 			uv_mode: {
@@ -803,3 +864,4 @@ BARS.defineActions(function() {
 		}
 	})
 })
+
