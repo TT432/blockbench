@@ -795,6 +795,44 @@ SharedActions.add('delete', {
 		Undo.finishEdit('Delete outliner selection')
 	}
 })
+// 社区版 #136：复制骨骼动画时，若新旧骨骼名尾部数字不同（createUniqueName 只改末位数字，
+// 如 sword1→sword2、sword-1-1→sword-1-2），把复制出的关键帧里 molang 变量
+// （v.xxxNN / temp.xxxNN）的两位数字后缀同步替换。只动新关键帧（Keyframe 构造已深拷贝），原骨骼不受影响。
+function renameMolangVarSuffixInAnimator(animator, orig_name, new_name) {
+	function trailingNumbers(name) {
+		let match = name.match(/\d+(?:-\d+)*$/);
+		return match ? match[0].split('-') : null;
+	}
+	let orig_nums = trailingNumbers(orig_name);
+	let new_nums = trailingNumbers(new_name);
+	if (!orig_nums || !new_nums) return 0;
+	let idx = -1;
+	let len = Math.min(orig_nums.length, new_nums.length);
+	for (let i = 0; i < len; i++) {
+		if (orig_nums[i] != new_nums[i]) { idx = i; break; }
+	}
+	if (idx == -1) return 0;
+	let old_suffix = orig_nums[idx].padStart(2, '0');
+	let new_suffix = new_nums[idx].padStart(2, '0');
+	if (old_suffix == new_suffix) return 0;
+	// 变量名结尾恰为旧两位后缀、且后缀前一位不是数字（避免误伤 v.xx001）
+	let regex = new RegExp(`\\b(v|temp)\\.([A-Za-z_][A-Za-z0-9_]*?)(?<![0-9])${old_suffix}\\b`, 'g');
+	let count = 0;
+	for (let kf of animator.keyframes) {
+		for (let data_point of kf.data_points) {
+			for (let axis of ['x', 'y', 'z']) {
+				let value = data_point[axis];
+				if (typeof value != 'string' || !value.includes(old_suffix)) continue;
+				let replaced = value.replace(regex, `$1.$2${new_suffix}`);
+				if (replaced != value) {
+					data_point[axis] = replaced;
+					count++;
+				}
+			}
+		}
+	}
+	return count;
+}
 SharedActions.add('duplicate', {
 	subject: 'outliner',
 	condition: () => Modes.edit && Group.first_selected,
@@ -840,6 +878,7 @@ SharedActions.add('duplicate', {
 					if (result == 1) return;
 
 					Undo.initEdit({animations: affected_anims});
+					let renamed_suffix_count = 0;
 					for (let animation of affected_anims) {
 						for (let i = 0; i < all_original.length; i++) {
 							let orig_animator = animation.animators[all_original[i].uuid];
@@ -851,7 +890,13 @@ SharedActions.add('duplicate', {
 							for (let kf of orig_animator.keyframes) {
 								new_animator.addKeyframe(kf);
 							}
+							if (settings.community_duplicate_bone_var_suffix?.value) {
+								renamed_suffix_count += renameMolangVarSuffixInAnimator(new_animator, all_original[i].name, all_new[i].name);
+							}
 						}
+					}
+					if (renamed_suffix_count) {
+						Blockbench.showQuickMessage(tl('message.duplicate_bone_var_suffix_updated', [renamed_suffix_count]));
 					}
 					Undo.finishEdit('Copy animations of duplicated bones');
 				})
@@ -1465,6 +1510,7 @@ Interface.definePanels(function() {
 				children: [
 					'add_element',
 					'add_group',
+					'negative_outline',
 					'outliner_toggle',
 					'toggle_skin_layer',
 					'explode_skin_model',
@@ -1531,9 +1577,9 @@ Interface.definePanels(function() {
 							} else if (!affected.includes(node) && (!node.locked || key == 'locked' || key == 'visibility')) {
 								let new_affected = [node];
 								if (node.forEachChild) {
-									// 反馈#124：组的眼睛开关只翻转组自身标志，不再级联改写后代
-									// （隐藏组只隐藏其直属元素，由预览可见性规则实现，后代标志
-									// 与撤销记录保持原样；子组内容的显隐完全由子组自身开关决定）。
+									// 反馈#124/#133：默认级联改写后代可见性标志（上游行为）；
+									// 仅在开启 community_group_visibility_direct_only 时，
+									// 组的眼睛开关只翻转自身标志，由预览可见性规则隐藏直属元素。
 									if (toggle_config.change_children != false && (!settings.community_group_visibility_direct_only.value || key != 'visibility' || node instanceof Group == false)) {
 										node.forEachChild(node => {
 											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
