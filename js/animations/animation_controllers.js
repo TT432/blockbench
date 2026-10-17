@@ -1752,8 +1752,25 @@ Interface.definePanels(() => {
 						this.zoom = zoom;
 					} else {
 						// Pan
-						this.pan.x -= event.deltaX + (event.shiftKey ? event.deltaY : 0);
-						this.pan.y -= event.shiftKey ? 0 : event.deltaY;
+						// 反馈#149：四个方向平移键位（ac_pan_canvas_*）支持录入「组合键+滚轮」
+						// （key=1001，录制时滚动滚轮即可录入）。绑定后滚轮按该动作的轴向平移：
+						// 上/下 = 纵向（滚轮自然方向），左/右 = 横向。未绑定滚轮时保持原版行为
+						// （滚轮 = 纵向，shift+滚轮 = 横向）；把 shift+滚轮录到「向下平移」即可
+						// 让 shift+滚轮改为上下移动。key==1001 判断防止绑定鼠标左键（which==1）
+						// 的动作被滚轮事件（which==1）误触发。
+						let wheel_bound = (item) => {
+							let kb = Keybinds.extra[item].keybind;
+							return kb.key == 1001 && kb.isTriggered(event);
+						};
+						if (wheel_bound('ac_pan_canvas_up') || wheel_bound('ac_pan_canvas_down')) {
+							this.pan.x -= event.deltaX;
+							this.pan.y -= event.deltaY;
+						} else if (wheel_bound('ac_pan_canvas_left') || wheel_bound('ac_pan_canvas_right')) {
+							this.pan.x -= event.deltaX + event.deltaY;
+						} else {
+							this.pan.x -= event.deltaX + (event.shiftKey ? event.deltaY : 0);
+							this.pan.y -= event.shiftKey ? 0 : event.deltaY;
+						}
 					}
 				},
 				getStatePosition(state) {
