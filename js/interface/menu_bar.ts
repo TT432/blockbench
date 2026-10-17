@@ -300,6 +300,7 @@ export const MenuBar = {
 			new MenuSeparator('add_element'),
 			'add_element',
 			'add_group',
+			'negative_outline',
 			new MenuSeparator('modify_elements'),
 			'duplicate',
 			'rename',

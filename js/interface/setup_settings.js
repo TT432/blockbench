@@ -382,13 +382,7 @@ function setupSettings() {
 
 	new Setting('community_group_outliner', {category: 'community', value: true, onChange: communityGroupOnChange('community_group_outliner')});
 	new Setting('community_animate_group_multi_select', {category: 'community', value: true, group: 'community_group_outliner'});
-	// 反馈#124/#133：默认恢复级联隐藏（隐藏父组级联隐藏整个子树，后代开关可单独再开）。
-	// 直属限定模式保留为可选开关。
-	new Setting('community_group_visibility_direct_only', {category: 'community', value: false, group: 'community_group_outliner', onChange() {
-		if (typeof Project !== 'undefined' && Project && typeof Canvas !== 'undefined' && typeof Outliner !== 'undefined' && Outliner.elements) {
-			Canvas.updateView({elements: Outliner.elements, element_aspects: {visibility: true}});
-		}
-	}});
+	// 反馈#154：组隐藏固定级联到全部后代（恢复上游行为），原先的「直属限定」模式已移除。
 	// #130：大纲常驻父子结构树线；关闭后回退为仅选中路径显示（#87 行为）
 	new Setting('community_outliner_tree_lines', {category: 'community', value: true, group: 'community_group_outliner', onChange(value) {
 		document.body.classList.toggle('community_outliner_tree_lines', !!value);
@@ -412,6 +406,12 @@ function setupSettings() {
 
 	Blockbench.onUpdateTo('5.0.0', () => {
 		settings.antialiasing_bleed_fix.set(true);
+	})
+	// 反馈#146：这两个快捷键曾经默认开启并被写入 localStorage，仅改默认值不会迁移老配置
+	// （Setting 构造优先读 Settings.stored）。升级时一次性重置为关闭，用户仍可手动再开。
+	Blockbench.onUpdateTo('5.3.35', () => {
+		settings.community_keyframe_ctrl_click_interpolation.set(false);
+		settings.community_keyframe_shift_click_delete.set(false);
 	})
 	// Fail-safe
 	setTimeout(() => {

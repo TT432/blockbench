@@ -949,7 +949,7 @@
 	"action.paint_symmetric_texture": "對稱紋理",
 	"action.paint_symmetric_texture.description": "將所選UV面下的貼圖內容複製到鏡射對稱的UV（依鏡射繪圖設定計算對稱位置，用於事後補救忘記開啟鏡射繪圖）",
 	"action.paint_symmetric_texture.no_faces": "沒有可作用的UV面（請先選中使用目前貼圖的塊/面）",
-	"action.paint_symmetric_texture.result": "已複製 %1 個像素到對稱UV",
+	"action.paint_symmetric_texture.result": "已複製 %0 個像素到對稱UV",
 	"action.paint_face_mirror_copy": "面內鏡射複製",
 	"action.paint_face_mirror_copy.description": "將所選UV面的一半內容沿面內中線鏡射複製到另一半",
 	"action.paint_face_mirror_copy.no_faces": "沒有可作用的UV面（請先選中使用目前貼圖的塊/面）",

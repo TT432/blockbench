@@ -506,16 +506,6 @@ export class Group extends OutlinerNode {
 			i++;
 		}
 	}
-	/**
-	 * Whether this group is effectively visible in the preview.
-	 * 仅在开启 community_group_visibility_direct_only（反馈#124 的可选模式）时使用：
-	 * 组的隐藏只作用于直接挂在该组下的元素，不级联影响子组内容，
-	 * 因此这里只判定自身标志，不再沿祖先链上溯。元素的预览可见性 =
-	 * 自身 visibility && 直属父组的 isVisibleInPreview()（见 NodePreviewController）。
-	 */
-	isVisibleInPreview() {
-		return this.visibility !== false;
-	}
 	setAutoUV(val) {
 		this.forEachChild(function(s) {
 			s.autouv = val;
@@ -704,20 +694,18 @@ new NodePreviewController(Group, {
 		bone.isGroup = true;
 		Project.nodes_3d[group.uuid] = bone;
 		bone.rotation.order = Format.euler_order;
-		// 反馈#124：骨骼节点恒可见——隐藏组只隐藏其直属元素（逐个设置），
-		// 若按组标志隐藏骨骼，场景图会把子组内容一并吞掉。
+		// 骨骼节点恒可见：隐藏组通过级联改写后代元素的 visibility 标志来生效，
+		// 若按组标志隐藏骨骼，场景图会把子组内容一并吞掉（反馈#154 保持此约束）。
 		bone.visible = true;
 
 		this.dispatchEvent('update_transform', {group});
 	},
 	updateVisibility(group) {
-		// 反馈#124：组的隐藏只作用于直属元素，不级联到子组内容。
 		// 骨骼节点必须保持可见：有骨骼绑定的格式中子网格挂载在骨骼下，
 		// 隐藏骨骼会在场景图层面把子组内容一并隐藏。
 		if (group.mesh) group.mesh.visible = true;
-		// 逐后代重算预览可见性：每个元素的生效可见性只取决于自身标志与
-		// 直属父组标志（NodePreviewController.updateVisibility），不再沿
-		// 祖先链求与；眼睛开关也不再级联改写后代标志。
+		// 逐后代重算预览可见性：级联隐藏把 visibility 标志写到了每个后代，
+		// 元素生效可见性只看自身标志（NodePreviewController.updateVisibility）。
 		// NOTE: forEachChild already visits every descendant exactly once.
 		// Apply per-node updates inline instead of recursing into
 		// updateVisibility — recursing re-walks every subtree once per

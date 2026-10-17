@@ -1752,24 +1752,16 @@ Interface.definePanels(() => {
 						this.zoom = zoom;
 					} else {
 						// Pan
-						// 反馈#149：四个方向平移键位（ac_pan_canvas_*）支持录入「组合键+滚轮」
-						// （key=1001，录制时滚动滚轮即可录入）。绑定后滚轮按该动作的轴向平移：
-						// 上/下 = 纵向（滚轮自然方向），左/右 = 横向。未绑定滚轮时保持原版行为
-						// （滚轮 = 纵向，shift+滚轮 = 横向）；把 shift+滚轮录到「向下平移」即可
-						// 让 shift+滚轮改为上下移动。key==1001 判断防止绑定鼠标左键（which==1）
-						// 的动作被滚轮事件（which==1）误触发。
-						let wheel_bound = (item) => {
-							let kb = Keybinds.extra[item].keybind;
-							return kb.key == 1001 && kb.isTriggered(event);
-						};
-						if (wheel_bound('ac_pan_canvas_up') || wheel_bound('ac_pan_canvas_down')) {
+						// 反馈#149（二修）：平移的滚轮轴向由两个可自定义的动作决定——
+						// 「纵向平移画布」/「横向平移画布」，两者都能录入「组合键+滚轮」。
+						// 默认：滚轮=纵向、shift+滚轮=横向（与上游一致）；纵向优先匹配。
+						let vertical = Keybinds.extra.ac_pan_canvas_vertical.keybind;
+						let horizontal = Keybinds.extra.ac_pan_canvas_horizontal.keybind;
+						if (vertical.key == 1001 && vertical.isTriggered(event)) {
 							this.pan.x -= event.deltaX;
 							this.pan.y -= event.deltaY;
-						} else if (wheel_bound('ac_pan_canvas_left') || wheel_bound('ac_pan_canvas_right')) {
+						} else if (horizontal.key == 1001 && horizontal.isTriggered(event)) {
 							this.pan.x -= event.deltaX + event.deltaY;
-						} else {
-							this.pan.x -= event.deltaX + (event.shiftKey ? event.deltaY : 0);
-							this.pan.y -= event.shiftKey ? 0 : event.deltaY;
 						}
 					}
 				},
@@ -1875,29 +1867,6 @@ Interface.definePanels(() => {
 					if (!this.controller) return;
 					let tag = event.target.tagName;
 					if (tag == 'INPUT' || tag == 'TEXTAREA' || event.target.isContentEditable) return;
-					// 键盘平移视图（默认方向键，可在 设置>键盘 自定义）；方向语义与滚轮一致
-					let pan_step = 100;
-					if (Keybinds.extra.ac_pan_canvas_up.keybind.isTriggered(event)) {
-						event.preventDefault();
-						event.stopPropagation();
-						this.pan.y += pan_step;
-						return;
-					} else if (Keybinds.extra.ac_pan_canvas_down.keybind.isTriggered(event)) {
-						event.preventDefault();
-						event.stopPropagation();
-						this.pan.y -= pan_step;
-						return;
-					} else if (Keybinds.extra.ac_pan_canvas_left.keybind.isTriggered(event)) {
-						event.preventDefault();
-						event.stopPropagation();
-						this.pan.x += pan_step;
-						return;
-					} else if (Keybinds.extra.ac_pan_canvas_right.keybind.isTriggered(event)) {
-						event.preventDefault();
-						event.stopPropagation();
-						this.pan.x -= pan_step;
-						return;
-					}
 					if (event.key == 'Home' || event.code == 'NumpadDecimal') {
 						event.preventDefault();
 						event.stopPropagation();
@@ -2731,23 +2700,17 @@ BARS.defineActions(function() {
 		category: 'animation',
 		keybind: new Keybind({key: 1})
 	})
-	// AC 画布视图的键盘平移接入 Keybind 体系（默认方向键，修饰键忽略），可在 设置>键盘 中自定义组合键。
-	// 方向语义与滚轮一致：按上 = 视图上移（内容下移）。
-	new KeybindItem('ac_pan_canvas_up', {
+	// 反馈#149（二修）：原「上/下/左/右」四个平移动作合并为纵向/横向两个，
+	// 组合键不再锁死（修饰键默认具体 false 而非 null，可在 设置>键盘 里单独录 shift 或 ctrl），
+	// 并可录入「组合键 + 滚轮」（滚动滚轮即为 key=1001）。默认与上游一致：
+	// 滚轮 = 纵向平移，shift+滚轮 = 横向平移；把 shift+滚轮录到「纵向平移」即可改成上下移动。
+	new KeybindItem('ac_pan_canvas_vertical', {
 		category: 'animation',
-		keybind: new Keybind({key: 38, ctrl: null, shift: null})
+		keybind: new Keybind({key: 1001, ctrl: false, shift: false})
 	})
-	new KeybindItem('ac_pan_canvas_down', {
+	new KeybindItem('ac_pan_canvas_horizontal', {
 		category: 'animation',
-		keybind: new Keybind({key: 40, ctrl: null, shift: null})
-	})
-	new KeybindItem('ac_pan_canvas_left', {
-		category: 'animation',
-		keybind: new Keybind({key: 37, ctrl: null, shift: null})
-	})
-	new KeybindItem('ac_pan_canvas_right', {
-		category: 'animation',
-		keybind: new Keybind({key: 39, ctrl: null, shift: null})
+		keybind: new Keybind({key: 1001, ctrl: false, shift: true})
 	})
 	new Action('add_animation_controller', {
 		icon: 'post_add',
