@@ -301,8 +301,8 @@
 		margin-top: -0.6px;
 	}
 	div#corner_logo img {
-		margin-top: 4px;
-		width: 134px;
+		margin-top: 2px;
+		width: 128px;
 	}
 	@media (max-width:950px)  {
 		div#corner_logo {

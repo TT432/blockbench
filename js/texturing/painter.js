@@ -4038,7 +4038,8 @@ BARS.defineActions(function() {
 			Math.ceil(Math.max(face.uv[1], face.uv[3]) * uvFactorY) + anim_offset,
 		];
 	}
-	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到镜像绘画对应的对称 UV
+	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到同方块对面的 UV。
+	// 翻转规则与镜像绘画公式一致：东↔西/北↔南 水平翻转；顶↔底 直拷贝（绕水平面镜像保持 X/Z 不变）。
 	new Action('paint_symmetric_texture', {
 		icon: 'flip_to_back',
 		category: 'paint',
@@ -4051,48 +4052,45 @@ BARS.defineActions(function() {
 				return;
 			}
 			let copied = 0;
-			let skipped_cross_texture = 0;
-			let options = Painter.mirror_painting_options;
-			let old_texture_frames = options.texture_frames;
-			options.texture_frames = false;
 			texture.edit((canvas, current) => {
 				let ctx = current.ctx;
 				let cw = canvas.width, ch = canvas.height;
 				let full = ctx.getImageData(0, 0, cw, ch);
 				let out = new ImageData(new Uint8ClampedArray(full.data), cw, ch);
-				let old_element = Painter.current.element, old_face = Painter.current.face;
 				for (let {element, fkey, face} of faces) {
-					let rect = getFacePixelRect(face, texture);
-					Painter.current.element = element;
-					Painter.current.face = fkey;
-					for (let y = Math.max(0, rect[1]); y < Math.min(ch, rect[3]); y++) {
-						for (let x = Math.max(0, rect[0]); x < Math.min(cw, rect[2]); x++) {
-							let targets = Painter.getMirrorPaintTargets(texture, x, y, face.uv);
-							for (let target of targets) {
-								if (!target || !(target.element instanceof Cube) || !target.face) continue;
-								let tface = target.element.faces[target.face];
-								if (!tface || tface.getTexture() !== texture) {
-									skipped_cross_texture++;
-									continue;
-								}
-								let tx = Math.round(target.x), ty = Math.round(target.y);
-								if (tx < 0 || ty < 0 || tx >= cw || ty >= ch) continue;
-								if (tx === x && ty === y) continue;
-								let si = (y * cw + x) * 4, ti = (ty * cw + tx) * 4;
-								out.data[ti] = full.data[si];
-								out.data[ti+1] = full.data[si+1];
-								out.data[ti+2] = full.data[si+2];
-								out.data[ti+3] = full.data[si+3];
-								copied++;
-							}
+					let oface = element.faces[CubeFace.opposite[fkey]];
+					if (!oface || oface.getTexture() !== texture) continue;
+					let srect = getFacePixelRect(face, texture);
+					let trect = getFacePixelRect(oface, texture);
+					if (srect.equals(trect)) continue;
+					let sw = srect[2] - srect[0], sh = srect[3] - srect[1];
+					let tw = trect[2] - trect[0], th = trect[3] - trect[1];
+					if (sw < 1 || sh < 1 || tw < 1 || th < 1) continue;
+					// 镜像绘画公式的翻转推导（见 getMirrorPaintTargets）：
+					// flip_u = (源u翻转==目标u翻转) == mirror_x；flip_v = (源v翻转!=目标v翻转)
+					// 东↔西/北↔南 mirror_x=true；顶↔底（扩展的 Y 轴镜像）mirror_x=false
+					let mirror_x = fkey !== 'up' && fkey !== 'down';
+					let flip_u = ((face.uv[0] > face.uv[2]) == (oface.uv[0] > oface.uv[2])) == mirror_x;
+					let flip_v = (face.uv[1] > face.uv[3]) != (oface.uv[1] > oface.uv[3]);
+					for (let sy = 0; sy < sh; sy++) {
+						let ty = trect[1] + Math.floor((flip_v ? sh - 1 - sy : sy) * th / sh);
+						let py = srect[1] + sy;
+						if (py < 0 || py >= ch || ty < 0 || ty >= ch) continue;
+						for (let sx = 0; sx < sw; sx++) {
+							let tx = trect[0] + Math.floor((flip_u ? sw - 1 - sx : sx) * tw / sw);
+							let px = srect[0] + sx;
+							if (px < 0 || px >= cw || tx < 0 || tx >= cw) continue;
+							let si = (py * cw + px) * 4, ti = (ty * cw + tx) * 4;
+							out.data[ti] = full.data[si];
+							out.data[ti+1] = full.data[si+1];
+							out.data[ti+2] = full.data[si+2];
+							out.data[ti+3] = full.data[si+3];
+							copied++;
 						}
 					}
 				}
-				Painter.current.element = old_element;
-				Painter.current.face = old_face;
 				ctx.putImageData(out, 0, 0);
 			}, {edit_name: tl('action.paint_symmetric_texture')});
-			options.texture_frames = old_texture_frames;
 			Blockbench.showQuickMessage(tl('action.paint_symmetric_texture.result', [copied]));
 		}
 	})

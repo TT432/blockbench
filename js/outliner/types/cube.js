@@ -1665,6 +1665,7 @@ BARS.defineActions(function() {
 						individual: 'dialog.negative_outline.uv_mode.individual',
 					}},
 					color: {label: 'dialog.negative_outline.color', type: 'color', value: ColorPanel.get()},
+					read_deleted: {label: 'dialog.negative_outline.read_deleted', type: 'checkbox', value: true},
 				},
 				onConfirm(form) {
 					let w = Math.max(0.05, Number(form.width) || 0);
@@ -1719,7 +1720,9 @@ BARS.defineActions(function() {
 						let [u, v] = cells[i];
 						let faces_data = {};
 						['up', 'down', 'north', 'south', 'east', 'west'].forEach(fkey => {
-							faces_data[fkey] = {uv: [u, v, u + 1, v + 1], texture};
+							// 读取删除面：源块被删除（texture=null）的面，壳块同样删除
+							let deleted = form.read_deleted && cube.faces[fkey] && cube.faces[fkey].texture === null;
+							faces_data[fkey] = deleted ? {texture: null} : {uv: [u, v, u + 1, v + 1], texture};
 						});
 						let shell = new Cube({
 							name: (cube.name || 'cube') + '_outline',
