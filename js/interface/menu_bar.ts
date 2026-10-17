@@ -617,6 +617,11 @@ export const MenuBar = {
 			{name: 'menu.help.report_issue', id: 'report_issue', icon: 'bug_report', click: () => {
 				Blockbench.openLink('https://github.com/JannisX11/blockbench/issues');
 			}},
+			new MenuSeparator('community'),
+			{name: 'menu.help.community_feedback', id: 'community_feedback', icon: 'fa-solid.fa-comment-dots', click: () => {
+				Blockbench.openLink('https://my.feishu.cn/share/base/form/shrcnfR7JgUKd19Hav282d7Y6ve');
+			}},
+			'community_changelog',
 			new MenuSeparator('backups'),
 			'view_backups',
 			new MenuSeparator('about'),
