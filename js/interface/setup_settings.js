@@ -348,37 +348,67 @@ function setupSettings() {
 	new Setting('credit', 				{category: 'export', value: 'Made with Blockbench', type: 'text'});
 
 	//Community（#81：社区版改原版操作的功能开关，默认开启=社区版行为，关闭=恢复上游行为）
-	new Setting('community_timeline_click_seek', {category: 'community', value: true});
-	new Setting('community_timeline_double_click_keyframe', {category: 'community', value: true});
-	new Setting('community_timeline_shift_range_select', {category: 'community', value: true});
-	new Setting('community_timeline_clickthrough_playhead', {category: 'community', value: true, onChange(value) {
+	// 组主开关（community_group_*）：关闭整组时成员设置读取为 false（成员自身值保留，
+	// 重新开组后恢复）；组 onChange 重放成员 onChange 使行为在对话框外切换时也即时生效。
+	function communityGroupOnChange(group_id) {
+		return function() {
+			for (let id in settings) {
+				let member = settings[id];
+				if (member.group === group_id && typeof member.onChange === 'function') {
+					member.onChange(member.value);
+				}
+			}
+			if (Settings.dialog && Settings.dialog.content_vue) Settings.dialog.content_vue.$forceUpdate();
+		};
+	}
+
+	new Setting('community_group_timeline', {category: 'community', value: true, onChange: communityGroupOnChange('community_group_timeline')});
+	new Setting('community_timeline_click_seek', {category: 'community', value: true, group: 'community_group_timeline'});
+	new Setting('community_timeline_double_click_keyframe', {category: 'community', value: true, group: 'community_group_timeline'});
+	new Setting('community_timeline_shift_range_select', {category: 'community', value: true, group: 'community_group_timeline'});
+	new Setting('community_timeline_clickthrough_playhead', {category: 'community', value: true, group: 'community_group_timeline', onChange(value) {
 		document.body.classList.toggle('community_clickthrough_playhead', !!value);
 	}});
 	document.body.classList.toggle('community_clickthrough_playhead', !!settings.community_timeline_clickthrough_playhead.value);
-	new Setting('community_animate_group_multi_select', {category: 'community', value: true});
-	new Setting('community_keyframe_density_culling', {category: 'community', value: true, onChange() {
+	// ctrl+点击关键帧循环切换插值类型 / shift+点击删除关键帧（纯点击生效，不抢占拖拽）
+	new Setting('community_keyframe_ctrl_click_interpolation', {category: 'community', value: true, group: 'community_group_timeline'});
+	new Setting('community_keyframe_shift_click_delete', {category: 'community', value: true, group: 'community_group_timeline'});
+	new Setting('community_keyframe_density_culling', {category: 'community', value: true, group: 'community_group_timeline', onChange() {
 		if (typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.$forceUpdate();
 	}});
+	new Setting('community_ruler_step_candidates', {category: 'community', value: true, group: 'community_group_timeline', onChange() {
+		if (typeof Animator !== 'undefined' && Animator.open && typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.updateTimecodes();
+	}});
+
+	new Setting('community_group_outliner', {category: 'community', value: true, onChange: communityGroupOnChange('community_group_outliner')});
+	new Setting('community_animate_group_multi_select', {category: 'community', value: true, group: 'community_group_outliner'});
 	// 反馈#124/#133：默认恢复级联隐藏（隐藏父组级联隐藏整个子树，后代开关可单独再开）。
 	// 直属限定模式保留为可选开关。
-	new Setting('community_group_visibility_direct_only', {category: 'community', value: false, onChange() {
+	new Setting('community_group_visibility_direct_only', {category: 'community', value: false, group: 'community_group_outliner', onChange() {
 		if (typeof Project !== 'undefined' && Project && typeof Canvas !== 'undefined' && typeof Outliner !== 'undefined' && Outliner.elements) {
 			Canvas.updateView({elements: Outliner.elements, element_aspects: {visibility: true}});
 		}
 	}});
-	new Setting('community_animation_list_multi_select', {category: 'community', value: true});
-	new Setting('community_paint_fill_multi_select', {category: 'community', value: true, onChange() {
+	// #130：大纲常驻父子结构树线；关闭后回退为仅选中路径显示（#87 行为）
+	new Setting('community_outliner_tree_lines', {category: 'community', value: true, group: 'community_group_outliner', onChange(value) {
+		document.body.classList.toggle('community_outliner_tree_lines', !!value);
+	}});
+	document.body.classList.toggle('community_outliner_tree_lines', !!settings.community_outliner_tree_lines.value);
+
+	new Setting('community_group_animations', {category: 'community', value: true, onChange: communityGroupOnChange('community_group_animations')});
+	new Setting('community_animation_list_multi_select', {category: 'community', value: true, group: 'community_group_animations'});
+	new Setting('community_playhead_wrap_effective_length', {category: 'community', value: true, group: 'community_group_animations'});
+
+	new Setting('community_group_paint', {category: 'community', value: true, onChange: communityGroupOnChange('community_group_paint')});
+	new Setting('community_paint_fill_multi_select', {category: 'community', value: true, group: 'community_group_paint', onChange() {
 		if (typeof BARS !== 'undefined') BARS.updateConditions();
 	}});
-	new Setting('community_mirror_paint_block_matching', {category: 'community', value: true});
+	new Setting('community_mirror_paint_block_matching', {category: 'community', value: true, group: 'community_group_paint'});
+
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
 	new Setting('community_tab_groups', {category: 'community', value: true, onChange() {
 		if (typeof Interface !== 'undefined' && Interface.tab_bar) Interface.tab_bar.$forceUpdate();
 	}});
-	new Setting('community_ruler_step_candidates', {category: 'community', value: true, onChange() {
-		if (typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.updateTimecodes();
-	}});
-	new Setting('community_playhead_wrap_effective_length', {category: 'community', value: true});
 
 	Blockbench.onUpdateTo('5.0.0', () => {
 		settings.antialiasing_bleed_fix.set(true);

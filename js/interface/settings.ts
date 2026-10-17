@@ -36,6 +36,11 @@ interface SettingOptions {
 		[id: string]: string
 	}
 	onChange?(value: any): void
+	/**
+	 * 设置组主开关的 id（社区版功能分组）。组开关关闭时本设置的 value 读取为 false，
+	 * 自身存量值保留；组开关重新打开后恢复。
+	 */
+	group?: string
 }
 
 /**
@@ -65,6 +70,7 @@ export class Setting {
 	hidden: boolean
 	onChange: (value: SettingsValue) => void
 	keybind_label: string
+	group?: string
 
 	constructor(id: string, data: SettingOptions) {
 		this.id = id;
@@ -118,6 +124,9 @@ export class Setting {
 		if (typeof data.onChange == 'function') {
 			this.onChange = data.onChange
 		}
+		if (typeof data.group == 'string') {
+			this.group = data.group
+		}
 
 		//add to structure
 		var category = Settings.structure[this.category];
@@ -148,12 +157,20 @@ export class Setting {
 	 * The active value
 	 */
 	get value(): SettingsValue {
+		let value: SettingsValue;
 		let profile = SettingsProfile.all.find(profile => profile.isActive() && profile.settings[this.id] !== undefined);
 		if (profile) {
-			return profile.settings[this.id] ?? this.master_value;
+			value = profile.settings[this.id] ?? this.master_value;
 		} else {
-			return this.master_value;
+			value = this.master_value;
 		}
+		if (this.group && value !== false) {
+			let group_setting = settings[this.group];
+			if (group_setting && group_setting.value === false) {
+				return false;
+			}
+		}
+		return value;
 	}
 	set value(value: SettingsValue) {
 		this.master_value = value;

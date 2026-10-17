@@ -220,6 +220,13 @@ onVueSetup(function() {
 				isFullWidth(setting: Setting): boolean {
 					return ['text', 'password', 'select'].includes(setting.type);
 				},
+				isGroupMaster(setting: Setting): boolean {
+					return Object.values(settings).some(other => other.group === setting.id);
+				},
+				isGroupDisabled(setting: Setting): boolean {
+					let master = setting.group ? settings[setting.group] : undefined;
+					return !!master && master.ui_value === false;
+				},
 				getPluginName(plugin_id: string): string {
 					let plugin = Plugins.all.find(p => p.id == plugin_id);
 					return plugin?.title ?? plugin_id;
@@ -292,7 +299,7 @@ onVueSetup(function() {
 
 						<li v-for="(setting, key) in list" v-if="Condition(setting.condition)"
 							v-on="setting.click ? {click: setting.click} : {}"
-							:class="{has_profile_override: profile && profile.settings[key] !== undefined, full_width_input: isFullWidth(setting)}"
+							:class="{has_profile_override: profile && profile.settings[key] !== undefined, full_width_input: isFullWidth(setting), setting_group_master: isGroupMaster(setting), setting_group_member: !!setting.group, setting_group_disabled: isGroupDisabled(setting)}"
 							@contextmenu="settingContextMenu(setting, $event)"
 						>
 							<div class="tool setting_profile_clear_button" v-if="profile && profile.settings[key] !== undefined" @click.stop="profile.clear(key)" title="${tl('dialog.settings.clear_profile_value')}">
@@ -306,7 +313,7 @@ onVueSetup(function() {
 								<div class="setting_element setting_icon" v-html="getIconNode(setting.icon).outerHTML"></div>
 							</template>
 							<template v-else-if="setting.type == 'toggle'"><!--TOGGLE-->
-								<div class="setting_element"><input type="checkbox" class="toggle_switch" v-model="setting.ui_value" v-bind:id="'setting_'+key" :key="key" v-on:click="saveSettings()"></div>
+								<div class="setting_element"><input type="checkbox" class="toggle_switch" v-model="setting.ui_value" v-bind:id="'setting_'+key" :key="key" v-on:click="saveSettings(); $forceUpdate()" :disabled="isGroupDisabled(setting)"></div>
 							</template>
 
 							<div class="setting_label">
