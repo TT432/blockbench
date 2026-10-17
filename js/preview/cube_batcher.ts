@@ -694,11 +694,19 @@ export const CubeBatcher = {
 			force = true;
 		}
 		node.matrixWorldNeedsUpdate = false;
-		for (let child of node.children) {
+			for (let child of node.children) {
 			const slot: BatchSlot | undefined = child.userData.cubeBatchSlot;
 			if (slot !== undefined) {
-				// 合批 cube：父链未脏且自身局部矩阵未脏且非动画直驱 → 整棵子树跳过
-				if (!force && !child.matrixAutoUpdate && !child.matrixWorldNeedsUpdate) continue;
+				// 合批 cube：父链未脏且自身局部矩阵未脏且非动画直驱 → 跳过矩阵重组
+				if (!force && !child.matrixAutoUpdate && !child.matrixWorldNeedsUpdate) {
+					// #138：但子节点不能一起跳——grid_box/outline 等 matrixAutoUpdate=false
+					// 的 gizmo 是新建对象（matrixWorldNeedsUpdate=true、matrixWorld 尚为
+					// 单位阵），只有这里的选择性遍历能重组它们；随 cube 子树一起跳过会让
+					// 像素网格永远停在未旋转的初始姿态（"旋转归零"错位），移动方块
+					// （updateTransform 强制级联）才短暂复位。
+					for (let grandchild of child.children) this.updateModelNode(grandchild, false);
+					continue;
+				}
 				child.updateMatrixWorld(force);
 				slot.composedFrame = true;
 			} else {

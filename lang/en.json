@@ -1238,6 +1238,8 @@
 	"settings.render_sides.auto": "Auto",
 	"settings.render_sides.front": "Outside",
 	"settings.render_sides.double": "Inside and Outside",
+	"settings.negative_size_front_faces": "Render Negative-Size Cubes by Outside Faces",
+	"settings.negative_size_front_faces.desc": "When enabled, cubes with negative size (from greater than to on any axis) always render like the Outside render-sides mode; normal cubes still follow the render sides setting above",
 	"settings.constant_outlines": "Constant Outlines",
 	"settings.constant_outlines.desc": "Always display element outlines regardless of selection",
 	"settings.fps_limit": "FPS Limit",

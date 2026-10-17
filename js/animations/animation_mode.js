@@ -377,6 +377,10 @@ export const Animator = {
 			Animator.showDefaultPose(true);
 			Animator.stackActiveAnimations(false, time - last_time);
 			Animator.displayMeshDeformation();
+			// stackActiveAnimations 全程 update_matrices=false（批量路径把矩阵刷新集中到
+			// preview 末尾），采样循环里必须自行刷新，否则 fastWorldPosition(localToWorld)
+			// 读到上一帧的 matrixWorld——残影位置滞后/停在默认姿态（反馈#126 未修复根因）。
+			Canvas.scene.updateMatrixWorld();
 
 			elements.forEach(obj => {
 				if (!obj.visibility) return;
@@ -398,6 +402,9 @@ export const Animator = {
 		Timeline.time = last_time;
 		Animator.showDefaultPose(true);
 		Animator.stackActiveAnimations(false);
+		// 独立调用点（开关切换/配置变更/拖动采样点）不经 preview 末尾的统一刷新，
+		// 恢复实时姿态后同样补一次矩阵刷新，保持场景矩阵与姿态一致。
+		Canvas.scene.updateMatrixWorld();
 
 		// Dispose pooled ghosts that were not needed by this build
 		for (let [uuid, pool] of Animator.onion_skin_pool) {
