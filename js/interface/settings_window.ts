@@ -149,7 +149,10 @@ onVueSetup(function() {
 			} as SettingsDialogVueData},
 			methods: {
 				saveSettings(this: SettingsDialogVueData) {
-					Settings.saveLocalStorages();
+					// 反馈#146：输入控件的 click 处理器早于 v-model 的 change 更新 ui_value，
+					// 立即保存会把旧值写回 localStorage，导致开关切换后重启又恢复原状。
+					// 延后一个任务，等 Vue 把 ui_value 写进 Setting 再持久化。
+					setTimeout(() => Settings.saveLocalStorages(), 0);
 				},
 				settingContextMenu(setting: Setting, event: MouseEvent) {
 					new Menu([

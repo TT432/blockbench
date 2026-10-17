@@ -456,6 +456,12 @@ export const Animator = {
 			let copy = mesh.outline.clone();
 			copy.geometry = source_geometry.clone();
 			copy.name = obj.uuid+'_onion_skin_outline';
+			// 反馈#153：cube 的 outline 在 #83 优化中被设为 matrixAutoUpdate=false（其 matrix 为单位阵），
+			// clone() 会连同该标志与 matrix 一起拷贝。若不解除，后面写入的 position/rotation/scale
+			// 永远不会合成到 matrix，场景刷新会把 ghost 的 matrixWorld 重算成单位阵，
+			// 残影全部堆到场景原点（合成矩阵必须由 TRS 生成）
+			copy.matrixAutoUpdate = true;
+			copy.matrixWorldNeedsUpdate = true;
 			Animator.onion_skin_object.add(copy);
 			entry = {copy, source: source_geometry};
 			pool.entries.splice(pool.used, 0, entry);

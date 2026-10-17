@@ -287,9 +287,7 @@ export class NodePreviewController extends EventSystem {
 		mesh.name = element.uuid;
 		mesh.type = element.type;
 		mesh.isElement = true;
-		mesh.visible = settings.community_group_visibility_direct_only.value
-			? !!(element.visibility && !(element.parent instanceof Group && !element.parent.isVisibleInPreview()))
-			: element.visibility;
+		mesh.visible = element.visibility;
 		mesh.rotation.order = Format.euler_order;
 		this.updateTransform(element);
 
@@ -359,16 +357,9 @@ export class NodePreviewController extends EventSystem {
 		this.dispatchEvent('update_transform', {element});
 	}
 	updateVisibility(element) {
-		// 反馈#124：元素的预览可见性 = 自身标志 && 直属父组自身标志。
-		// 父组隐藏只隐藏其直属元素；子组内的元素由子组自身的开关独立控制，
-		// 不受更上层祖先组影响。元素自身的 visibility 标志不被组开关改写，
-		// 组重新显示后元素按各自标志恢复。
-		if (settings.community_group_visibility_direct_only.value) {
-			let group_hidden = element.parent instanceof Group && !element.parent.isVisibleInPreview();
-			element.mesh.visible = !!(element.visibility && !group_hidden);
-		} else {
-			element.mesh.visible = element.visibility;
-		}
+		// 反馈#154：隐藏组时大纲眼睛/可见性开关级联改写全部后代元素的 visibility 标志，
+		// 因此预览可见性只需读自身标志（与上游一致）。
+		element.mesh.visible = element.visibility;
 
 		this.dispatchEvent('update_visibility', {element});
 	}
@@ -724,6 +715,18 @@ export function toggleElementProperty(key) {
 		state = (state+1) % 3;
 	} else {
 		state = !state
+	}
+	// 反馈#154：可见性开关作用到组时必须级联到全部后代（与大纲眼睛开关语义一致），
+	// 否则只翻转组自身标志，子组/子块/定位器仍然显示。
+	if (key === 'visibility') {
+		let descendants = [];
+		affected.forEach(element => {
+			if (!(element instanceof Group)) return;
+			element.forEachChild(child => {
+				if (child.visibility != undefined && !affected.includes(child)) descendants.push(child);
+			});
+		});
+		affected.push(...descendants);
 	}
 	Undo.initEdit(key === 'visibility'
 		? {elements: affected, mirror_modeling: false, element_fields: ['visibility']}
@@ -1510,7 +1513,6 @@ Interface.definePanels(function() {
 				children: [
 					'add_element',
 					'add_group',
-					'negative_outline',
 					'outliner_toggle',
 					'toggle_skin_layer',
 					'explode_skin_model',
@@ -1577,10 +1579,9 @@ Interface.definePanels(function() {
 							} else if (!affected.includes(node) && (!node.locked || key == 'locked' || key == 'visibility')) {
 								let new_affected = [node];
 								if (node.forEachChild) {
-									// 反馈#124/#133：默认级联改写后代可见性标志（上游行为）；
-									// 仅在开启 community_group_visibility_direct_only 时，
-									// 组的眼睛开关只翻转自身标志，由预览可见性规则隐藏直属元素。
-									if (toggle_config.change_children != false && (!settings.community_group_visibility_direct_only.value || key != 'visibility' || node instanceof Group == false)) {
+									// 反馈#154：隐藏组必须把全部后代（子组/子块/定位器/骨骼标记…）一并隐藏，
+									// 与上游一致级联改写后代标志（后代仍可再单独打开）。
+									if (toggle_config.change_children != false) {
 										node.forEachChild(node => {
 											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
 										});

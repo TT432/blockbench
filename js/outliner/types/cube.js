@@ -1642,6 +1642,14 @@ new NodePreviewController(Cube, {
 BARS.defineActions(function() {
 	// 反馈#135：负尺寸描边——为选中的块/选中的组内所有块，创建各轴扩大「宽度」格的
 	// 负尺寸壳块（from > to，游戏里反面渲染形成描边），并按参数填充颜色与分配 UV。
+	// 反馈#144：负尺寸壳块（from > to）在视觉上把该轴两端互换（东面渲染在西侧），
+	// 因此壳块某个目标面的删除状态应取自源块的「对面」；源块自身该轴已是负尺寸时
+	// 两侧同为负，取同名面。
+	const negative_outline_face_axis = {east: 0, west: 0, up: 1, down: 1, south: 2, north: 2};
+	function negativeOutlineSourceFace(cube, target_key) {
+		let axis = negative_outline_face_axis[target_key];
+		return cube.from[axis] > cube.to[axis] ? target_key : CubeFace.opposite[target_key];
+	}
 	new Action('negative_outline', {
 		icon: 'border_outer',
 		category: 'edit',
@@ -1657,20 +1665,21 @@ BARS.defineActions(function() {
 			new Dialog({
 				id: 'negative_outline',
 				title: 'action.negative_outline',
-				width: 420,
+				width: 520,
 				form: {
-					width: {label: 'dialog.negative_outline.width', type: 'number', value: 1, min: 0.05, step: 0.05},
-					uv_mode: {label: 'dialog.negative_outline.uv_mode', type: 'select', value: 'shared', options: {
-						shared: 'dialog.negative_outline.uv_mode.shared',
+					width: {label: 'dialog.negative_outline.width', type: 'number', value: 1, min: 0.01, step: 0.01},
+					uv_mode: {label: 'dialog.negative_outline.uv_mode', type: 'select', value: 'individual', options: {
 						individual: 'dialog.negative_outline.uv_mode.individual',
+						shared: 'dialog.negative_outline.uv_mode.shared',
 					}},
 					color: {label: 'dialog.negative_outline.color', type: 'color', value: ColorPanel.get()},
 					read_deleted: {label: 'dialog.negative_outline.read_deleted', type: 'checkbox', value: true},
 				},
 				onConfirm(form) {
-					let w = Math.max(0.05, Number(form.width) || 0);
+					let w = Math.max(0.01, Number(form.width) || 0);
 					let color = form.color;
 					let cube_list = [...targets];
+					let face_keys = ['up', 'down', 'north', 'south', 'east', 'west'];
 
 					Undo.initEdit({elements: [], outliner: true, textures: Texture.getDefault() ? [Texture.getDefault()] : [], bitmap: true});
 
@@ -1693,11 +1702,62 @@ BARS.defineActions(function() {
 					let uv_w = texture.getUVWidth();
 					let uv_h = texture.getUVHeight();
 
-					// UV 单元分配：shared 全部块共用 (0,0)；individual 逐块一个单元
-					// （超出贴图 UV 容量时回绕复用——平面填充色不受影响，仅独立改色粒度下降）
-					let cells = cube_list.map((el, i) => form.uv_mode == 'individual'
-						? [i % uv_w, Math.floor(i / uv_w) % uv_h]
-						: [0, 0]);
+					// 反馈#152：UV 单元从贴图上「未被已有 UV 占用」的位置按行取用，
+					// 避免描边 UV（及其填充色）与原模型已有 UV 区域重叠冲突。
+					let occupied = new Set();
+					let markUsed = face => {
+						if (!face || face.texture === null) return;
+						let u0 = Math.floor(Math.min(face.uv[0], face.uv[2]));
+						let u1 = Math.ceil(Math.max(face.uv[0], face.uv[2]));
+						let v0 = Math.floor(Math.min(face.uv[1], face.uv[3]));
+						let v1 = Math.ceil(Math.max(face.uv[1], face.uv[3]));
+						for (let u = Math.max(0, u0); u < u1 && u < uv_w; u++) {
+							for (let v = Math.max(0, v0); v < v1 && v < uv_h; v++) {
+								occupied.add(u + ',' + v);
+							}
+						}
+					};
+					Outliner.elements.forEach(el => {
+						if (!(el instanceof Cube)) return;
+						for (let fkey in el.faces) {
+							let face = el.faces[fkey];
+							if (face && face.texture !== null && face.getTexture() === texture) markUsed(face);
+						}
+					});
+					let scan_index = 0;
+					function allocCell() {
+						while (scan_index < uv_w * uv_h) {
+							let u = scan_index % uv_w;
+							let v = Math.floor(scan_index / uv_w);
+							scan_index++;
+							let key = u + ',' + v;
+							if (!occupied.has(key)) {
+								occupied.add(key);
+								return [u, v];
+							}
+						}
+						return null;
+					}
+					// 分配：individual（默认）= 每块的每个面独占一个单元；shared = 所有块的所有面共用一个单元
+					let cell_map = [];   // cell_map[cube_index][fkey] = [u, v]
+					let shared_cell = form.uv_mode == 'shared' ? allocCell() : null;
+					let exhausted = false;
+					cube_list.forEach(() => {
+						let map = {};
+						face_keys.forEach(fkey => {
+							let cell = form.uv_mode == 'shared' ? shared_cell : allocCell();
+							if (!cell) {
+								// 贴图 UV 单元耗尽：退化为复用首个单元（填充色一致，仅无法逐面独立）
+								cell = [0, 0];
+								exhausted = true;
+							}
+							map[fkey] = cell;
+						});
+						cell_map.push(map);
+					});
+					if (exhausted) {
+						Blockbench.showQuickMessage('dialog.negative_outline.uv_full', 4000);
+					}
 
 					// 填充颜色到分配的贴图像素（直绘画布：texture.edit 会自建独立撤销条目，
 					// 与本动作的撤销拆分；外层 Undo.initEdit 已含 bitmap 快照）
@@ -1706,31 +1766,45 @@ BARS.defineActions(function() {
 					let tex_ctx = tex_canvas.getContext('2d');
 					tex_ctx.imageSmoothingEnabled = false;
 					tex_ctx.fillStyle = color;
-					cells.forEach(([u, v]) => {
+					let filled = new Set();
+					cell_map.forEach(map => face_keys.forEach(fkey => {
+						let [u, v] = map[fkey];
+						let key = u + ',' + v;
+						if (filled.has(key)) return;
+						filled.add(key);
 						tex_ctx.fillRect(
 							Math.round(u * tex_canvas.width / uv_w),
 							Math.round(v * tex_canvas.height / uv_h),
 							Math.max(1, Math.round(tex_canvas.width / uv_w)),
 							Math.max(1, Math.round(tex_canvas.height / uv_h)));
-					});
+					}));
 					texture.updateChangesAfterEdit();
 
 					let new_cubes = [];
 					cube_list.forEach((cube, i) => {
-						let [u, v] = cells[i];
 						let faces_data = {};
-						['up', 'down', 'north', 'south', 'east', 'west'].forEach(fkey => {
-							// 读取删除面：源块被删除（texture=null）的面，壳块同样删除
-							let deleted = form.read_deleted && cube.faces[fkey] && cube.faces[fkey].texture === null;
-							faces_data[fkey] = deleted ? {texture: null} : {uv: [u, v, u + 1, v + 1], texture};
+						face_keys.forEach(fkey => {
+							// 读取删除面：按负尺寸的镜像置换取源面，源面被删除（texture=null）时壳块该面同样删除
+							let source_face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
+							if (form.read_deleted && source_face && source_face.texture === null) {
+								faces_data[fkey] = {texture: null};
+								return;
+							}
+							let [u, v] = cell_map[i][fkey];
+							faces_data[fkey] = {uv: [u, v, u + 1, v + 1], texture};
 						});
+						// 反馈#152：源块可能带「膨胀」（从中心向六个方向扩张/收缩，可为负）与拉伸，
+						// 壳块必须包住膨胀后的实际体积，否则描边会陷进模型内部。
+						let src_from = cube.from.slice();
+						let src_to = cube.to.slice();
+						adjustFromAndToForInflateAndStretch(src_from, src_to, cube);
 						let shell = new Cube({
 							name: (cube.name || 'cube') + '_outline',
 							autouv: 0,
 							box_uv: false,
 							// 负尺寸：from > to；用 max/min 计算以兼容源块本身已是负尺寸的情况
-							from: [Math.max(cube.from[0], cube.to[0]) + w, Math.max(cube.from[1], cube.to[1]) + w, Math.max(cube.from[2], cube.to[2]) + w],
-							to: [Math.min(cube.from[0], cube.to[0]) - w, Math.min(cube.from[1], cube.to[1]) - w, Math.min(cube.from[2], cube.to[2]) - w],
+							from: [Math.max(src_from[0], src_to[0]) + w, Math.max(src_from[1], src_to[1]) + w, Math.max(src_from[2], src_to[2]) + w],
+							to: [Math.min(src_from[0], src_to[0]) - w, Math.min(src_from[1], src_to[1]) - w, Math.min(src_from[2], src_to[2]) - w],
 							rotation: cube.rotation.slice(),
 							origin: cube.origin.slice(),
 							faces: faces_data,

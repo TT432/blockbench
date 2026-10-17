@@ -4038,8 +4038,18 @@ BARS.defineActions(function() {
 			Math.ceil(Math.max(face.uv[1], face.uv[3]) * uvFactorY) + anim_offset,
 		];
 	}
-	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到同方块对面的 UV。
-	// 翻转规则与镜像绘画公式一致：东↔西/北↔南 水平翻转；顶↔底 直拷贝（绕水平面镜像保持 X/Z 不变）。
+	// #127：面的「纹理 u/v 增加方向」在方块局部空间的单位向量（经 CubeFace.UVToLocal，
+	// 含 uv 绕序、面 rotation、负尺寸与膨胀），用于把目标面的纹理坐标反解回源面
+	function getFaceUVBasis(face) {
+		let u = (face.uv[0] + face.uv[2]) / 2;
+		let v = (face.uv[1] + face.uv[3]) / 2;
+		let origin = face.UVToLocal([u, v]);
+		let du = face.UVToLocal([u + 1, v]).sub(origin);
+		let dv = face.UVToLocal([u, v + 1]).sub(origin);
+		if (du.lengthSq() < 1e-12 || dv.lengthSq() < 1e-12) return null;
+		return {du: du.normalize(), dv: dv.normalize()};
+	}
+	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到同方块对面的 UV（按面的真实局部方向做镜像）。
 	new Action('paint_symmetric_texture', {
 		icon: 'flip_to_back',
 		category: 'paint',
@@ -4066,21 +4076,33 @@ BARS.defineActions(function() {
 					let sw = srect[2] - srect[0], sh = srect[3] - srect[1];
 					let tw = trect[2] - trect[0], th = trect[3] - trect[1];
 					if (sw < 1 || sh < 1 || tw < 1 || th < 1) continue;
-					// 镜像绘画公式的翻转推导（见 getMirrorPaintTargets）：
-					// flip_u = (源u翻转==目标u翻转) == mirror_x；flip_v = (源v翻转!=目标v翻转)
-					// 东↔西/北↔南 mirror_x=true；顶↔底（扩展的 Y 轴镜像）mirror_x=false
-					let mirror_x = fkey !== 'up' && fkey !== 'down';
-					let flip_u = ((face.uv[0] > face.uv[2]) == (oface.uv[0] > oface.uv[2])) == mirror_x;
-					let flip_v = (face.uv[1] > face.uv[3]) != (oface.uv[1] > oface.uv[3]);
-					for (let sy = 0; sy < sh; sy++) {
-						let ty = trect[1] + Math.floor((flip_v ? sh - 1 - sy : sy) * th / sh);
-						let py = srect[1] + sy;
-						if (py < 0 || py >= ch || ty < 0 || ty >= ch) continue;
-						for (let sx = 0; sx < sw; sx++) {
-							let tx = trect[0] + Math.floor((flip_u ? sw - 1 - sx : sx) * tw / sw);
-							let px = srect[0] + sx;
-							if (px < 0 || px >= cw || tx < 0 || tx >= cw) continue;
-							let si = (py * cw + px) * 4, ti = (ty * cw + tx) * 4;
+					// 反馈#127：翻转规则不再按面名硬编码（原实现顶↔底直拷贝，实际会得到绕 Y 轴的
+					// 镜像——测试员反馈的「顶↔底出现镜像 / 对称后 y 轴镜像」）。这里用
+					// CubeFace.UVToLocal 求两面「纹理 u/v 增加方向」在方块局部空间的真实方向，
+					// 再把目标面的纹理坐标映射回源面（自动覆盖 uv 绕序、面旋转、负尺寸与膨胀）。
+					let sbasis = getFaceUVBasis(face);
+					let tbasis = getFaceUVBasis(oface);
+					if (!sbasis || !tbasis) continue;
+					// 目标局部偏移 = (tu-.5)*du + (tv-.5)*dv；换成源面基（对面两轴长度一致）
+					let a11 = Math.round(tbasis.du.dot(sbasis.du));
+					let a12 = Math.round(tbasis.dv.dot(sbasis.du));
+					let a21 = Math.round(tbasis.du.dot(sbasis.dv));
+					let a22 = Math.round(tbasis.dv.dot(sbasis.dv));
+					if (a11 * a22 - a12 * a21 == 0) continue;
+					for (let ty = 0; ty < th; ty++) {
+						let py = trect[1] + ty;
+						if (py < 0 || py >= ch) continue;
+						let tv = (ty + 0.5) / th - 0.5;
+						for (let tx = 0; tx < tw; tx++) {
+							let px = trect[0] + tx;
+							if (px < 0 || px >= cw) continue;
+							let tu = (tx + 0.5) / tw - 0.5;
+							let su = 0.5 + tu * a11 + tv * a12;
+							let sv = 0.5 + tu * a21 + tv * a22;
+							let sx = Math.clamp(Math.floor(su * sw), 0, sw - 1);
+							let sy = Math.clamp(Math.floor(sv * sh), 0, sh - 1);
+							let si = ((srect[1] + sy) * cw + srect[0] + sx) * 4;
+							let ti = (py * cw + px) * 4;
 							out.data[ti] = full.data[si];
 							out.data[ti+1] = full.data[si+1];
 							out.data[ti+2] = full.data[si+2];
