@@ -2673,6 +2673,14 @@ BARS.defineActions(function() {
 		category: 'view',
 		linked_setting: 'shading'
 	})
+	// 反馈#140：给「负尺寸块按外面渲染」设置一个可绑快捷键的开关（默认无按键，用户自行绑定）
+	new Toggle('toggle_negative_size_front_faces', {
+		name: tl('settings.negative_size_front_faces'),
+		description: tl('settings.negative_size_front_faces.desc'),
+		icon: 'flip_to_front',
+		category: 'view',
+		linked_setting: 'negative_size_front_faces'
+	})
 	new Toggle('toggle_all_grids', {
 		name: tl('settings.grids'),
 		description: tl('settings.grids.desc'),

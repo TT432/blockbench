@@ -1005,6 +1005,8 @@
 	"settings.render_sides.auto": "自動",
 	"settings.render_sides.front": "外部",
 	"settings.render_sides.double": "內部和外部",
+	"settings.negative_size_front_faces": "負尺寸方塊按「外面」渲染",
+	"settings.negative_size_front_faces.desc": "開啟後，尺寸為負的方塊（任意軸 from 大於 to）始終按「外面」方式渲染；普通方塊仍遵循上面的渲染面設置",
 	"generic.enable": "啟用",
 	"generic.disable": "停用",
 	"generic.redacted": "已隱藏",
