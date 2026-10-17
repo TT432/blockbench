@@ -617,6 +617,14 @@ export const MenuBar = {
 			{name: 'menu.help.report_issue', id: 'report_issue', icon: 'bug_report', click: () => {
 				Blockbench.openLink('https://github.com/JannisX11/blockbench/issues');
 			}},
+			new MenuSeparator('community'),
+			{name: 'menu.help.community_feedback', id: 'community_feedback', icon: 'fa-solid.fa-comment-dots', click: () => {
+				Blockbench.openLink('https://my.feishu.cn/share/base/form/shrcnfR7JgUKd19Hav282d7Y6ve');
+			}},
+			{name: 'menu.help.community_feature_list', id: 'community_feature_list', icon: 'fa-solid.fa-table-list', click: () => {
+				Blockbench.openLink('https://my.feishu.cn/base/DXG0bNakPaFqP0sTkSIcKygknZg');
+			}},
+			'community_changelog',
 			new MenuSeparator('backups'),
 			'view_backups',
 			new MenuSeparator('about'),
