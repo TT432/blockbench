@@ -371,8 +371,8 @@ function setupSettings() {
 	}});
 	document.body.classList.toggle('community_clickthrough_playhead', !!settings.community_timeline_clickthrough_playhead.value);
 	// ctrl+点击关键帧循环切换插值类型 / shift+点击删除关键帧（纯点击生效，不抢占拖拽）
-	new Setting('community_keyframe_ctrl_click_interpolation', {category: 'community', value: true, group: 'community_group_timeline'});
-	new Setting('community_keyframe_shift_click_delete', {category: 'community', value: true, group: 'community_group_timeline'});
+	new Setting('community_keyframe_ctrl_click_interpolation', {category: 'community', value: false, group: 'community_group_timeline'});
+	new Setting('community_keyframe_shift_click_delete', {category: 'community', value: false, group: 'community_group_timeline'});
 	new Setting('community_keyframe_density_culling', {category: 'community', value: true, group: 'community_group_timeline', onChange() {
 		if (typeof Timeline !== 'undefined' && Timeline.vue) Timeline.vue.$forceUpdate();
 	}});

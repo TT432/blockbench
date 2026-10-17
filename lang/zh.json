@@ -387,6 +387,7 @@
 	"dialog.negative_outline.uv_mode.shared": "所有块复用同一 UV 区域",
 	"dialog.negative_outline.uv_mode.individual": "每个块各自使用独立 UV",
 	"dialog.negative_outline.color": "填充颜色",
+	"dialog.negative_outline.read_deleted": "读取删除面（源块被删除的面不生成描边）",
 	"action.add_group.desc": "添加一个新的分组或骨骼",
 	"action.outliner_toggle": "显示更多选项",
 	"action.outliner_toggle.desc": "切换显示大纲中的更多选项",

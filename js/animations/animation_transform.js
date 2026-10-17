@@ -130,7 +130,11 @@ new TransformerModule('animation', {
 
 			updateRotationKeyframeFromMesh();
 		
-		} else if (tool_id === 'rotate_tool' && getEditTransformSpace() == 2 && [0, 1, 2].find(axis => axis !== axis_number && transform_keyframes[0].get(getAxisLetter(axis))) !== undefined) {
+		} else if (tool_id === 'rotate_tool' && getEditTransformSpace() == 2) {
+			// 反馈#145：自身旋转必须始终绕骨骼当前局部轴（含编辑模式组旋转）。
+			// 原实现仅在其他通道已有帧时走重排序，否则退化为直接偏移关键帧分量——
+			// ZYX 欧拉序下偏移 y/z 分量是绕父级轴旋转，与 gizmo 显示的局部轴不一致。
+			// 重排序把被拖轴排到欧拉序末尾（最局部），且 reorder 保持姿态不变，对所有情形安全。
 
 			let old_order = mesh.rotation.order;
 			mesh.rotation.reorder(axis_number == 0 ? 'ZYX' : (axis_number == 1 ? 'ZXY' : 'XYZ'))
