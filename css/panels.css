@@ -639,6 +639,10 @@
 	#cubes_list .outliner_node:has(> .outliner_object.directly_selected) > ul > .outliner_line_guide {
 		display: block;
 	}
+	/* #130：开关开启时大纲常驻显示全部父子结构树线（关闭后回退为仅选中路径显示） */
+	body.community_outliner_tree_lines #cubes_list .outliner_line_guide {
+		display: block !important;
+	}
 	.drag_hover[order]::before {
 		content: '';
 		width: calc(100% - 12px);

@@ -1550,6 +1550,15 @@ Interface.definePanels(() => {
 				dragKeyframes(clicked, e1) {
 					if (e1.target.classList.contains('keyframe_bezier_handle')) return;
 					if (e1.button > 0) return;
+					// 社区版快捷交互（设置-社区版功能可关，关闭恢复原版行为）：
+					// ctrl+点击循环切换插值类型（多选时批量作用于全部选中帧）；shift+点击删除。
+					// 延迟到 mouseup 且未发生拖拽时才生效，避免抢占 ctrl+拖拽时间拉伸与 shift+拖拽吸附。
+					let community_click_action =
+						((e1.ctrlOrCmd || Pressing.overrides.ctrl) && settings.community_keyframe_ctrl_click_interpolation
+							&& settings.community_keyframe_ctrl_click_interpolation.value && 'interpolation')
+						|| ((e1.shiftKey || Pressing.overrides.shift) && settings.community_keyframe_shift_click_delete
+							&& settings.community_keyframe_shift_click_delete.value && 'delete')
+						|| null;
 					convertTouchEvent(e1);
 					let dragging_range;
 					let dragging_restriction;
@@ -1715,6 +1724,32 @@ Interface.definePanels(() => {
 					function off() {
 						removeEventListeners(document, 'mousemove touchmove', slide);
 						removeEventListeners(document, 'mouseup touchend', off);
+
+						if (community_click_action && !is_setup) {
+							// 纯点击（未拖拽）：执行社区版快捷交互
+							if (community_click_action == 'interpolation') {
+								let targets = (clicked.selected && Timeline.selected.length > 1) ? Timeline.selected.slice() : [clicked];
+								let transform_kfs = targets.filter(kf => kf.transform);
+								if (transform_kfs.length) {
+									let types = Object.keys(Keyframe.interpolation);
+									Undo.initEdit({keyframes: transform_kfs});
+									for (let kf of transform_kfs) {
+										kf.interpolation = types[(types.indexOf(kf.interpolation) + 1) % types.length];
+									}
+									Undo.finishEdit('Cycle keyframe interpolation');
+									Animator.preview();
+									updateKeyframeSelection();
+									if (Timeline.vue) Timeline.vue.$forceUpdate();
+								}
+							} else {
+								Undo.initEdit({keyframes: [clicked]});
+								clicked.remove();
+								updateKeyframeSelection();
+								Animator.preview();
+								Undo.finishEdit('Remove keyframe');
+							}
+							return;
+						}
 
 						if (is_setup) {
 							var deleted = []
