@@ -1587,29 +1587,24 @@
 		color: var(--color-subtle_text);
 		margin-left: 2px;
 	}
-	ul#custom_molang_variables,
-	ul#custom_ct_variables {
+	ul#custom_molang_variables {
 		flex-shrink: 0;
 	}
-	#custom_molang_variables li,
-	#custom_ct_variables li {
+	#custom_molang_variables li {
 		display: flex;
 		align-items: center;
 		gap: 4px;
 		padding: 1px 8px;
 		min-height: 28px;
 	}
-	#custom_molang_variables li input,
-	#custom_ct_variables li input {
+	#custom_molang_variables li input {
 		flex-grow: 1;
 		height: 24px;
 	}
-	#custom_molang_variables li.custom_molang_variable_add,
-	#custom_ct_variables li.custom_molang_variable_add {
+	#custom_molang_variables li.custom_molang_variable_add {
 		padding: 2px 8px;
 	}
-	#custom_molang_variables li.custom_molang_variable_add button,
-	#custom_ct_variables li.custom_molang_variable_add button {
+	#custom_molang_variables li.custom_molang_variable_add button {
 		width: 100%;
 		height: 24px;
 	}

@@ -12,6 +12,23 @@
 
 import { fs, PathModule, NodeBuffer } from "../native_apis";
 
+// 资源路径归一化键：Windows 上文件系统不区分大小写、两种分隔符等价，
+// 引用字符串（动画 JSON 常见 `/`）与解析出的资产路径（PathModule 产 `\`）
+// 必须视为同一文件，否则 fromRef/add 会为同一文件重复创建占位资产。
+function effectAssetPathKey(path) {
+	if (!path || typeof path != 'string') return '';
+	let key = path.replace(/\\/g, '/');
+	// Windows 文件系统大小写不敏感（渲染进程无 process，用 Blockbench.platform）
+	if (typeof Blockbench != 'undefined' && Blockbench.platform == 'win32') {
+		key = key.toLowerCase();
+	}
+	return key;
+}
+function sameAssetPath(a, b) {
+	let key = effectAssetPathKey(a);
+	return !!key && key === effectAssetPathKey(b);
+}
+
 function effectAssetArrayBufferToBase64(buffer) {
 	let bytes = new Uint8Array(buffer);
 	let binary = '';
@@ -125,7 +142,7 @@ export class ParticleAsset {
 	}
 	add(undo) {
 		if (this.path) {
-			let existing = ParticleAsset.all.find(a => a !== this && a.path === this.path);
+			let existing = ParticleAsset.all.find(a => a !== this && a.path && sameAssetPath(a.path, this.path));
 			if (existing) return existing;
 		}
 		if (undo === true) {
@@ -282,7 +299,64 @@ export class ParticleAsset {
 	}
 	static fromRef(ref) {
 		if (!ref || typeof ref != 'string') return null;
-		return ParticleAsset.all.find(a => a.uuid === ref || (a.path && a.path === ref)) || null;
+		return ParticleAsset.all.find(a => a.uuid === ref || (a.path && sameAssetPath(a.path, ref))) || null;
+	}
+	// 合并同一文件、不同路径写法（`/` 与 `\`、大小写）的重复资产（历史数据可能已存重复），
+	// 并把 keyframe / 控制器状态里的引用规范化到存活资产的引用——运行时查表
+	// （Animator.particle_effects[ref]）按原字符串取键，路径写法不一致会静默查不到。
+	static dedupe() {
+		let alive = new Map();
+		let removed = [];
+		ParticleAsset.all.slice().forEach(asset => {
+			let key = effectAssetPathKey(asset.path);
+			if (!key) return;
+			let survivor = alive.get(key);
+			if (!survivor) {
+				alive.set(key, asset);
+				return;
+			}
+			// 优先保留带内容的资产
+			if (asset.content && !survivor.content) {
+				alive.set(key, asset);
+				removed.push({dead: survivor, survivor: asset});
+			} else {
+				removed.push({dead: asset, survivor});
+			}
+		});
+		let ref_map = new Map();
+		alive.forEach((asset, key) => ref_map.set(key, asset.getRef()));
+		removed.forEach(({dead, survivor}) => {
+			ref_map.set(dead.uuid, survivor.getRef());
+		});
+		let resolveRef = (ref) => {
+			if (!ref) return ref;
+			if (ref_map.has(ref)) return ref_map.get(ref);
+			let key = effectAssetPathKey(ref);
+			return key && ref_map.has(key) ? ref_map.get(key) : ref;
+		};
+		Animation.all.forEach(animation => {
+			for (let uuid in animation.animators) {
+				let animator = animation.animators[uuid];
+				if (!(animator.particle instanceof Array)) continue;
+				animator.particle.forEach(kf => kf.data_points.forEach(data_point => {
+					if (data_point.file) data_point.file = resolveRef(data_point.file);
+				}));
+			}
+		});
+		AnimationController.all.forEach(controller => {
+			controller.states.forEach(state => {
+				state.particles.forEach(particle => {
+					if (particle.file) particle.file = resolveRef(particle.file);
+				});
+			});
+		});
+		if (!removed.length) return 0;
+		let removed_set = new Set(removed.map(entry => entry.dead));
+		for (let i = ParticleAsset.all.length - 1; i >= 0; i--) {
+			if (removed_set.has(ParticleAsset.all[i])) ParticleAsset.all.splice(i, 1);
+		}
+		removed.forEach(({dead}) => unloadParticleEffectEntry(dead.getRef()));
+		return removed.length;
 	}
 	// Create or refresh an asset from an imported/read file result.
 	// Adds the asset to the project (without undo; callers wrap with Undo edits).
@@ -290,7 +364,7 @@ export class ParticleAsset {
 		let json = autoParseJSON(file.content, {file_path: file.path});
 		if (!json || !json.particle_effect) return null;
 		let path = isApp ? file.path : '';
-		let existing = path && ParticleAsset.all.find(a => a.path === path);
+		let existing = path && ParticleAsset.all.find(a => a.path && sameAssetPath(a.path, path));
 		if (existing) {
 			existing.content = json;
 			existing.saved = true;
@@ -445,7 +519,7 @@ export class SoundAsset {
 	}
 	add(undo) {
 		if (this.path) {
-			let existing = SoundAsset.all.find(a => a !== this && a.path === this.path);
+			let existing = SoundAsset.all.find(a => a !== this && a.path && sameAssetPath(a.path, this.path));
 			if (existing) return existing;
 		}
 		if (undo === true) {
@@ -550,7 +624,63 @@ export class SoundAsset {
 	}
 	static fromRef(ref) {
 		if (!ref || typeof ref != 'string') return null;
-		return SoundAsset.all.find(a => a.uuid === ref || (a.path && a.path === ref)) || null;
+		return SoundAsset.all.find(a => a.uuid === ref || (a.path && sameAssetPath(a.path, ref))) || null;
+	}
+	// 同 ParticleAsset.dedupe：合并同一文件不同路径写法的重复声音资产并改指引用
+	static dedupe() {
+		let alive = new Map();
+		let removed = [];
+		SoundAsset.all.slice().forEach(asset => {
+			let key = effectAssetPathKey(asset.path);
+			if (!key) return;
+			let survivor = alive.get(key);
+			if (!survivor) {
+				alive.set(key, asset);
+				return;
+			}
+			if (asset.source && !survivor.source) {
+				alive.set(key, asset);
+				removed.push({dead: survivor, survivor: asset});
+			} else {
+				removed.push({dead: asset, survivor});
+			}
+		});
+		let remap = new Map();
+		alive.forEach((asset, key) => remap.set(key, asset.getRef()));
+		removed.forEach(({dead, survivor}) => {
+			remap.set(dead.uuid, survivor.getRef());
+		});
+		let resolveRef = (ref) => {
+			if (!ref) return ref;
+			if (remap.has(ref)) return remap.get(ref);
+			let key = effectAssetPathKey(ref);
+			return key && remap.has(key) ? remap.get(key) : ref;
+		};
+		Animation.all.forEach(animation => {
+			for (let uuid in animation.animators) {
+				let animator = animation.animators[uuid];
+				if (!(animator.sound instanceof Array)) continue;
+				animator.sound.forEach(kf => kf.data_points.forEach(data_point => {
+					if (data_point.file) data_point.file = resolveRef(data_point.file);
+				}));
+			}
+		});
+		AnimationController.all.forEach(controller => {
+			controller.states.forEach(state => {
+				state.sounds.forEach(sound => {
+					if (sound.file) sound.file = resolveRef(sound.file);
+				});
+			});
+		});
+		if (!removed.length) return 0;
+		let removed_set = new Set(removed.map(entry => entry.dead));
+		for (let i = SoundAsset.all.length - 1; i >= 0; i--) {
+			if (removed_set.has(SoundAsset.all[i])) SoundAsset.all.splice(i, 1);
+		}
+		removed.forEach(({dead}) => {
+			delete Timeline.waveforms[dead.getRef()];
+		});
+		return removed.length;
 	}
 	// Resolve any file reference (asset uuid/path or legacy path) to a playable URL
 	static resolvePlaybackSource(ref) {
@@ -584,7 +714,7 @@ export class SoundAsset {
 	}
 	static importFromFile(file) {
 		let path = isApp ? file.path : '';
-		let existing = path && SoundAsset.all.find(a => a.path === path);
+		let existing = path && SoundAsset.all.find(a => a.path && sameAssetPath(a.path, path));
 		let source = SoundAsset.fileToSource(file);
 		if (!source) return null;
 		if (existing) {
