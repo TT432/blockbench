@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.37',
+		changes: [
+			'时间轴工具栏新增「删除无对应组的帧」按钮：一键删除从其他模型复制动画后残留、当前模型里已无对应组的骨骼关键帧（可撤销）（#160）',
+		],
+	},
+	{
 		version: '5.3.36',
 		changes: [
 			'创建贴图（模板）：新增「保留当前 UV 大小」，只重新排列 UV 位置（#155）',

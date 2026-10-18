@@ -1004,6 +1004,7 @@ Interface.definePanels(() => {
 					'timeline_focus',
 					'clear_timeline',
 					'bring_up_all_animations',
+					'delete_unused_animators',
 					'select_effect_animator',
 					'add_marker',
 					'+',
