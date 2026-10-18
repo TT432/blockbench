@@ -1485,9 +1485,9 @@
 	.molang_input pre .token.selector {
 		color: #92dcff;
 	}
-	/* 自定义 molang 变量表内的裸标识符（视为 v. 变量）：紫色 */
+	/* 自定义 molang 变量表内的裸标识符（视为 v. 变量）：橙色 */
 	.molang_input pre .token.custom-variable {
-		color: #b99cff;
+		color: #ffa040;
 	}
 	.molang_input pre .string {
 		color: #e8df6a;

@@ -664,7 +664,7 @@ new Property(ModelProject, 'array', 'custom_molangs', {
 	exposed: false,
 });
 // 自定义 molang 变量表（元素为名字字符串）：表内名字在任何 molang 输入处
-// 视为 variable.<名字>（展开时改写、编辑器中紫色高亮）
+// 视为 variable.<名字>（展开时改写、编辑器中橙色高亮）
 new Property(ModelProject, 'array', 'custom_molang_variables', {
 	exposed: false,
 });

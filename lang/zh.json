@@ -2971,7 +2971,7 @@
 	"dialog.custom_molang.duplicate_name": "已存在同名自定义 molang",
 	"panel.variable_placeholders.custom_molangs": "自定义 Molang",
 	"panel.variable_placeholders.custom_variables": "自定义 Molang 变量",
-	"panel.variable_placeholders.custom_variables.desc": "表中的名字在任意 molang 输入处视为 variable.名字，并高亮为紫色",
+	"panel.variable_placeholders.custom_variables.desc": "表中的名字在任意 molang 输入处视为 variable.名字，并高亮为橙色",
 	"panel.variable_placeholders.custom_variable_name": "变量名称",
 	"panel.particles.missing_particle": "找不到粒子文件，点击重新导入",
 	"menu.paint": "Paint",

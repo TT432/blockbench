@@ -11,10 +11,10 @@ Prism.languages.molang = {
 
 /**
  * 自定义 molang 变量表（Project.custom_molang_variables）高亮：
- * 表内名字在 molang 编辑器中高亮为紫色（.token.custom-variable），
+ * 表内名字在 molang 编辑器中高亮为橙色（.token.custom-variable），
  * 裸标识符与 v.名 / variable.名 形式都匹配（表语义即 v.，故优先于 selector）。
  * 自定义 molang 对话框的参数名（ct. 语义）经 setCustomMolangParamHighlight 挂入，
- * 仅匹配裸标识符，同样紫色；对话框关闭时清空。
+ * 仅匹配裸标识符，同样橙色；对话框关闭时清空。
  * 变量表变化（面板编辑/项目切换）时调用本函数重建 token；编辑器下次重渲染即生效。
  */
 let custom_molang_param_names = [];
@@ -45,7 +45,7 @@ function updateCustomMolangVariableHighlight() {
 	let tokens = {};
 	let var_names = collectValidNames((typeof Project != 'undefined' && Project && Project.custom_molang_variables) || []);
 	if (var_names.length) {
-		// 裸名与 v./variable. 前缀形式都算自定义变量，整体紫色
+		// 裸名与 v./variable. 前缀形式都算自定义变量，整体橙色
 		tokens['custom-variable'] = new RegExp('(?<![\\w.])(?:(?:v|variable)\\.)?(?:' + escapeRegExpSource(var_names) + ')(?![\\w.(])', 'i');
 	}
 	let param_names = collectValidNames(custom_molang_param_names);
@@ -56,7 +56,7 @@ function updateCustomMolangVariableHighlight() {
 		};
 	}
 	if (!Object.keys(tokens).length) return;
-	// 插在 selector 之前：v.名 形式的自定义变量优先按紫色高亮；字符串在更前，引号内不高亮
+	// 插在 selector 之前：v.名 形式的自定义变量优先按橙色高亮；字符串在更前，引号内不高亮
 	Prism.languages.insertBefore('molang', 'selector', tokens);
 }
 
