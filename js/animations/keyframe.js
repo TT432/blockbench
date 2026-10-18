@@ -362,6 +362,8 @@ export class Keyframe {
 				}
 			})
 			scripts = scripts.filter(script => !!script.replace(/[\n\s;.]+/g, ''));
+			// 项目自定义 molang（n./new.）：导出前展开
+			scripts = scripts.map(line => expandCustomMolang(line));
 			scripts = scripts.map(line => (line.match(/;\s*$/) || line.startsWith('/')) ? line : (line+';'));
 			return scripts.length <= 1 ? scripts[0] : scripts;
 		} else {
@@ -370,6 +372,7 @@ export class Keyframe {
 				if (data_point.effect) {
 					let script = data_point.script || undefined;
 					if (script && !script.replace(/[\n\s;.]+/g, '')) script = undefined;
+					if (script) script = expandCustomMolang(script);
 					if (script && !script.match(/;$/)) script += ';';
 					points.push({
 						effect: data_point.effect,

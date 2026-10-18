@@ -1340,6 +1340,8 @@ Interface.definePanels(function() {
 				:title="node.title"
 				@dblclick.stop.self="!node.locked && renameOutliner(node)"
 			>` +
+				// #165：小拐拐——每行从父级竖线到行内容的横向连接段（depth=0 无父线不渲染）
+				`<div class="outliner_line_elbow" v-if="depth > 0"></div>` +
 				//Opener
 				
 				`<i

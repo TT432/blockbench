@@ -2477,6 +2477,37 @@
 	dialog#expression_editor .dialog_content {
 		overflow: unset;
 	}
+	/* 项目自定义 molang 对话框（n./new. 前缀中间格式） */
+	dialog#custom_molang .dialog_content {
+		overflow-y: auto;
+	}
+	dialog#custom_molang .custom_molang_name_row {
+		align-items: center;
+	}
+	dialog#custom_molang .custom_molang_prefix {
+		color: var(--color-accent);
+		font-weight: bold;
+		font-size: 1.1em;
+		margin-right: 2px;
+		user-select: none;
+	}
+	dialog#custom_molang .custom_molang_name_row input {
+		flex-grow: 1;
+	}
+	dialog#custom_molang .custom_molang_param_row {
+		align-items: center;
+	}
+	dialog#custom_molang .custom_molang_param_row input {
+		flex-grow: 1;
+	}
+	dialog#custom_molang .dialog_custom_molang_hint {
+		color: var(--color-subtle_text);
+		font-size: 0.9em;
+		margin: 6px 0 0;
+	}
+	dialog#custom_molang #custom_molang_body_editor {
+		min-height: 120px;
+	}
 
 /* Texture Edit */
 	div.texture_adjust_previews {

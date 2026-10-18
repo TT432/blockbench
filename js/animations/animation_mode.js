@@ -1,4 +1,5 @@
 import MolangParser from "../lib/molangjs_vendored.esm.js";
+import "./custom_molang.js";
 import Wintersky from 'wintersky';
 import { Mode } from "../modes";
 import { clipboard, fs } from "../native_apis";
@@ -1403,6 +1404,7 @@ Interface.definePanels(function() {
 				children: [
 					'create_variable_placeholder',
 					'view_built_in_variables',
+					'create_custom_molang',
 				]
 			})
 		],
