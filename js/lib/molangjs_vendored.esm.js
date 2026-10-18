@@ -995,6 +995,11 @@ function Molang() {
 			return input || 0;
 		}
 		if (typeof input !== 'string' || input.length === 0) return 0;
+		// Community fork: expand project custom molang (n./new. calls) via global
+		// hook (js/util/molang.ts expandCustomMolang) before parsing
+		if (typeof globalThis.expandCustomMolang === 'function') {
+			input = globalThis.expandCustomMolang(input);
+		}
 		if (input.length < 9 && isStringNumber(input)) {
 			return parseFloat(input);
 		}

@@ -135,14 +135,126 @@ function testInvertMolang(input: string) {
 	}
 }
 
+// MARK: Custom Molang（项目自定义 molang，n./new. 前缀，执行/导出前文本展开）
+export interface CustomMolangDefinition {
+	uuid?: string
+	name: string
+	params: string[]
+	body: string
+}
+const custom_molang_call_regex = /(^|[^\w.])(?:n|new)\.(\w+)\s*(\()?/gi;
+const custom_molang_quick_test = /(^|[^\w.])(n|new)\.\w/i;
+let custom_molang_cache_project: typeof Project | null = null;
+let custom_molang_cache = new Map<string, string>();
+
+export function clearCustomMolangCache(): void {
+	custom_molang_cache.clear();
+}
+
+// 按顶层逗号拆分参数（括号内逗号不拆）
+function splitCustomMolangArgs(arg_string: string): string[] {
+	let args: string[] = [];
+	let depth = 0, start = 0;
+	for (let i = 0; i < arg_string.length; i++) {
+		let char = arg_string[i];
+		if (char == '(') depth++;
+		else if (char == ')') depth--;
+		else if (char == ',' && depth == 0) {
+			args.push(arg_string.substring(start, i).trim());
+			start = i + 1;
+		}
+	}
+	let last = arg_string.substring(start).trim();
+	if (last || args.length) args.push(last);
+	return args;
+}
+
+/**
+ * 展开文本中的项目自定义 molang 调用（n.name(...) / new.name(...)）。
+ * 参数一律以括号包裹代入（保证 `n.test(v.a, v.b + 1)` → `(v.a) + (v.b + 1)` 无语义偏移）；
+ * 方法体按定义原样拼接。嵌套/链式调用递归展开，深度上限防止循环定义死循环。
+ * 未定义的调用保持原文（交给 molang 解析器按未知变量处理）。
+ */
+export function expandCustomMolang(input: string, depth = 0): string {
+	if (typeof input != 'string' || depth > 16) return input;
+	if (!custom_molang_quick_test.test(input)) return input;
+	let defs = (typeof Project != 'undefined' && Project ? Project.custom_molangs : null) as CustomMolangDefinition[] | null;
+	if (!defs || !defs.length) return input;
+
+	if (depth == 0) {
+		if (Project !== custom_molang_cache_project) {
+			custom_molang_cache_project = Project;
+			custom_molang_cache.clear();
+		}
+		let cached_result = custom_molang_cache.get(input);
+		if (cached_result !== undefined) return cached_result;
+	}
+
+	let result = '';
+	let cursor = 0;
+	let changed = false;
+	custom_molang_call_regex.lastIndex = 0;
+	let match: RegExpExecArray | null;
+	while ((match = custom_molang_call_regex.exec(input))) {
+		if (match.index < cursor) continue; // 已消费的调用内部（参数等），跳过
+		let name = match[2].toLowerCase();
+		let def = defs.find(d => d.name && d.name.toLowerCase() == name);
+		if (!def) continue;
+		let args: string[] = [];
+		let end = custom_molang_call_regex.lastIndex;
+		if (match[3]) {
+			// 从 '(' 后平衡扫描到匹配的 ')'
+			let bracket_depth = 1;
+			let i = end;
+			for (; i < input.length; i++) {
+				let char = input[i];
+				if (char == '(') bracket_depth++;
+				else if (char == ')') {
+					bracket_depth--;
+					if (!bracket_depth) break;
+				}
+			}
+			if (bracket_depth) continue; // 括号未闭合，保持原文
+			args = splitCustomMolangArgs(input.substring(end, i));
+			end = i + 1;
+		} else if (def.params && def.params.length) {
+			continue; // 定义要求参数但调用处无括号，保持原文
+		}
+		let body = (def.body || '').trim();
+		(def.params || []).forEach((param, i) => {
+			if (!param) return;
+			let arg = args[i] !== undefined && args[i] !== '' ? args[i] : '0';
+			let param_regex = new RegExp(`(?<![\\w$])${param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`, 'gi');
+			body = body.replace(param_regex, `(${arg})`);
+		});
+		result += input.substring(cursor, match.index) + match[1] + body;
+		cursor = end;
+		changed = true;
+	}
+	if (!changed) return input;
+	result += input.substring(cursor);
+	// 展开结果可能仍含自定义调用（嵌套调用、定义间互相引用），递归至收敛
+	result = expandCustomMolang(result, depth + 1);
+	if (depth == 0) {
+		if (custom_molang_cache.size > 512) custom_molang_cache.clear();
+		custom_molang_cache.set(input, result);
+	}
+	return result;
+}
+
+
 const global = {
 	invertMolang,
 	testInvertMolang,
-	processMolangReturn
+	processMolangReturn,
+	expandCustomMolang,
+	clearCustomMolangCache
 };
 declare global {
 	const invertMolang: typeof global.invertMolang
 	const testInvertMolang: typeof global.testInvertMolang
 	const processMolangReturn: typeof global.processMolangReturn
+	const expandCustomMolang: typeof global.expandCustomMolang
+	const clearCustomMolangCache: typeof global.clearCustomMolangCache
 }
 Object.assign(window, global);

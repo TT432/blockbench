@@ -67,6 +67,22 @@ if (LaunchSettings.get('hardware_acceleration') == false) {
 	}
 }
 
+/**
+ * Window icon path: prefer the hot-update payload's copy so icon changes ship
+ * with payload updates; fall back to the builtin icon inside the app.
+ * (The .exe-embedded icon - installer/shortcut/pinned taskbar - is a binary
+ * resource and inherently cannot be hot-updated.)
+ */
+function getWindowIconPath() {
+	if (current_index_path) {
+		const payload_icon = path.join(path.dirname(current_index_path), 'icon.ico');
+		if (current_index_path !== path.join(__dirname, './../index.html') && fs.existsSync(payload_icon)) {
+			return payload_icon;
+		}
+	}
+	return path.join(__dirname, './../icon.ico');
+}
+
 function createWindow(second_instance, options = {}) {
 	if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock()) {
 		app.quit()
@@ -74,7 +90,7 @@ function createWindow(second_instance, options = {}) {
 	}
 	let native_frame = LaunchSettings.get('native_window_frame') === true;
 	let win_options = {
-		icon: 'icon.ico',
+		icon: getWindowIconPath(),
 		show: false,
 		backgroundColor: '#21252b',
 		frame: native_frame,
@@ -297,6 +313,12 @@ ipcMain.on('bb-update:start', (event) => {
 	active_apply.promise.then(result => {
 		current_index_path = result.index_path;
 		current_version = result.version;
+		// Hot-updated payload may ship a new icon.ico: refresh running windows
+		// (setIcon works without a process restart; createWindow picks it up too).
+		const icon_path = getWindowIconPath();
+		for (const win of all_wins) {
+			if (!win.isDestroyed()) win.setIcon(icon_path);
+		}
 		console.log('[update] Payload applied:', result.version);
 		send('bb-update:done', {version: result.version});
 	}).catch(err => {
@@ -325,6 +347,7 @@ ipcMain.handle('bb-update:reload', async () => {
 		PayloadUpdater.invalidatePayload();
 		current_index_path = path.join(__dirname, './../index.html');
 		current_version = null;
+		try { win.setIcon(getWindowIconPath()); } catch (e) {}
 		try {
 			await win.loadURL(url.format({
 				pathname: current_index_path,

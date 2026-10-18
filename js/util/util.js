@@ -515,6 +515,8 @@ export function molangNumberToString(value) {
 export function exportMolang(input) {
 	if (!input) return 0;
 	if (typeof input == 'string') {
+		// 项目自定义 molang（n./new.）：导出前展开为普通 molang，保证游戏端可执行
+		if (typeof expandCustomMolang == 'function') input = expandCustomMolang(input);
 		if (!isNaN(input)) {
 			let num = parseFloat(input);
 			return isNaN(num) ? 0 : num;

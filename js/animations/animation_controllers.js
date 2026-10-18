@@ -193,7 +193,7 @@ export class AnimationControllerState {
 		if (this.animations.length) {
 			object.animations = this.animations.map(animation => {
 				return animation.blend_value.trim()
-					? new oneLiner({[animation.key]: animation.blend_value.trim()})
+					? new oneLiner({[animation.key]: expandCustomMolang(animation.blend_value.trim())})
 					: animation.key;
 			})
 		}
@@ -201,6 +201,8 @@ export class AnimationControllerState {
 			if (!this[type] || this[type] == '\n') return;
 			let lines = this[type].split('\n');
 			lines = lines.filter(script => !!script.replace(/[\n\s;.]+/g, ''));
+			// 项目自定义 molang（n./new.）：导出前展开
+			lines = lines.map(line => expandCustomMolang(line));
 			lines = lines.map(line => (line.match(/;\s*$/) || line.startsWith('/')) ? line : (line+';'));
 			object[type] = lines;
 		})
@@ -210,7 +212,7 @@ export class AnimationControllerState {
 					effect: particle.effect || '',
 					locator: particle.locator || undefined,
 					bind_to_actor: particle.bind_to_actor ? undefined : false,
-					pre_effect_script: particle.pre_effect_script || undefined
+					pre_effect_script: particle.pre_effect_script ? expandCustomMolang(particle.pre_effect_script) : undefined
 				}
 			})
 		}
@@ -224,7 +226,7 @@ export class AnimationControllerState {
 		if (this.transitions.length) {
 			object.transitions = this.transitions.map(transition => {
 				let state = this.controller.states.find(s => s.uuid == transition.target);
-				let condition = transition.condition.replace(/\n/g, '');
+				let condition = expandCustomMolang(transition.condition.replace(/\n/g, ''));
 				return new oneLiner({[state ? state.name : 'missing_state']: condition})
 			})
 		}

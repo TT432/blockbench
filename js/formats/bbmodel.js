@@ -367,6 +367,9 @@ var codec = new Codec('project', {
 		if (Interface.Panels.variable_placeholders.inside_vue.buttons.length) {
 			model.variable_placeholder_buttons = Interface.Panels.variable_placeholders.inside_vue.buttons.map(b => JSON.parse(JSON.stringify(b)));
 		}
+		if (Project.custom_molangs && Project.custom_molangs.length) {
+			model.custom_molangs = JSON.parse(JSON.stringify(Project.custom_molangs));
+		}
 
 		if (Format.display_mode && Object.keys(Project.display_settings).length >= 1) {
 			var new_display = {}
@@ -640,6 +643,9 @@ var codec = new Codec('project', {
 		}
 		if (model.animation_variable_placeholders) {
 			Interface.Panels.variable_placeholders.inside_vue._data.text = model.animation_variable_placeholders;
+		}
+		if (model.custom_molangs instanceof Array) {
+			Project.custom_molangs.replace(model.custom_molangs);
 		}
 		if (model.display !== undefined) {
 			DisplayMode.loadJSON(model.display)
@@ -950,6 +956,14 @@ var codec = new Codec('project', {
 			} else {
 				vue._data.text = model.animation_variable_placeholders;
 			}
+		}
+		if (model.custom_molangs instanceof Array) {
+			// 合并工程时按名称去重追加（名称忽略大小写，与解析器小写化一致）
+			model.custom_molangs.forEach(def => {
+				if (!def || !def.name) return;
+				if (Project.custom_molangs.find(d => d.name && d.name.toLowerCase() == String(def.name).toLowerCase())) return;
+				Project.custom_molangs.push(def);
+			})
 		}
 		if (model.display !== undefined) {
 			DisplayMode.loadJSON(model.display)

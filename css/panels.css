@@ -629,6 +629,20 @@
 		pointer-events: none;
 		display: none;
 	}
+	/* #165：小拐拐——横向连接段，左端对齐父级竖线（父线 x = (depth-1)*16+9），右端抵到行内容 */
+	#cubes_list .outliner_object {
+		position: relative;
+	}
+	#cubes_list .outliner_line_elbow {
+		position: absolute;
+		left: calc((var(--indentation) - 1) * var(--indentation-offset) + 9px);
+		top: 13px;
+		width: calc(var(--indentation-offset) - 9px);
+		height: 2px;
+		background: var(--color-guidelines);
+		pointer-events: none;
+		display: none;
+	}
 	/* #87：line_guide 显隐由 CSS 按命令式维护的 selected/directly_selected class 驱动（原 v-if 会让选中变化触发整树重渲染） */
 	#cubes_list .outliner_node:has(> .outliner_object.selected:not(.group)) > ul > .outliner_line_guide {
 		display: block;
@@ -639,8 +653,19 @@
 	#cubes_list .outliner_node:has(> .outliner_object.directly_selected) > ul > .outliner_line_guide {
 		display: block;
 	}
+	/* #165：拐线显隐与竖线规则一致（同一选中路径语义） */
+	#cubes_list .outliner_node:has(> .outliner_object.selected:not(.group)) > ul > .outliner_node > .outliner_object > .outliner_line_elbow {
+		display: block;
+	}
+	#cubes_list .outliner_node:has(> .outliner_object.selected) > ul > .outliner_node:has(> .outliner_object.selected:not(.group)) > ul > .outliner_node > .outliner_object > .outliner_line_elbow {
+		display: none;
+	}
+	#cubes_list .outliner_node:has(> .outliner_object.directly_selected) > ul > .outliner_node > .outliner_object > .outliner_line_elbow {
+		display: block;
+	}
 	/* #130：开关开启时大纲常驻显示全部父子结构树线（关闭后回退为仅选中路径显示） */
-	body.community_outliner_tree_lines #cubes_list .outliner_line_guide {
+	body.community_outliner_tree_lines #cubes_list .outliner_line_guide,
+	body.community_outliner_tree_lines #cubes_list .outliner_line_elbow {
 		display: block !important;
 	}
 	.drag_hover[order]::before {
