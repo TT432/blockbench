@@ -663,6 +663,11 @@ new Property(ModelProject, 'array', 'variable_placeholder_buttons', {
 new Property(ModelProject, 'array', 'custom_molangs', {
 	exposed: false,
 });
+// 自定义 molang 变量表（元素为名字字符串）：表内名字在任何 molang 输入处
+// 视为 variable.<名字>（展开时改写、编辑器中紫色高亮）
+new Property(ModelProject, 'array', 'custom_molang_variables', {
+	exposed: false,
+});
 new Property(ModelProject, 'number', 'shadow_size', {
 	label: 'dialog.project.shadow_size',
 	condition: {formats: ['optifine_entity']},

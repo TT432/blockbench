@@ -24,58 +24,28 @@ function sanitizeParams(params) {
 	return result;
 }
 
-function openCustomMolangDialog() {
+/**
+ * 新建自定义 molang 对话框（语义：仅新建）。编辑已有定义时传入 edit_def，
+ * 此时对话框预填并按 uuid 更新——编辑入口在变量占位符面板的条目右键菜单。
+ */
+function openCustomMolangDialog(edit_def) {
 	if (!Project) return;
 	let dialog = new Dialog({
 		id: 'custom_molang',
-		title: 'action.create_custom_molang',
+		title: edit_def ? 'dialog.custom_molang.edit_title' : 'action.create_custom_molang',
 		resizable: true,
 		width: 560,
 		component: {
 			components: {VuePrismEditor},
 			data() {
 				return {
-					editing_uuid: '',
-					name: '',
-					params: [],
-					body: '',
-					existing: Project.custom_molangs,
-				}
-			},
-			computed: {
-				existing_options() {
-					let options = {'': tl('dialog.custom_molang.new')};
-					this.existing.forEach(def => {
-						options[def.uuid] = 'new.' + def.name;
-					});
-					return options;
+					editing_uuid: edit_def ? edit_def.uuid : '',
+					name: edit_def ? edit_def.name : '',
+					params: edit_def ? edit_def.params.slice() : [],
+					body: edit_def ? edit_def.body : '',
 				}
 			},
 			methods: {
-				loadSelected() {
-					let def = this.existing.find(d => d.uuid == this.editing_uuid);
-					if (def) {
-						this.name = def.name;
-						this.params = def.params.slice();
-						this.body = def.body;
-					} else {
-						this.name = '';
-						this.params = [];
-						this.body = '';
-					}
-				},
-				deleteSelected() {
-					let index = this.existing.findIndex(d => d.uuid == this.editing_uuid);
-					if (index < 0) return;
-					this.existing.splice(index, 1);
-					this.editing_uuid = '';
-					this.name = '';
-					this.params = [];
-					this.body = '';
-					clearCustomMolangCache();
-					Project.saved = false;
-					Animator.preview();
-				},
 				autocomplete(text, position) {
 					if (Settings.get('autocomplete_code') == false) return [];
 					return MolangAutocomplete.VariablePlaceholdersContext.autocomplete(text, position);
@@ -83,11 +53,6 @@ function openCustomMolangDialog() {
 			},
 			template: `
 				<div class="custom_molang_wrapper">
-					<div class="dialog_bar" style="align-items: center;">
-						<label>${tl('dialog.custom_molang.edit_existing')}</label>
-						<select-input class="flexible" v-model="editing_uuid" :options="existing_options" @input="loadSelected()" />
-						<div class="tool" v-if="editing_uuid" :title="'${tl('generic.delete')}'" @click="deleteSelected()"><i class="material-icons">delete</i></div>
-					</div>
 					<div class="dialog_bar custom_molang_name_row">
 						<label class="custom_molang_prefix">new.</label>
 						<input type="text" class="dark_bordered tab_target" v-model="name" :placeholder="'${tl('dialog.custom_molang.name')}'">
@@ -160,10 +125,12 @@ function openCustomMolangDialog() {
 			clearCustomMolangCache();
 			Project.saved = false;
 			Animator.preview();
+			Blockbench.dispatchEvent('update_custom_molang', {});
 		}
 	});
 	dialog.show();
 }
+Object.assign(window, {openCustomMolangDialog});
 
 BARS.defineActions(function() {
 	new Action('create_custom_molang', {

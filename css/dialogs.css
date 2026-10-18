@@ -2494,6 +2494,24 @@
 		min-height: 0;
 		width: 100%;
 	}
+	/* .dialog_bar 默认是 block，块级子元素（bb-select/tool）会掉到行内 label 下方
+	   溢出固定行高相互重叠；统一改 flex 行布局，且不允许被压缩（高度不足只压编辑器） */
+	dialog#custom_molang .custom_molang_wrapper > .dialog_bar {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		flex-shrink: 0;
+	}
+	dialog#custom_molang .custom_molang_wrapper > .dialog_bar > label {
+		width: auto;
+		flex-shrink: 0;
+	}
+	dialog#custom_molang .custom_molang_wrapper > .dialog_bar > .bb-select {
+		flex-grow: 1;
+	}
+	dialog#custom_molang .custom_molang_wrapper > .dialog_custom_molang_hint {
+		flex-shrink: 0;
+	}
 	dialog#custom_molang #custom_molang_body_editor {
 		flex: 1 1 auto;
 		min-height: 160px;

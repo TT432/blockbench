@@ -1413,8 +1413,18 @@ Interface.definePanels(function() {
 			components: {VuePrismEditor},
 			data() { return {
 				text: '',
-				buttons: []
+				buttons: [],
+				custom_molangs: [],
+				custom_molang_variables: []
 			}},
+			created() {
+				// 自定义 molang 列表/变量表引用 Project 属性数组（同一引用，外部修改自动反映）；
+				// 项目切换/新建/加载/定义增删时重取引用并刷新变量高亮
+				this.refreshCustomMolang();
+				['select_project', 'new_project', 'load_project', 'update_custom_molang'].forEach(event_name => {
+					Blockbench.on(event_name, () => this.refreshCustomMolang());
+				});
+			},
 			methods: {
 				updateButtons() {
 					let old_values = {};
@@ -1560,6 +1570,46 @@ Interface.definePanels(function() {
 				autocomplete(text, position) {
 					if (Settings.get('autocomplete_code') == false) return [];
 					return MolangAutocomplete.VariablePlaceholdersContext.autocomplete(text, position);
+				},
+				refreshCustomMolang() {
+					this.custom_molangs = (typeof Project != 'undefined' && Project) ? Project.custom_molangs : [];
+					this.custom_molang_variables = (typeof Project != 'undefined' && Project) ? Project.custom_molang_variables : [];
+					if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
+				},
+				// 自定义 molang 条目右键菜单：修改/删除（新建入口在工具栏，对话框仅新建）
+				customMolangContextMenu(def, event) {
+					new Menu([
+						{
+							name: 'dialog.custom_molang.edit_entry',
+							icon: 'edit',
+							click: () => openCustomMolangDialog(def)
+						},
+						{
+							name: 'generic.delete',
+							icon: 'delete',
+							click: () => this.deleteCustomMolang(def)
+						}
+					]).open(event);
+				},
+				deleteCustomMolang(def) {
+					if (!Project) return;
+					let index = Project.custom_molangs.findIndex(d => d.uuid == def.uuid);
+					if (index < 0) return;
+					Project.custom_molangs.splice(index, 1);
+					clearCustomMolangCache();
+					Project.saved = false;
+					Animator.preview();
+					Blockbench.dispatchEvent('update_custom_molang', {});
+				},
+				addCustomVariable() {
+					this.custom_molang_variables.push('');
+				},
+				setCustomVariable(i, value) {
+					// Vue 2 数组下标直接赋值不触发响应式，须用 Vue.set
+					Vue.set(this.custom_molang_variables, i, value);
+				},
+				removeCustomVariable(i) {
+					this.custom_molang_variables.splice(i, 1);
 				}
 			},
 			watch: {
@@ -1570,6 +1620,17 @@ Interface.definePanels(function() {
 						this.updateButtons();
 						Project.variable_placeholder_buttons.replace(this.buttons);
 						Timeline.vue.updateGraph();
+					}
+				},
+				// 变量表编辑（增删/改名）即时生效：高亮重建、展开缓存失效、预览刷新
+				custom_molang_variables: {
+					deep: true,
+					handler() {
+						if (!Project) return;
+						Project.saved = false;
+						clearCustomMolangCache();
+						if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
+						Animator.preview();
 					}
 				}
 			},
@@ -1582,6 +1643,26 @@ Interface.definePanels(function() {
 							<input v-if="button.type == 'toggle'" type="checkbox" :checked="button.value == 1" @change="changeButtonValue(button, $event)" :id="'placeholder_button_'+button.id">
 							<numeric-input v-if="button.type == 'slider'" :step="button.step" :min="button.min" :max="button.max" v-model="button.value" @input="changeButtonValue(button, $event)" />
 							<label :for="'placeholder_button_'+button.id" @mousedown="slideButton(button, $event)" @touchstart="slideButton(button, $event)">{{ button.id }}</label>
+						</li>
+					</ul>
+
+					<template v-if="custom_molangs.length">
+						<label class="custom_molang_section_label">${tl('panel.variable_placeholders.custom_molangs')}</label>
+						<ul id="custom_molang_list">
+							<li v-for="def in custom_molangs" :key="def.uuid" @contextmenu="customMolangContextMenu(def, $event)" :title="def.body">
+								<span class="custom_molang_prefix">new.</span><span class="custom_molang_def_name">{{ def.name }}</span><span class="custom_molang_def_params">({{ def.params.join(', ') }})</span>
+							</li>
+						</ul>
+					</template>
+
+					<label class="custom_molang_section_label" :title="'${tl('panel.variable_placeholders.custom_variables.desc')}'">${tl('panel.variable_placeholders.custom_variables')}</label>
+					<ul id="custom_molang_variables">
+						<li v-for="(name, i) in custom_molang_variables" :key="i">
+							<input type="text" class="dark_bordered" :value="name" @input="setCustomVariable(i, $event.target.value)" :placeholder="'${tl('panel.variable_placeholders.custom_variable_name')}'" />
+							<div class="tool" :title="'${tl('generic.delete')}'" @click="removeCustomVariable(i)"><i class="material-icons">clear</i></div>
+						</li>
+						<li class="custom_molang_variable_add">
+							<button @click="addCustomVariable()"><i class="icon fa fa-plus"></i></button>
 						</li>
 					</ul>
 

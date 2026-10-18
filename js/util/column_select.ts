@@ -152,6 +152,19 @@ export function enableColumnSelection(root: HTMLElement, options: ColumnSelectOp
 		dragging = false;
 		overlay_container.replaceChildren();
 	}
+	// 把 DOM 光标放到 (line, col)，让用户看到列选择的当前编辑位置。
+	// contenteditable 的可见光标只能来自真实 DOM 选区；中键拖动 preventDefault
+	// 后浏览器不会自行放置光标，必须手动设置。
+	function setDomCaret(line: number, col: number) {
+		let lines = getLines();
+		if (!lines.length) return;
+		line = Math.min(Math.max(line, 0), lines.length - 1);
+		let target = lineStartOffset(lines, line) + Math.min(col, lines[line].length);
+		let pos = nodeAtOffset(target);
+		if (!pos) return;
+		let selection = window.getSelection();
+		if (selection) selection.setBaseAndExtent(pos.node, pos.offset, pos.node, pos.offset);
+	}
 	function applyEdit(produce: (line_text: string, from: number, to: number) => {text: string, new_col: number}) {
 		if (!active) return;
 		let lines = getLines();
@@ -173,6 +186,7 @@ export function enableColumnSelection(root: HTMLElement, options: ColumnSelectOp
 			event.stopPropagation();
 			let caret = caretFromPoint(event.clientX, event.clientY);
 			if (!caret) return;
+			pre!.focus();
 			anchor = caret;
 			dragging = true;
 			active = normalize(caret, caret);
@@ -193,6 +207,10 @@ export function enableColumnSelection(root: HTMLElement, options: ColumnSelectOp
 			dragging = false;
 			if (active && active.line1 == active.line2 && active.col1 == active.col2) {
 				clearSelection();
+			} else if (active) {
+				// 拖拽结束：光标显示在选择末尾（VSCode 盒选行为）
+				pre!.focus();
+				setDomCaret(active.line2, active.col2);
 			}
 		}
 	});
@@ -223,7 +241,12 @@ export function enableColumnSelection(root: HTMLElement, options: ColumnSelectOp
 				text: line_text.substring(0, from) + char + line_text.substring(to),
 				new_col: from + char.length
 			}));
-			requestAnimationFrame(() => renderOverlay());
+			// Vue 重渲染会重建 DOM 并丢弃光标，渲染后恢复覆盖层与光标
+			requestAnimationFrame(() => {
+				if (!active) return;
+				renderOverlay();
+				setDomCaret(active.line2, active.col2);
+			});
 		} else if (event.key == 'Backspace' || event.key == 'Delete') {
 			event.preventDefault();
 			event.stopPropagation();
@@ -241,7 +264,12 @@ export function enableColumnSelection(root: HTMLElement, options: ColumnSelectOp
 				}
 				return {text: line_text, new_col: from};
 			});
-			requestAnimationFrame(() => renderOverlay());
+			// Vue 重渲染会重建 DOM 并丢弃光标，渲染后恢复覆盖层与光标
+			requestAnimationFrame(() => {
+				if (!active) return;
+				renderOverlay();
+				setDomCaret(active.line2, active.col2);
+			});
 		} else if (['Escape', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
 			clearSelection();
 			if (event.key == 'Escape') {
