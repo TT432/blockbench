@@ -95,6 +95,13 @@ export const TextureGenerator = {
 					value: true,
 					condition: (form) => (form.type == 'template')
 				},
+				keep_uv_size: {
+					label: 'dialog.create_texture.keep_uv_size',
+					description: 'dialog.create_texture.keep_uv_size.desc',
+					type: 'checkbox',
+					value: false,
+					condition: (form) => (form.type == 'template' && form.rearrange_uv)
+				},
 				box_uv: {
 					label: 'dialog.project.uv_mode.box_uv',
 					type: 'checkbox',
@@ -503,7 +510,9 @@ export const TextureGenerator = {
 				let swap = (this.rotation % 180) != 0;
 				// 本节所有尺寸均为新贴图的 UV 单位（res_multiple = 像素/UV单位），
 				// 岛尺寸对齐到新贴图的像素网格（默认分支四舍五入 #75，uv_lock 分支向上覆盖原像素域）
-				if (cube.uv_lock || this.face.uv_lock) {
+				// 反馈#155：保留当前 UV 大小——岛尺寸取该面现有 UV 矩形（对齐新贴图像素网格），
+				// 只重新排列位置，不按方块面尺寸重算 UV。逻辑与 uv_lock 分支一致。
+				if (cube.uv_lock || this.face.uv_lock || options.keep_uv_size) {
 					// 锁定（编号65）：不改变 UV 大小范围——岛尺寸由面 UV 实际覆盖的像素域决定，
 					// 保留分数 extent 与部分覆盖的边缘像素列，避免重建后贴图漂移（编号46）
 					let fx = (tex instanceof Texture && tex.getUVWidth()) ? tex.width / tex.getUVWidth() : 1;
