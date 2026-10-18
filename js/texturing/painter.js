@@ -4058,13 +4058,7 @@ BARS.defineActions(function() {
 	// #127：面的「纹理 u/v 增加方向」在方块局部空间的单位向量（经 CubeFace.UVToLocal，
 	// 含 uv 绕序、面 rotation、负尺寸与膨胀），用于把目标面的纹理坐标反解回源面
 	function getFaceUVBasis(face) {
-		let u = (face.uv[0] + face.uv[2]) / 2;
-		let v = (face.uv[1] + face.uv[3]) / 2;
-		let origin = face.UVToLocal([u, v]);
-		let du = face.UVToLocal([u + 1, v]).sub(origin);
-		let dv = face.UVToLocal([u, v + 1]).sub(origin);
-		if (du.lengthSq() < 1e-12 || dv.lengthSq() < 1e-12) return null;
-		return {du: du.normalize(), dv: dv.normalize()};
+		return face.getUVBasis();
 	}
 	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到同方块对面的 UV（按面的真实局部方向做镜像）。
 	new Action('paint_symmetric_texture', {
