@@ -1695,310 +1695,374 @@ BARS.defineActions(function() {
 					// 反馈#162：按源面 UV 中的有色像素，在描边贴图上生成对应的绘画选区
 					create_selection: {label: 'dialog.negative_outline.create_selection', type: 'checkbox', value: false},
 				},
-				onConfirm(form) {
-					let w = Math.max(0.01, Number(form.width) || 0);
-					let color = form.color;
-					let cube_list = [...targets];
-					let face_keys = ['up', 'down', 'north', 'south', 'east', 'west'];
-
-					Undo.initEdit({elements: [], outliner: true, textures: Texture.getDefault() ? [Texture.getDefault()] : [], bitmap: true});
-
-					// 目标贴图：默认贴图，没有则新建 16x16
-					let texture = Texture.getDefault();
-					if (!texture) {
-						let canvas = document.createElement('canvas');
-						canvas.width = canvas.height = 16;
-						texture = new Texture({name: 'outline', mode: 'bitmap', keep_size: true, folder: 'block'})
-							.fromDataURL(canvas.toDataURL('image/png')).fillParticle();
-						texture.add(false, true);
-						if (Format.per_texture_uv_size) {
-							texture.uv_width = 16;
-							texture.uv_height = 16;
-						}
-					} else {
-						// initEdit 快照会替换活跃数组内的对象，按 uuid 重查
-						texture = Texture.all.find(t => t.uuid == texture.uuid);
-					}
-					let uv_w = texture.getUVWidth();
-					let uv_h = texture.getUVHeight();
-
-					// 反馈#152：UV 单元从贴图上「未被已有 UV 占用」的位置取用，
-					// 避免描边 UV（及其填充色）与原模型已有 UV 区域重叠冲突。
-					let occupied = new Set();
-					let markUsed = face => {
-						if (!face || face.texture === null) return;
-						let u0 = Math.floor(Math.min(face.uv[0], face.uv[2]));
-						let u1 = Math.ceil(Math.max(face.uv[0], face.uv[2]));
-						let v0 = Math.floor(Math.min(face.uv[1], face.uv[3]));
-						let v1 = Math.ceil(Math.max(face.uv[1], face.uv[3]));
-						for (let u = Math.max(0, u0); u < u1 && u < uv_w; u++) {
-							for (let v = Math.max(0, v0); v < v1 && v < uv_h; v++) {
-								occupied.add(u + ',' + v);
-							}
-						}
-					};
-					Outliner.elements.forEach(el => {
-						if (!(el instanceof Cube)) return;
-						for (let fkey in el.faces) {
-							let face = el.faces[fkey];
-							if (face && face.texture !== null && face.getTexture() === texture) markUsed(face);
-						}
+				async onConfirm(form) {
+					// 反馈#168：大模型下生成耗时长，用带进度条的对话框显示进度并分块让出主线程
+					let progress_dialog = new Dialog({
+						id: 'negative_outline_progress',
+						title: 'action.negative_outline',
+						width: 380,
+						lines: [tl('dialog.negative_outline.progress')],
+						buttons: [],
+						cancel_on_click_outside: false,
+						progress_bar: {progress: 0},
 					});
+					progress_dialog.show();
+					let set_progress = (value) => progress_dialog.progress_bar?.setProgress(Math.max(0, Math.min(1, value)));
+					let yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
+					let edit_started = false;
+					let edit_finished = false;
+					try {
+						let w = Math.max(0.01, Number(form.width) || 0);
+						let color = form.color;
+						let cube_list = [...targets];
+						let face_keys = ['up', 'down', 'north', 'south', 'east', 'west'];
 
-					// 反馈#158：排列起点（四角，扫描坐标 → 贴图坐标时翻转）与排列方式（按行 / 紧凑）
-					let corner = ['top_right', 'bottom_left', 'bottom_right'].includes(form.corner) ? form.corner : 'top_left';
-					let flip_u = corner.endsWith('right');
-					let flip_v = corner.startsWith('bottom');
-					let compact_layout = form.layout == 'compact';
-					let source_uv_size = form.uv_size == 'source';
-					let source_size_cache = new Map();
+						edit_started = true;
+						Undo.initEdit({elements: [], outliner: true, textures: Texture.getDefault() ? [Texture.getDefault()] : [], bitmap: true});
 
-					// 反馈#162：每面所需的 UV 矩形尺寸（UV 单位，整数格）
-					function faceRectSize(cube, fkey) {
-						let key = cube.uuid + ':' + fkey;
-						if (source_size_cache.has(key)) return source_size_cache.get(key);
-						let size = [1, 1];
-						if (source_uv_size) {
-							let face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
-							if (face && face.uv && face.uv.length == 4) {
-								size = [
-									Math.max(1, Math.ceil(Math.abs(face.uv[2] - face.uv[0]) - 1e-6)),
-									Math.max(1, Math.ceil(Math.abs(face.uv[3] - face.uv[1]) - 1e-6)),
-								];
+						// 目标贴图：默认贴图，没有则新建 16x16
+						let texture = Texture.getDefault();
+						if (!texture) {
+							let canvas = document.createElement('canvas');
+							canvas.width = canvas.height = 16;
+							texture = new Texture({name: 'outline', mode: 'bitmap', keep_size: true, folder: 'block'})
+								.fromDataURL(canvas.toDataURL('image/png')).fillParticle();
+							texture.add(false, true);
+							if (Format.per_texture_uv_size) {
+								texture.uv_width = 16;
+								texture.uv_height = 16;
+							}
+						} else {
+							// initEdit 快照会替换活跃数组内的对象，按 uuid 重查
+							texture = Texture.all.find(t => t.uuid == texture.uuid);
+						}
+						let uv_w = texture.getUVWidth();
+						let uv_h = texture.getUVHeight();
+
+						// 反馈#168：UV 占用改按「每行有序区间」记录（原实现按像素写入字符串 Set，
+						// 大贴图 + 大 UV 面时是 O(像素数) 的字符串操作，会卡死数小时）。
+						let row_used = new Map();
+						function addUsedInterval(y, u0, u1) {
+							if (u1 <= u0) return;
+							let list = row_used.get(y);
+							if (!list) {
+								row_used.set(y, [[u0, u1]]);
+								return;
+							}
+							let i = 0;
+							while (i < list.length && list[i][1] < u0) i++;
+							let start = u0, end = u1, j = i;
+							while (j < list.length && list[j][0] <= end) {
+								start = Math.min(start, list[j][0]);
+								end = Math.max(end, list[j][1]);
+								j++;
+							}
+							list.splice(i, j - i, [start, end]);
+						}
+						function markUsedRect(u0, v0, u1, v1) {
+							let vmin = Math.max(0, v0), vmax = Math.min(uv_h, v1);
+							let umin = Math.max(0, u0), umax = Math.min(uv_w, u1);
+							for (let y = vmin; y < vmax; y++) addUsedInterval(y, umin, umax);
+						}
+						function markUsed(face) {
+							if (!face || face.texture === null) return;
+							let u0 = Math.floor(Math.min(face.uv[0], face.uv[2]));
+							let u1 = Math.ceil(Math.max(face.uv[0], face.uv[2]));
+							let v0 = Math.floor(Math.min(face.uv[1], face.uv[3]));
+							let v1 = Math.ceil(Math.max(face.uv[1], face.uv[3]));
+							markUsedRect(u0, v0, u1, v1);
+						}
+						{
+							let mark_counter = 0;
+							for (let el of Outliner.elements) {
+								if (el instanceof Cube) {
+									for (let fkey in el.faces) {
+										let face = el.faces[fkey];
+										if (face && face.texture !== null && face.getTexture() === texture) markUsed(face);
+									}
+								}
+								if (++mark_counter % 128 == 0) {
+									set_progress(0.02 + 0.13 * mark_counter / Math.max(1, Outliner.elements.length));
+									await yieldToUI();
+								}
 							}
 						}
-						source_size_cache.set(key, size);
-						return size;
-					}
-					// 扫描坐标（从选定角起算）→ 贴图 UV 坐标
-					function scanToUV(su, sv, rw, rh) {
-						return [flip_u ? uv_w - su - rw : su, flip_v ? uv_h - sv - rh : sv];
-					}
-					function rectFree(u, v, rw, rh) {
-						if (u < 0 || v < 0 || u + rw > uv_w || v + rh > uv_h) return false;
-						for (let x = u; x < u + rw; x++) {
+
+						// 反馈#158：排列起点（四角，扫描坐标 → 贴图坐标时翻转）与排列方式（按行 / 紧凑）
+						let corner = ['top_right', 'bottom_left', 'bottom_right'].includes(form.corner) ? form.corner : 'top_left';
+						let flip_u = corner.endsWith('right');
+						let flip_v = corner.startsWith('bottom');
+						let compact_layout = form.layout == 'compact';
+						let source_uv_size = form.uv_size == 'source';
+						let source_size_cache = new Map();
+
+						// 反馈#162：每面所需的 UV 矩形尺寸（UV 单位，整数格）
+						function faceRectSize(cube, fkey) {
+							let key = cube.uuid + ':' + fkey;
+							if (source_size_cache.has(key)) return source_size_cache.get(key);
+							let size = [1, 1];
+							if (source_uv_size) {
+								let face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
+								if (face && face.uv && face.uv.length == 4) {
+									size = [
+										Math.max(1, Math.ceil(Math.abs(face.uv[2] - face.uv[0]) - 1e-6)),
+										Math.max(1, Math.ceil(Math.abs(face.uv[3] - face.uv[1]) - 1e-6)),
+									];
+								}
+							}
+							source_size_cache.set(key, size);
+							return size;
+						}
+						// 扫描坐标（从选定角起算）→ 贴图 UV 坐标
+						function scanToUV(su, sv, rw, rh) {
+							return [flip_u ? uv_w - su - rw : su, flip_v ? uv_h - sv - rh : sv];
+						}
+						function rectFree(u, v, rw, rh) {
+							if (u < 0 || v < 0 || u + rw > uv_w || v + rh > uv_h) return false;
 							for (let y = v; y < v + rh; y++) {
-								if (occupied.has(x + ',' + y)) return false;
+								let list = row_used.get(y);
+								if (!list) continue;
+								for (let i = 0; i < list.length; i++) {
+									let [a, b] = list[i];
+									if (b <= u) continue;
+									if (a >= u + rw) break;
+									return false;
+								}
 							}
+							return true;
 						}
-						return true;
-					}
-					function claimRect(su, sv, rw, rh) {
-						let [u, v] = scanToUV(su, sv, rw, rh);
-						for (let x = u; x < u + rw; x++) {
-							for (let y = v; y < v + rh; y++) {
-								occupied.add(x + ',' + y);
-							}
+						function claimRect(su, sv, rw, rh) {
+							let [u, v] = scanToUV(su, sv, rw, rh);
+							markUsedRect(u, v, u + rw, v + rh);
+							return [u, v, rw, rh];
 						}
-						return [u, v, rw, rh];
-					}
-					function allocRect(rw, rh) {
-						if (compact_layout) {
-							// 紧凑：从选定角向外按「远边距离」一圈圈扩展，整体接近正方形
-							for (let d = Math.max(rw, rh); d <= uv_w + uv_h; d++) {
-								let su = d - rw;
-								if (su >= 0 && su + rw <= uv_w) {
-									for (let sv = 0; sv + rh <= d && sv + rh <= uv_h; sv++) {
+						// 反馈#168：某尺寸一旦扫描完整 UV 空间仍无空位，后续同尺寸直接判定耗尽，
+						// 避免「每个面都整空间重扫一遍」造成的卡死
+						let exhausted_sizes = new Set();
+						function allocRect(rw, rh) {
+							let size_key = rw + 'x' + rh;
+							if (exhausted_sizes.has(size_key)) return null;
+							if (compact_layout) {
+								// 紧凑：从选定角向外按「远边距离」一圈圈扩展，整体接近正方形
+								for (let d = Math.max(rw, rh); d <= uv_w + uv_h; d++) {
+									let su = d - rw;
+									if (su >= 0 && su + rw <= uv_w) {
+										for (let sv = 0; sv + rh <= d && sv + rh <= uv_h; sv++) {
+											let [u, v] = scanToUV(su, sv, rw, rh);
+											if (rectFree(u, v, rw, rh)) return claimRect(su, sv, rw, rh);
+										}
+									}
+									let sv = d - rh;
+									if (sv >= 0 && sv + rh <= uv_h) {
+										for (let su2 = 0; su2 + rw < d && su2 + rw <= uv_w; su2++) {
+											let [u, v] = scanToUV(su2, sv, rw, rh);
+											if (rectFree(u, v, rw, rh)) return claimRect(su2, sv, rw, rh);
+										}
+									}
+								}
+							} else {
+								// 按行：从选定角开始横向填满一行再换行（原有行为）
+								for (let sv = 0; sv + rh <= uv_h; sv++) {
+									for (let su = 0; su + rw <= uv_w; su++) {
 										let [u, v] = scanToUV(su, sv, rw, rh);
 										if (rectFree(u, v, rw, rh)) return claimRect(su, sv, rw, rh);
 									}
 								}
-								let sv = d - rh;
-								if (sv >= 0 && sv + rh <= uv_h) {
-									for (let su2 = 0; su2 + rw < d && su2 + rw <= uv_w; su2++) {
-										let [u, v] = scanToUV(su2, sv, rw, rh);
-										if (rectFree(u, v, rw, rh)) return claimRect(su2, sv, rw, rh);
-									}
-								}
 							}
-						} else {
-							// 按行：从选定角开始横向填满一行再换行（原有行为）
-							for (let sv = 0; sv + rh <= uv_h; sv++) {
-								for (let su = 0; su + rw <= uv_w; su++) {
-									let [u, v] = scanToUV(su, sv, rw, rh);
-									if (rectFree(u, v, rw, rh)) return claimRect(su, sv, rw, rh);
-								}
-							}
+							exhausted_sizes.add(size_key);
+							return null;
 						}
-						return null;
-					}
-
-					// 分配：individual（默认）= 每块的每个面独占一个 UV 矩形；shared = 所有块的所有面共用一个矩形
-					let rect_map = [];   // rect_map[cube_index][fkey] = [u, v, w, h]
-					let shared_rect = null;
-					let exhausted = false;
-					if (form.uv_mode == 'shared') {
-						let max_w = 1, max_h = 1;
-						cube_list.forEach(cube => face_keys.forEach(fkey => {
-							let [rw, rh] = faceRectSize(cube, fkey);
-							max_w = Math.max(max_w, rw);
-							max_h = Math.max(max_h, rh);
-						}));
-						shared_rect = allocRect(max_w, max_h);
-						if (!shared_rect) {
-							shared_rect = [0, 0, max_w, max_h];
-							exhausted = true;
-						}
-					}
-					cube_list.forEach(cube => {
-						let map = {};
-						face_keys.forEach(fkey => {
-							if (shared_rect) {
-								map[fkey] = shared_rect;
-								return;
-							}
-							let [rw, rh] = faceRectSize(cube, fkey);
-							let rect = allocRect(rw, rh);
-							if (!rect) {
-								// 贴图 UV 空间耗尽：退化为复用左上角（填充色一致，仅无法逐面独立）
-								rect = [0, 0, rw, rh];
+						let rect_map = [];   // rect_map[cube_index][fkey] = [u, v, w, h]
+						let shared_rect = null;
+						let exhausted = false;
+						if (form.uv_mode == 'shared') {
+							let max_w = 1, max_h = 1;
+							cube_list.forEach(cube => face_keys.forEach(fkey => {
+								let [rw, rh] = faceRectSize(cube, fkey);
+								max_w = Math.max(max_w, rw);
+								max_h = Math.max(max_h, rh);
+							}));
+							shared_rect = allocRect(max_w, max_h);
+							if (!shared_rect) {
+								shared_rect = [0, 0, max_w, max_h];
 								exhausted = true;
 							}
-							map[fkey] = rect;
-						});
-						rect_map.push(map);
-					});
-					if (exhausted) {
-						Blockbench.showQuickMessage('dialog.negative_outline.uv_full', 4000);
-					}
-
-					// 填充颜色到分配的贴图像素（直绘画布：texture.edit 会自建独立撤销条目，
-					// 与本动作的撤销拆分；外层 Undo.initEdit 已含 bitmap 快照）
-					if (!texture.internal) texture.convertToInternal();
-					let {canvas: tex_canvas} = texture.getActiveCanvas();
-					let tex_ctx = tex_canvas.getContext('2d');
-					tex_ctx.imageSmoothingEnabled = false;
-					tex_ctx.fillStyle = color;
-					// 反馈#158：空颜色 = 擦成纯透明；图层纹理需要逐层擦除，否则其他层的像素仍会显示
-					let clear_layers = (form.empty_color && texture.layers_enabled)
-						? texture.layers.filter(l => l.type == 'pixel_layer' && l.visible)
-						: null;
-					let filled = new Set();
-					rect_map.forEach(map => face_keys.forEach(fkey => {
-						let [u, v, rw, rh] = map[fkey];
-						let key = u + ',' + v + ',' + rw + ',' + rh;
-						if (filled.has(key)) return;
-						filled.add(key);
-						let px = Math.round(u * tex_canvas.width / uv_w);
-						let py = Math.round(v * tex_canvas.height / uv_h);
-						let pw = Math.max(1, Math.round(rw * tex_canvas.width / uv_w));
-						let ph = Math.max(1, Math.round(rh * tex_canvas.height / uv_h));
-						if (clear_layers) {
-							clear_layers.forEach(layer => {
-								layer.ctx.clearRect(px - layer.offset[0], py - layer.offset[1], pw, ph);
-							});
-						} else if (form.empty_color) {
-							tex_ctx.clearRect(px, py, pw, ph);
-						} else {
-							tex_ctx.fillRect(px, py, pw, ph);
 						}
-					}));
-					texture.updateChangesAfterEdit();
-
-					let new_cubes = [];
-					cube_list.forEach((cube, i) => {
-						let faces_data = {};
-						face_keys.forEach(fkey => {
-							// 读取删除面：按负尺寸的镜像置换取源面，源面被删除（texture=null）时壳块该面同样删除
-							let source_face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
-							if (form.read_deleted && source_face && source_face.texture === null) {
-								faces_data[fkey] = {texture: null};
-								return;
-							}
-							let [u, v, rw, rh] = rect_map[i][fkey];
-							faces_data[fkey] = {uv: [u, v, u + rw, v + rh], texture};
-						});
-						// 反馈#152：源块可能带「膨胀」（从中心向六个方向扩张/收缩，可为负）与拉伸，
-						// 壳块必须包住膨胀后的实际体积，否则描边会陷进模型内部。
-						let src_from = cube.from.slice();
-						let src_to = cube.to.slice();
-						adjustFromAndToForInflateAndStretch(src_from, src_to, cube);
-						let shell = new Cube({
-							name: (cube.name || 'cube') + '_outline',
-							autouv: 0,
-							box_uv: false,
-							// 负尺寸：from > to；用 max/min 计算以兼容源块本身已是负尺寸的情况
-							from: [Math.max(src_from[0], src_to[0]) + w, Math.max(src_from[1], src_to[1]) + w, Math.max(src_from[2], src_to[2]) + w],
-							to: [Math.min(src_from[0], src_to[0]) - w, Math.min(src_from[1], src_to[1]) - w, Math.min(src_from[2], src_to[2]) - w],
-							rotation: cube.rotation.slice(),
-							origin: cube.origin.slice(),
-							faces: faces_data,
-						}).init();
-						shell.addTo(cube.parent instanceof Group ? cube.parent : undefined);
-						shell.preview_controller.updateTransform(shell);
-						new_cubes.push(shell);
-					});
-					Outliner.selected.replace(new_cubes);
-
-					// 反馈#162：勾选「创建选区」时，按源面贴图有色（alpha>0）像素在描边贴图上生成绘画选区。
-					// 源像素 → 目标 UV 矩形按比例映射，只标记源图形覆盖到的目标像素。
-					if (form.create_selection && texture.width && texture.height) {
-						let src_cache = new Map();
-						function getSourcePixels(src_tex) {
-							if (src_cache.has(src_tex.uuid)) return src_cache.get(src_tex.uuid);
-							let entry = null;
-							let canvas = src_tex.canvas;
-							if (src_tex.layers_enabled) src_tex.updateLayerChanges(false);
-							if (canvas && canvas.width && canvas.height) {
-								try {
-									entry = {
-										width: canvas.width,
-										height: canvas.height,
-										data: canvas.getContext('2d', {willReadFrequently: true}).getImageData(0, 0, canvas.width, canvas.height).data,
-									};
-								} catch (err) {
-									entry = null;
-								}
-							}
-							src_cache.set(src_tex.uuid, entry);
-							return entry;
-						}
-						let selection = texture.selection;
-						selection.changeSize(texture.width, texture.height);
-						selection.setOverride(null);
-						cube_list.forEach((cube, i) => {
+						for (let ci = 0; ci < cube_list.length; ci++) {
+							let cube = cube_list[ci];
+							let map = {};
 							face_keys.forEach(fkey => {
-								let src_face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
-								if (!src_face || src_face.texture === null || !src_face.uv || src_face.uv.length != 4) return;
-								let src_tex = src_face.getTexture();
-								if (!(src_tex instanceof Texture)) return;
-								let pixels = getSourcePixels(src_tex);
-								if (!pixels) return;
-								let suw = src_tex.getUVWidth() || pixels.width;
-								let suh = src_tex.getUVHeight() || pixels.height;
-								let su0 = Math.min(src_face.uv[0], src_face.uv[2]);
-								let su1 = Math.max(src_face.uv[0], src_face.uv[2]);
-								let sv0 = Math.min(src_face.uv[1], src_face.uv[3]);
-								let sv1 = Math.max(src_face.uv[1], src_face.uv[3]);
-								let sx0 = Math.max(0, Math.floor(su0 * pixels.width / suw));
-								let sx1 = Math.min(pixels.width, Math.ceil(su1 * pixels.width / suw));
-								let sy0 = Math.max(0, Math.floor(sv0 * pixels.height / suh));
-								let sy1 = Math.min(pixels.height, Math.ceil(sv1 * pixels.height / suh));
-								if (sx1 <= sx0 || sy1 <= sy0) return;
+								if (shared_rect) {
+									map[fkey] = shared_rect;
+									return;
+								}
+								let [rw, rh] = faceRectSize(cube, fkey);
+								let rect = allocRect(rw, rh);
+								if (!rect) {
+									// 贴图 UV 空间耗尽：退化为复用左上角（填充色一致，仅无法逐面独立）
+									rect = [0, 0, rw, rh];
+									exhausted = true;
+								}
+								map[fkey] = rect;
+							});
+							rect_map.push(map);
+							if (ci % 8 == 7) {
+								set_progress(0.15 + 0.55 * ci / Math.max(1, cube_list.length));
+								await yieldToUI();
+							}
+						}
+						if (exhausted) {
+							Blockbench.showQuickMessage('dialog.negative_outline.uv_full', 4000);
+						}
+
+						// 填充颜色到分配的贴图像素（直绘画布：texture.edit 会自建独立撤销条目，
+						// 与本动作的撤销拆分；外层 Undo.initEdit 已含 bitmap 快照）
+						if (!texture.internal) texture.convertToInternal();
+						let {canvas: tex_canvas} = texture.getActiveCanvas();
+						let tex_ctx = tex_canvas.getContext('2d');
+						tex_ctx.imageSmoothingEnabled = false;
+						tex_ctx.fillStyle = color;
+						// 反馈#158：空颜色 = 擦成纯透明；图层纹理需要逐层擦除，否则其他层的像素仍会显示
+						let clear_layers = (form.empty_color && texture.layers_enabled)
+							? texture.layers.filter(l => l.type == 'pixel_layer' && l.visible)
+							: null;
+						let filled = new Set();
+						rect_map.forEach(map => face_keys.forEach(fkey => {
+							let [u, v, rw, rh] = map[fkey];
+							let key = u + ',' + v + ',' + rw + ',' + rh;
+							if (filled.has(key)) return;
+							filled.add(key);
+							let px = Math.round(u * tex_canvas.width / uv_w);
+							let py = Math.round(v * tex_canvas.height / uv_h);
+							let pw = Math.max(1, Math.round(rw * tex_canvas.width / uv_w));
+							let ph = Math.max(1, Math.round(rh * tex_canvas.height / uv_h));
+							if (clear_layers) {
+								clear_layers.forEach(layer => {
+									layer.ctx.clearRect(px - layer.offset[0], py - layer.offset[1], pw, ph);
+								});
+							} else if (form.empty_color) {
+								tex_ctx.clearRect(px, py, pw, ph);
+							} else {
+								tex_ctx.fillRect(px, py, pw, ph);
+							}
+						}));
+						texture.updateChangesAfterEdit();
+
+						let new_cubes = [];
+						for (let i = 0; i < cube_list.length; i++) {
+							let cube = cube_list[i];
+							let faces_data = {};
+							face_keys.forEach(fkey => {
+								// 读取删除面：按负尺寸的镜像置换取源面，源面被删除（texture=null）时壳块该面同样删除
+								let source_face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
+								if (form.read_deleted && source_face && source_face.texture === null) {
+									faces_data[fkey] = {texture: null};
+									return;
+								}
 								let [u, v, rw, rh] = rect_map[i][fkey];
-								let px0 = Math.max(0, Math.round(u * texture.width / uv_w));
-								let px1 = Math.min(texture.width, Math.round((u + rw) * texture.width / uv_w));
-								let py0 = Math.max(0, Math.round(v * texture.height / uv_h));
-								let py1 = Math.min(texture.height, Math.round((v + rh) * texture.height / uv_h));
-								if (px1 <= px0 || py1 <= py0) return;
-								// 反向映射：每个描边贴图像素回采源面 UV 对应像素，保证选区覆盖整个目标 UV 区域
-								for (let ty = py0; ty < py1; ty++) {
-									let fy = (ty + 0.5 - py0) / (py1 - py0);
-									let sy = Math.min(sy1 - 1, Math.max(sy0, Math.floor(sy0 + fy * (sy1 - sy0))));
-									for (let tx = px0; tx < px1; tx++) {
-										let fx = (tx + 0.5 - px0) / (px1 - px0);
-										let sx = Math.min(sx1 - 1, Math.max(sx0, Math.floor(sx0 + fx * (sx1 - sx0))));
-										if (pixels.data[(sy * pixels.width + sx) * 4 + 3] == 0) continue;
-										selection.set(tx, ty, 1);
+								faces_data[fkey] = {uv: [u, v, u + rw, v + rh], texture};
+							});
+							// 反馈#152：源块可能带「膨胀」（从中心向六个方向扩张/收缩，可为负）与拉伸，
+							// 壳块必须包住膨胀后的实际体积，否则描边会陷进模型内部。
+							let src_from = cube.from.slice();
+							let src_to = cube.to.slice();
+							adjustFromAndToForInflateAndStretch(src_from, src_to, cube);
+							let shell = new Cube({
+								name: (cube.name || 'cube') + '_outline',
+								autouv: 0,
+								box_uv: false,
+								// 负尺寸：from > to；用 max/min 计算以兼容源块本身已是负尺寸的情况
+								from: [Math.max(src_from[0], src_to[0]) + w, Math.max(src_from[1], src_to[1]) + w, Math.max(src_from[2], src_to[2]) + w],
+								to: [Math.min(src_from[0], src_to[0]) - w, Math.min(src_from[1], src_to[1]) - w, Math.min(src_from[2], src_to[2]) - w],
+								rotation: cube.rotation.slice(),
+								origin: cube.origin.slice(),
+								faces: faces_data,
+							}).init();
+							shell.addTo(cube.parent instanceof Group ? cube.parent : undefined);
+							shell.preview_controller.updateTransform(shell);
+							new_cubes.push(shell);
+							if (i % 6 == 5) {
+								set_progress(0.72 + 0.24 * i / Math.max(1, cube_list.length));
+								await yieldToUI();
+							}
+						}
+						Outliner.selected.replace(new_cubes);
+
+						// 反馈#162：勾选「创建选区」时，按源面贴图有色（alpha>0）像素在描边贴图上生成绘画选区。
+						// 源像素 → 目标 UV 矩形按比例映射，只标记源图形覆盖到的目标像素。
+						if (form.create_selection && texture.width && texture.height) {
+							let src_cache = new Map();
+							function getSourcePixels(src_tex) {
+								if (src_cache.has(src_tex.uuid)) return src_cache.get(src_tex.uuid);
+								let entry = null;
+								let canvas = src_tex.canvas;
+								if (src_tex.layers_enabled) src_tex.updateLayerChanges(false);
+								if (canvas && canvas.width && canvas.height) {
+									try {
+										entry = {
+											width: canvas.width,
+											height: canvas.height,
+											data: canvas.getContext('2d', {willReadFrequently: true}).getImageData(0, 0, canvas.width, canvas.height).data,
+										};
+									} catch (err) {
+										entry = null;
 									}
 								}
+								src_cache.set(src_tex.uuid, entry);
+								return entry;
+							}
+							let selection = texture.selection;
+							selection.changeSize(texture.width, texture.height);
+							selection.setOverride(null);
+							cube_list.forEach((cube, i) => {
+								face_keys.forEach(fkey => {
+									let src_face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
+									if (!src_face || src_face.texture === null || !src_face.uv || src_face.uv.length != 4) return;
+									let src_tex = src_face.getTexture();
+									if (!(src_tex instanceof Texture)) return;
+									let pixels = getSourcePixels(src_tex);
+									if (!pixels) return;
+									let suw = src_tex.getUVWidth() || pixels.width;
+									let suh = src_tex.getUVHeight() || pixels.height;
+									let su0 = Math.min(src_face.uv[0], src_face.uv[2]);
+									let su1 = Math.max(src_face.uv[0], src_face.uv[2]);
+									let sv0 = Math.min(src_face.uv[1], src_face.uv[3]);
+									let sv1 = Math.max(src_face.uv[1], src_face.uv[3]);
+									let sx0 = Math.max(0, Math.floor(su0 * pixels.width / suw));
+									let sx1 = Math.min(pixels.width, Math.ceil(su1 * pixels.width / suw));
+									let sy0 = Math.max(0, Math.floor(sv0 * pixels.height / suh));
+									let sy1 = Math.min(pixels.height, Math.ceil(sv1 * pixels.height / suh));
+									if (sx1 <= sx0 || sy1 <= sy0) return;
+									let [u, v, rw, rh] = rect_map[i][fkey];
+									let px0 = Math.max(0, Math.round(u * texture.width / uv_w));
+									let px1 = Math.min(texture.width, Math.round((u + rw) * texture.width / uv_w));
+									let py0 = Math.max(0, Math.round(v * texture.height / uv_h));
+									let py1 = Math.min(texture.height, Math.round((v + rh) * texture.height / uv_h));
+									if (px1 <= px0 || py1 <= py0) return;
+									// 反向映射：每个描边贴图像素回采源面 UV 对应像素，保证选区覆盖整个目标 UV 区域
+									for (let ty = py0; ty < py1; ty++) {
+										let fy = (ty + 0.5 - py0) / (py1 - py0);
+										let sy = Math.min(sy1 - 1, Math.max(sy0, Math.floor(sy0 + fy * (sy1 - sy0))));
+										for (let tx = px0; tx < px1; tx++) {
+											let fx = (tx + 0.5 - px0) / (px1 - px0);
+											let sx = Math.min(sx1 - 1, Math.max(sx0, Math.floor(sx0 + fx * (sx1 - sx0))));
+											if (pixels.data[(sy * pixels.width + sx) * 4 + 3] == 0) continue;
+											selection.set(tx, ty, 1);
+										}
+									}
+								});
 							});
-						});
-						if (Texture.selected != texture) texture.select();
-						UVEditor.updateSelectionOutline();
-					}
+							if (Texture.selected != texture) texture.select();
+							UVEditor.updateSelectionOutline();
+						}
 
-					Undo.finishEdit('Create negative outline', {elements: new_cubes, outliner: true, textures: [texture], bitmap: true});
+						Undo.finishEdit('Create negative outline', {elements: new_cubes, outliner: true, textures: [texture], bitmap: true});
+						edit_finished = true;
+						set_progress(1);
+					} finally {
+						if (edit_started && !edit_finished && Undo.edit) Undo.cancelEdit();
+						progress_dialog.close();
+					}
 				}
 			}).show();
 		}
