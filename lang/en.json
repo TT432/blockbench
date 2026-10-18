@@ -2604,6 +2604,8 @@
 	"panel.variable_placeholders.custom_molangs": "Custom Molang",
 	"panel.variable_placeholders.custom_variables": "Custom Molang Variables",
 	"panel.variable_placeholders.custom_variables.desc": "Names in this table are treated as variable.<name> in any molang field and highlighted orange",
+	"panel.variable_placeholders.custom_ct_variables": "Custom Local Variables (ct.)",
+	"panel.variable_placeholders.custom_ct_variables.desc": "Names in this table are treated as ct.<name> inside custom molang definitions (expanded to a per-call temp variable) and highlighted orange in the custom molang dialog",
 	"panel.variable_placeholders.custom_variable_name": "Variable name",
 	"panel.particles.missing_particle": "Particle file not found. Click to re-import",
 

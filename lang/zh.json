@@ -2972,6 +2972,8 @@
 	"panel.variable_placeholders.custom_molangs": "自定义 Molang",
 	"panel.variable_placeholders.custom_variables": "自定义 Molang 变量",
 	"panel.variable_placeholders.custom_variables.desc": "表中的名字在任意 molang 输入处视为 variable.名字，并高亮为橙色",
+	"panel.variable_placeholders.custom_ct_variables": "自定义局部变量 (ct.)",
+	"panel.variable_placeholders.custom_ct_variables.desc": "表中的名字在自定义 molang 定义体内视为 ct.名字（每次调用展开为独立的 temp 变量），在新建自定义 molang 对话框中高亮为橙色",
 	"panel.variable_placeholders.custom_variable_name": "变量名称",
 	"panel.particles.missing_particle": "找不到粒子文件，点击重新导入",
 	"menu.paint": "Paint",

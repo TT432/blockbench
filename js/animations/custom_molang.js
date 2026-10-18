@@ -65,7 +65,7 @@ function openCustomMolangDialog(edit_def) {
 			},
 			// close() 不销毁 Vue 实例，beforeDestroy 不可靠；确认/取消时显式清空参数高亮
 			beforeDestroy() {
-				setCustomMolangParamHighlight([]);
+				setCustomMolangParamHighlight([], false);
 			},
 			template: `
 				<div class="custom_molang_wrapper">
@@ -144,10 +144,10 @@ function openCustomMolangDialog(edit_def) {
 			Project.saved = false;
 			Animator.preview();
 			Blockbench.dispatchEvent('update_custom_molang', {});
-			setCustomMolangParamHighlight([]);
+			setCustomMolangParamHighlight([], false);
 		},
 		onCancel() {
-			setCustomMolangParamHighlight([]);
+			setCustomMolangParamHighlight([], false);
 		}
 	});
 	dialog.show();
