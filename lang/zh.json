@@ -401,6 +401,7 @@
 	"dialog.negative_outline.layout.compact": "紧凑排列（近似正方形）",
 	"dialog.negative_outline.create_selection": "创建选区",
 	"dialog.negative_outline.read_deleted": "读取删除面",
+	"dialog.negative_outline.progress": "正在生成负尺寸描边…",
 	"dialog.negative_outline.uv_full": "贴图 UV 空间已用尽，描边块共用同一 UV 区域",
 	"action.add_group.desc": "添加一个新的分组或骨骼",
 	"action.outliner_toggle": "显示更多选项",

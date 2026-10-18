@@ -708,7 +708,11 @@ export function stopRenameOutliner(save) {
 	}
 }
 export function toggleElementProperty(key) {
-	let affected = Outliner.selected.filter(element => element[key] != undefined);
+	// 反馈#167：Outliner.selected 只含元素，组在 Group.multi_selected 中；
+	// 只统计元素会让快捷键「切换可见」对组不生效（组自身标志不变、大纲眼睛不翻转）。
+	let nodes = Outliner.selected.slice();
+	Group.multi_selected.forEach(group => { if (!nodes.includes(group)) nodes.push(group); });
+	let affected = nodes.filter(element => element[key] != undefined);
 	if (!affected.length) return;
 	var state = affected[0][key];
 	if (typeof state === 'number') {

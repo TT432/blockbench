@@ -103,6 +103,12 @@ export class Group extends OutlinerNode {
 						}
 					}
 				})
+			} else if (multi_select && this.directly_selected && Group.multi_selected.includes(this)) {
+				// 反馈#166：Ctrl 点击已直接选中的组 = 取消该组及其后代的选择
+				this.forEachChild(child => { if (child.selected) child.unselect(false); });
+				this.unselect(false);
+				updateSelection();
+				return this;
 			} else {
 				//Select This Group
 				this.selected = true;
@@ -137,6 +143,14 @@ export class Group extends OutlinerNode {
 				}
 			}
 		}
+		// 反馈#166：Ctrl 点击已直接选中的组 = 取消该组及其后代的选择
+		if (multi_select && this.directly_selected && Group.multi_selected.includes(this)) {
+			this.forEachChild(child => { if (child.selected) child.unselect(false); });
+			this.unselect(false);
+			updateSelection();
+			return this;
+		}
+
 		//Unselect others
 		if (!multi_select) {
 			unselectAllElements();

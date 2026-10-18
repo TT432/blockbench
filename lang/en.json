@@ -1943,6 +1943,7 @@
 	"dialog.negative_outline.layout.compact": "Compact (square-ish)",
 	"dialog.negative_outline.create_selection": "Create Selection",
 	"dialog.negative_outline.read_deleted": "Respect Deleted Faces",
+	"dialog.negative_outline.progress": "Generating negative outline…",
 	"dialog.negative_outline.uv_full": "Texture UV space is exhausted; outline cubes share one UV region",
 	"action.add_group.desc": "Adds a new group or bone",
 	"action.group_elements": "Group Elements",
