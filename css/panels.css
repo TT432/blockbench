@@ -1494,21 +1494,20 @@
 	}
 
 /* Placeholders */
-	/* 面板整体不滚动：各子列表在分配空间内独立滚动，编辑器占据剩余空间 */
+	/* 面板内容按顺序自然排列，仅面板本身滚动（单一滚动条，无嵌套滚动区） */
 	#panel_variable_placeholders .panel_vue_wrapper {
-		height: 100%;
-		overflow: hidden;
+		flex-grow: 1;
+		min-height: 0;
+		overflow-y: auto;
 	}
 	#panel_variable_placeholders .prism-editor-component {
-		flex-shrink: 1;
 		flex-grow: 1;
-		height: 50%;
-		min-height: 60px;
+		flex-shrink: 0;
+		min-height: 120px;
 	}
 	ul#placeholder_buttons {
-		max-height: 32%;
-		overflow: auto;
 		flex-shrink: 0;
+		overflow: hidden;
 	}
 	ul#placeholder_buttons:has(> li) {
 		min-height: 32px;
@@ -1564,10 +1563,7 @@
 		flex-shrink: 0;
 	}
 	ul#custom_molang_list {
-		max-height: 96px;
-		overflow-y: auto;
-		flex-shrink: 1;
-		min-height: 0;
+		flex-shrink: 0;
 	}
 	#custom_molang_list li {
 		display: flex;
@@ -1593,10 +1589,7 @@
 	}
 	ul#custom_molang_variables,
 	ul#custom_ct_variables {
-		max-height: 120px;
-		overflow-y: auto;
-		flex-shrink: 1;
-		min-height: 0;
+		flex-shrink: 0;
 	}
 	#custom_molang_variables li,
 	#custom_ct_variables li {

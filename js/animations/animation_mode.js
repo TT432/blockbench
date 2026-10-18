@@ -1657,7 +1657,7 @@ Interface.definePanels(function() {
 				}
 			},
 			template: `
-				<div style="flex-grow: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; height: 100%;">
+				<div style="flex-grow: 1; display: flex; flex-direction: column;">
 
 					<ul id="placeholder_buttons">
 						<li v-for="button in buttons" :key="button.id" :class="{placeholder_slider: button.type == 'slider'}" @click="button.type == 'impulse' && changeButtonValue(button, $event)" :buttontype="button.type">
