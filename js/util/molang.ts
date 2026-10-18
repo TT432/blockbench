@@ -177,13 +177,10 @@ function splitCustomMolangArgs(arg_string: string): string[] {
 const custom_molang_string_literal_regex = /("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')/g;
 
 /**
- * 自定义 molang 变量表（Project.custom_molang_variables）改写：
- * 表内名字的裸标识符在任何 molang 处视为 variable.<名字>，解析/导出前改写。
+ * 裸名改写通用实现：表内名字的裸标识符改写为 <前缀>.<名字>。
  * 字符串字面量内不改写；v./temp. 等前缀后、成员访问后、函数调用形式的同名串不受影响。
  */
-function rewriteCustomMolangVariables(input: string): string {
-	if (typeof Project == 'undefined' || !Project) return input;
-	let list = Project.custom_molang_variables as string[] | undefined;
+function rewriteBareNames(input: string, list: string[] | undefined, prefix: string): string {
 	if (!list || !list.length) return input;
 	let seen = new Set<string>();
 	let names: string[] = [];
@@ -199,18 +196,27 @@ function rewriteCustomMolangVariables(input: string): string {
 	// 长名优先，避免短名先匹配截断（\b 已挡住大部分，双保险）
 	names.sort((a, b) => b.length - a.length);
 	let source = names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-	let variable_regex = new RegExp(`(?<![\\w.])(?:${source})(?![\\w.(])`, 'gi');
-	if (!variable_regex.test(input)) return input;
-	variable_regex.lastIndex = 0;
+	let name_regex = new RegExp(`(?<![\\w.])(?:${source})(?![\\w.(])`, 'gi');
+	if (!name_regex.test(input)) return input;
+	name_regex.lastIndex = 0;
 	let changed = false;
 	let segments = input.split(custom_molang_string_literal_regex);
 	for (let i = 0; i < segments.length; i += 2) {
-		segments[i] = segments[i].replace(variable_regex, match => {
+		segments[i] = segments[i].replace(name_regex, match => {
 			changed = true;
-			return 'variable.' + match;
+			return prefix + '.' + match;
 		});
 	}
 	return changed ? segments.join('') : input;
+}
+
+/**
+ * 自定义 molang 变量表（Project.custom_molang_variables）改写：
+ * 表内名字的裸标识符在任何 molang 处视为 variable.<名字>，解析/导出前改写。
+ */
+function rewriteCustomMolangVariables(input: string): string {
+	if (typeof Project == 'undefined' || !Project) return input;
+	return rewriteBareNames(input, Project.custom_molang_variables as string[] | undefined, 'variable');
 }
 
 /**
@@ -277,6 +283,9 @@ export function expandCustomMolang(input: string, depth = 0): string {
 			let param_regex = new RegExp(`(?<![\\w$])${param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`, 'gi');
 			body = body.replace(param_regex, `(${arg})`);
 		});
+		// 自定义局部变量表（Project.custom_ct_variables）：定义体内的裸名字视为 ct.<名字>，
+		// 随本次调用展开为独立 temp 变量。参数代入后再改写，使实参中的表内名字同样生效。
+		body = rewriteBareNames(body, Project.custom_ct_variables as string[] | undefined, 'ct');
 		// customtemp./ct. 作用域：方法体内的 ct.变量 以本次调用为单位展开为独立 temp 变量。
 		// 第 n 次展开 new.test 的调用时，ct.a → temp.test_ct_a{n}（customtemp. 同理）。
 		custom_molang_ct_regex.lastIndex = 0;

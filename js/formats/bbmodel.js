@@ -373,6 +373,9 @@ var codec = new Codec('project', {
 		if (Project.custom_molang_variables && Project.custom_molang_variables.length) {
 			model.custom_molang_variables = JSON.parse(JSON.stringify(Project.custom_molang_variables));
 		}
+		if (Project.custom_ct_variables && Project.custom_ct_variables.length) {
+			model.custom_ct_variables = JSON.parse(JSON.stringify(Project.custom_ct_variables));
+		}
 
 		if (Format.display_mode && Object.keys(Project.display_settings).length >= 1) {
 			var new_display = {}
@@ -652,6 +655,9 @@ var codec = new Codec('project', {
 		}
 		if (model.custom_molang_variables instanceof Array) {
 			Project.custom_molang_variables.replace(model.custom_molang_variables);
+		}
+		if (model.custom_ct_variables instanceof Array) {
+			Project.custom_ct_variables.replace(model.custom_ct_variables);
 		}
 		if (model.display !== undefined) {
 			DisplayMode.loadJSON(model.display)
@@ -977,6 +983,14 @@ var codec = new Codec('project', {
 				if (typeof name != 'string' || !name) return;
 				if (Project.custom_molang_variables.find(n => n && n.toLowerCase() == name.toLowerCase())) return;
 				Project.custom_molang_variables.push(name);
+			})
+		}
+		if (model.custom_ct_variables instanceof Array) {
+			// 局部变量表按名字去重追加
+			model.custom_ct_variables.forEach(name => {
+				if (typeof name != 'string' || !name) return;
+				if (Project.custom_ct_variables.find(n => n && n.toLowerCase() == name.toLowerCase())) return;
+				Project.custom_ct_variables.push(name);
 			})
 		}
 		if (model.display !== undefined) {

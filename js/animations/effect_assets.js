@@ -352,7 +352,9 @@ export class ParticleAsset {
 		let is_uuid = isUUID(ref);
 		let asset = new ParticleAsset({
 			name: is_uuid ? ref : pathToName(ref, false),
-			path: is_uuid || !isApp ? '' : ref,
+			// 保留引用路径（含 web 端）：fromRef 靠它匹配，否则保存/重开后
+			// 路径丢失会重复创建占位资产
+			path: is_uuid ? '' : ref,
 		}, is_uuid ? ref : undefined);
 		asset.add(false);
 		return asset;
