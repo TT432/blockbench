@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.41',
+		changes: [
+			'修复#170：负尺寸描边「创建选区」按源面与壳面实际的 UV 朝向映射——箱型 UV 启用「镜像 UV」时，选区图形不再在壳面上反向（「对称纹理」复用同一朝向计算）',
+		],
+	},
+	{
 		version: '5.3.40',
 		changes: [
 			'自定义 Molang 新增 ct./customtemp. 作用域：定义体内的 ct.变量按调用展开为独立 temp 变量（第 1 次调用 ct.a → temp.名称_ct_a1，第 2 次 → …a2）；每个定义在对话框中可维护自己的「局部变量 (ct.)」表，表内裸名在定义体内视为 ct.名',
