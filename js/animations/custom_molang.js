@@ -8,6 +8,8 @@
  * 定义存于 Project.custom_molangs，随 .bbmodel 持久化（bbmodel.js codec）。
  */
 
+import { enableColumnSelection } from '../util/column_select';
+
 function sanitizeParams(params) {
 	let seen = new Set();
 	let result = [];
@@ -80,7 +82,7 @@ function openCustomMolangDialog() {
 				}
 			},
 			template: `
-				<div>
+				<div class="custom_molang_wrapper">
 					<div class="dialog_bar" style="align-items: center;">
 						<label>${tl('dialog.custom_molang.edit_existing')}</label>
 						<select-input class="flexible" v-model="editing_uuid" :options="existing_options" @input="loadSelected()" />
@@ -119,8 +121,13 @@ function openCustomMolangDialog() {
 		onOpen() {
 			let element = document.querySelector('#custom_molang_body_editor.molang_input');
 			if (element) {
-				element.style.height = '160px';
-				element.style.maxHeight = '160px';
+				let vue_data = dialog.content_vue && dialog.content_vue.$data;
+				enableColumnSelection(element, {
+					getText: () => vue_data ? vue_data.body : '',
+					setText: (text) => {
+						if (vue_data) vue_data.body = text;
+					}
+				});
 			}
 		},
 		onConfirm() {

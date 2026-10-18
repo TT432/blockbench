@@ -39,6 +39,41 @@ function getAudioMimeType(name) {
 		default: return 'application/octet-stream';
 	}
 }
+// 扫描引用某粒子资产（file 引用字符串）的所有 keyframe 与动画控制器状态；
+// 传入 new_ref 时同步改指新引用（必须在 Undo.initEdit 之后对活动对象调用）。
+function findParticleRefUsage(old_ref, new_ref) {
+	let keyframes = [];
+	let controllers = [];
+	Animation.all.forEach(animation => {
+		for (let uuid in animation.animators) {
+			let animator = animation.animators[uuid];
+			if (!(animator.particle instanceof Array)) continue;
+			animator.particle.forEach(kf => {
+				let affected = false;
+				kf.data_points.forEach(data_point => {
+					if (data_point.file === old_ref) {
+						if (new_ref !== undefined) data_point.file = new_ref;
+						affected = true;
+					}
+				});
+				if (affected) keyframes.safePush(kf);
+			});
+		}
+	});
+	AnimationController.all.forEach(controller => {
+		let affected = false;
+		controller.states.forEach(state => {
+			state.particles.forEach(particle => {
+				if (particle.file === old_ref) {
+					if (new_ref !== undefined) particle.file = new_ref;
+					affected = true;
+				}
+			});
+		});
+		if (affected) controllers.push(controller);
+	});
+	return {keyframes, controllers};
+}
 
 export class ParticleAsset {
 	constructor(data, uuid) {
@@ -184,7 +219,16 @@ export class ParticleAsset {
 				Blockbench.showQuickMessage('message.invalid_particle_file');
 				return;
 			}
-			Undo.initEdit({particles: [this]});
+			let old_ref = this.getRef();
+			let new_ref = files[0].path || old_ref;
+			// 路径变化时引用该资产的 keyframe/控制器状态需要一并改指新引用。
+			// 先扫描收集 Undo 方面，initEdit 后重新扫描活动对象再改（Undo 快照会替换数组内对象）。
+			let affected = new_ref !== old_ref ? findParticleRefUsage(old_ref) : null;
+			Undo.initEdit({
+				particles: [this],
+				keyframes: affected ? affected.keyframes : [],
+				animation_controllers: affected ? affected.controllers : []
+			});
 			this.content = json;
 			if (files[0].path) {
 				this.path = files[0].path;
@@ -192,6 +236,10 @@ export class ParticleAsset {
 			}
 			this.texture = '';
 			this.texture_path = '';
+			if (affected) {
+				unloadParticleEffectEntry(old_ref);
+				findParticleRefUsage(old_ref, new_ref);
+			}
 			this.loadEmitter();
 			this.autoResolveTexture();
 			Undo.finishEdit('Change particle file', {particles: [this]});
@@ -261,7 +309,10 @@ export class ParticleAsset {
 		return asset;
 	}
 	// Ensure that whatever `ref` points to is loaded: embedded asset, or a
-	// legacy disk path that gets auto-imported as an asset.
+	// legacy disk path that gets auto-imported as an asset. When the file
+	// cannot be found/read, a content-less placeholder asset is created so the
+	// reference stays resolvable and shows up (red) in the particle panel,
+	// where clicking it re-imports the file.
 	static ensureLoaded(ref) {
 		if (!ref) return null;
 		let asset = ParticleAsset.fromRef(ref);
@@ -269,22 +320,42 @@ export class ParticleAsset {
 			asset.loadEmitter();
 			return asset;
 		}
+		// 桌面端路径引用先预检：Blockbench.read 读不到文件时不会回调（errorbox 关闭时静默失败）
+		if (isApp && !isUUID(ref) && !fs.existsSync(ref)) {
+			ParticleAsset.createMissingPlaceholder(ref);
+			return null;
+		}
 		try {
 			Blockbench.read([ref], {errorbox: false}, (files) => {
-				if (!files || !files[0]) return;
+				if (!files || !files[0]) {
+					ParticleAsset.createMissingPlaceholder(ref);
+					return;
+				}
 				let imported = ParticleAsset.importFromFile({
 					name: files[0].name || pathToName(ref, true),
 					path: isApp ? ref : undefined,
 					content: files[0].content
 				});
 				if (!imported) {
-					Animator.loadParticleEmitter(ref, files[0].content);
+					ParticleAsset.createMissingPlaceholder(ref);
 				}
 			})
 		} catch (err) {
 			console.log('Could not load particle effect for', ref);
+			ParticleAsset.createMissingPlaceholder(ref);
 		}
 		return null;
+	}
+	// 文件缺失时创建无内容的占位资产（面板中显示为红色，点击可重新导入）
+	static createMissingPlaceholder(ref) {
+		if (!ref || ParticleAsset.fromRef(ref)) return null;
+		let is_uuid = isUUID(ref);
+		let asset = new ParticleAsset({
+			name: is_uuid ? ref : pathToName(ref, false),
+			path: is_uuid || !isApp ? '' : ref,
+		}, is_uuid ? ref : undefined);
+		asset.add(false);
+		return asset;
 	}
 }
 ParticleAsset.prototype.menu = new Menu([
@@ -681,25 +752,33 @@ Interface.definePanels(function() {
 		},
 		methods: {
 			getDescription(particle) {
+				if (!particle.content) return particle.path || tl('panel.particles.missing_particle');
 				return particle.getIdentifier() || particle.path || '';
+			},
+			handleClick(particle) {
+				if (!particle.content) particle.changeFile();
 			},
 		},
 		template: `
 			<li
 				class="texture particle_asset"
+				v-bind:class="{missing: !particle.content}"
 				v-bind:texid="particle.uuid"
+				:title="particle.content ? '' : tl('panel.particles.missing_particle')"
+				@click="handleClick(particle)"
 				@contextmenu.prevent.stop="particle.showContextMenu($event)"
 				@dblclick="particle.rename()"
 			>
 				<div class="texture_icon_wrapper particle_texture_slot" :title="tl('menu.particle_asset.change_texture')" @click.stop="particle.changeTexture()">
-					<img v-if="particle.texture" :src="particle.texture" class="texture_icon" width="48px" alt="" />
+					<i v-if="!particle.content" class="material-icons particle_missing_icon">error_outline</i>
+					<img v-else-if="particle.texture" :src="particle.texture" class="texture_icon" width="48px" alt="" />
 					<i v-else class="material-icons particle_texture_slot_empty">image</i>
 				</div>
 				<div class="texture_description_wrapper">
 					<div class="texture_name">{{ particle.name }}</div>
 					<div class="texture_res">{{ getDescription(particle) }}</div>
 				</div>
-				<i class="material-icons texture_save_icon" v-bind:class="{clickable: !particle.saved}" @click.stop="particle.save()">
+				<i v-if="particle.content" class="material-icons texture_save_icon" v-bind:class="{clickable: !particle.saved}" @click.stop="particle.save()">
 					<template v-if="particle.saved">check_circle</template>
 					<template v-else>save</template>
 				</i>
