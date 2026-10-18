@@ -55,9 +55,28 @@ function updateCustomMolangVariableHighlight() {
 			alias: 'custom-variable'
 		};
 	}
-	if (!Object.keys(tokens).length) return;
-	// 插在 selector 之前：v.名 形式的自定义变量优先按橙色高亮；字符串在更前，引号内不高亮
-	Prism.languages.insertBefore('molang', 'selector', tokens);
+	if (Object.keys(tokens).length) {
+		// 插在 selector 之前：v.名 形式的自定义变量优先按橙色高亮；字符串在更前，引号内不高亮
+		Prism.languages.insertBefore('molang', 'selector', tokens);
+	}
+	refreshMolangEditors();
+}
+
+// 语法表变更后强制所有已挂载的 molang 编辑器重高亮。
+// VuePrismEditor 的 content 是按 codeData 缓存的 computed，语法对象不是响应式依赖，
+// 不改 codeData 就不会重算。这里同步地把 codeData 改为哨兵值并读回 computed（用新语法
+// 重算），再改回原值重算一次——DOM 只在最终状态异步渲染一次，无闪烁、不触发 input/undo。
+function refreshMolangEditors() {
+	if (typeof document == 'undefined') return;
+	document.querySelectorAll('.prism-editor-component').forEach(el => {
+		let vm = el.__vue__;
+		if (!vm || vm.language != 'molang' || typeof vm.codeData != 'string') return;
+		let original = vm.codeData;
+		vm.codeData = original + '﻿';
+		void vm.content;
+		vm.codeData = original;
+		void vm.content;
+	});
 }
 
 function setCustomMolangParamHighlight(names) {
