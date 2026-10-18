@@ -2597,6 +2597,8 @@
 	"dialog.custom_molang.name": "Name",
 	"dialog.custom_molang.params": "Parameters",
 	"dialog.custom_molang.param_name": "Parameter name",
+	"dialog.custom_molang.locals": "Local Variables (ct.)",
+	"dialog.custom_molang.locals.desc": "Names listed here are treated as ct.<name> inside this definition's body: each call of the definition expands them to a unique temp variable (temp.<name>_ct_<local><n>)",
 	"dialog.custom_molang.body": "Body",
 	"dialog.custom_molang.hint": "Called as n.name(args) or new.name(args) in any molang field. Arguments are substituted wrapped in parentheses, e.g. new.test(a, b) = a + b expands n.test(v.a, v.b + 1) to (v.a) + (v.b + 1). Inside the body, ct.x / customtemp.x expands per call to a unique temp variable: the 1st call of new.test turns ct.a into temp.test_ct_a1, the 2nd into temp.test_ct_a2.",
 	"dialog.custom_molang.invalid_name": "Invalid name: use letters, digits and underscores",
@@ -2604,8 +2606,6 @@
 	"panel.variable_placeholders.custom_molangs": "Custom Molang",
 	"panel.variable_placeholders.custom_variables": "Custom Molang Variables",
 	"panel.variable_placeholders.custom_variables.desc": "Names in this table are treated as variable.<name> in any molang field and highlighted orange",
-	"panel.variable_placeholders.custom_ct_variables": "Custom Local Variables (ct.)",
-	"panel.variable_placeholders.custom_ct_variables.desc": "Names in this table are treated as ct.<name> inside custom molang definitions (expanded to a per-call temp variable) and highlighted orange in the custom molang dialog",
 	"panel.variable_placeholders.custom_variable_name": "Variable name",
 	"panel.particles.missing_particle": "Particle file not found. Click to re-import",
 

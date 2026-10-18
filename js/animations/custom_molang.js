@@ -42,6 +42,7 @@ function openCustomMolangDialog(edit_def) {
 					editing_uuid: edit_def ? edit_def.uuid : '',
 					name: edit_def ? edit_def.name : '',
 					params: edit_def ? edit_def.params.slice() : [],
+					locals: edit_def ? (edit_def.locals || []).slice() : [],
 					body: edit_def ? edit_def.body : '',
 				}
 			},
@@ -52,15 +53,26 @@ function openCustomMolangDialog(edit_def) {
 				},
 				// v-model="params[i]" 是数组下标赋值，Vue 2 侦测不到，须在交互点手动同步高亮
 				updateParamHighlight() {
-					setCustomMolangParamHighlight(this.params);
+					this.updateHighlight();
+				},
+				updateHighlight() {
+					setCustomMolangParamHighlight(this.params.concat(this.locals));
 				},
 				addParam() {
 					this.params.push('');
-					this.updateParamHighlight();
+					this.updateHighlight();
 				},
 				removeParam(i) {
 					this.params.splice(i, 1);
-					this.updateParamHighlight();
+					this.updateHighlight();
+				},
+				addLocal() {
+					this.locals.push('');
+					this.updateHighlight();
+				},
+				removeLocal(i) {
+					this.locals.splice(i, 1);
+					this.updateHighlight();
 				}
 			},
 			// close() 不销毁 Vue 实例，beforeDestroy 不可靠；确认/取消时显式清空参数高亮
@@ -82,6 +94,16 @@ function openCustomMolangDialog(edit_def) {
 					</div>
 					<div class="dialog_bar">
 						<button style="width: 100%;" @click="addParam"><i class="icon fa fa-plus"></i></button>
+					</div>
+					<div class="dialog_bar">
+						<label :title="'${tl('dialog.custom_molang.locals.desc')}'">${tl('dialog.custom_molang.locals')}</label>
+					</div>
+					<div class="dialog_bar custom_molang_param_row" v-for="(local_name, i) in locals" :key="'local_'+i">
+						<input type="text" class="dark_bordered tab_target" v-model="locals[i]" @input="updateHighlight" :placeholder="'${tl('dialog.custom_molang.param_name')}'">
+						<div class="tool" :title="'${tl('generic.delete')}'" @click="removeLocal(i)"><i class="material-icons">clear</i></div>
+					</div>
+					<div class="dialog_bar">
+						<button style="width: 100%;" @click="addLocal"><i class="icon fa fa-plus"></i></button>
 					</div>
 					<div class="dialog_bar">
 						<label>${tl('dialog.custom_molang.body')}</label>
@@ -110,8 +132,8 @@ function openCustomMolangDialog(edit_def) {
 					}
 				});
 			}
-			// 编辑已有时参数预填，打开即挂参数高亮
-			setCustomMolangParamHighlight(dialog.content_vue ? dialog.content_vue.$data.params : []);
+			// 编辑已有时参数预填，打开即挂参数/局部变量高亮
+			if (dialog.content_vue) dialog.content_vue.updateHighlight();
 		},
 		onConfirm() {
 			let data = dialog.content_vue.$data;
@@ -127,16 +149,19 @@ function openCustomMolangDialog(edit_def) {
 				return false;
 			}
 			let params = sanitizeParams(data.params);
+			let locals = sanitizeParams(data.locals);
 			let existing = Project.custom_molangs.find(d => d.uuid == data.editing_uuid);
 			if (existing) {
 				existing.name = name;
 				existing.params.replace(params);
+				existing.locals = locals;
 				existing.body = data.body;
 			} else {
 				Project.custom_molangs.push({
 					uuid: guid(),
 					name,
 					params,
+					locals,
 					body: data.body || ''
 				});
 			}

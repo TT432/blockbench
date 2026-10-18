@@ -668,11 +668,6 @@ new Property(ModelProject, 'array', 'custom_molangs', {
 new Property(ModelProject, 'array', 'custom_molang_variables', {
 	exposed: false,
 });
-// 自定义局部变量表（元素为名字字符串）：表内名字在自定义 molang 定义体内
-// 视为 ct.<名字>（每次调用展开为独立 temp 变量、对话框编辑器中橙色高亮）
-new Property(ModelProject, 'array', 'custom_ct_variables', {
-	exposed: false,
-});
 new Property(ModelProject, 'number', 'shadow_size', {
 	label: 'dialog.project.shadow_size',
 	condition: {formats: ['optifine_entity']},

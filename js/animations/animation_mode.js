@@ -1415,8 +1415,7 @@ Interface.definePanels(function() {
 				text: '',
 				buttons: [],
 				custom_molangs: [],
-				custom_molang_variables: [],
-				custom_ct_variables: []
+				custom_molang_variables: []
 			}},
 			created() {
 				// 自定义 molang 列表/变量表引用 Project 属性数组（同一引用，外部修改自动反映）；
@@ -1575,7 +1574,6 @@ Interface.definePanels(function() {
 				refreshCustomMolang() {
 					this.custom_molangs = (typeof Project != 'undefined' && Project) ? Project.custom_molangs : [];
 					this.custom_molang_variables = (typeof Project != 'undefined' && Project) ? Project.custom_molang_variables : [];
-					this.custom_ct_variables = (typeof Project != 'undefined' && Project) ? Project.custom_ct_variables : [];
 					if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
 				},
 				// 自定义 molang 条目右键菜单：修改/删除（新建入口在工具栏，对话框仅新建）
@@ -1612,15 +1610,6 @@ Interface.definePanels(function() {
 				},
 				removeCustomVariable(i) {
 					this.custom_molang_variables.splice(i, 1);
-				},
-				addCustomCtVariable() {
-					this.custom_ct_variables.push('');
-				},
-				setCustomCtVariable(i, value) {
-					Vue.set(this.custom_ct_variables, i, value);
-				},
-				removeCustomCtVariable(i) {
-					this.custom_ct_variables.splice(i, 1);
 				}
 			},
 			watch: {
@@ -1635,17 +1624,6 @@ Interface.definePanels(function() {
 				},
 				// 变量表编辑（增删/改名）即时生效：高亮重建、展开缓存失效、预览刷新
 				custom_molang_variables: {
-					deep: true,
-					handler() {
-						if (!Project) return;
-						Project.saved = false;
-						clearCustomMolangCache();
-						if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
-						Animator.preview();
-					}
-				},
-				// 局部变量表（ct.）：同上
-				custom_ct_variables: {
 					deep: true,
 					handler() {
 						if (!Project) return;
@@ -1685,17 +1663,6 @@ Interface.definePanels(function() {
 						</li>
 						<li class="custom_molang_variable_add">
 							<button @click="addCustomVariable()"><i class="icon fa fa-plus"></i></button>
-						</li>
-					</ul>
-
-					<label class="custom_molang_section_label" :title="'${tl('panel.variable_placeholders.custom_ct_variables.desc')}'">${tl('panel.variable_placeholders.custom_ct_variables')}</label>
-					<ul id="custom_ct_variables">
-						<li v-for="(name, i) in custom_ct_variables" :key="i">
-							<input type="text" class="dark_bordered" :value="name" @input="setCustomCtVariable(i, $event.target.value)" :placeholder="'${tl('panel.variable_placeholders.custom_variable_name')}'" />
-							<div class="tool" :title="'${tl('generic.delete')}'" @click="removeCustomCtVariable(i)"><i class="material-icons">clear</i></div>
-						</li>
-						<li class="custom_molang_variable_add">
-							<button @click="addCustomCtVariable()"><i class="icon fa fa-plus"></i></button>
 						</li>
 					</ul>
 

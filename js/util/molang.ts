@@ -140,6 +140,8 @@ export interface CustomMolangDefinition {
 	uuid?: string
 	name: string
 	params: string[]
+	// 该定义的局部变量（ct. 语义）：定义体内的裸名字改写为 ct.<名字>
+	locals?: string[]
 	body: string
 }
 const custom_molang_call_regex = /(^|[^\w.])(?:n|new)\.(\w+)\s*(\()?/gi;
@@ -283,9 +285,9 @@ export function expandCustomMolang(input: string, depth = 0): string {
 			let param_regex = new RegExp(`(?<![\\w$])${param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`, 'gi');
 			body = body.replace(param_regex, `(${arg})`);
 		});
-		// 自定义局部变量表（Project.custom_ct_variables）：定义体内的裸名字视为 ct.<名字>，
+		// 定义的局部变量表（def.locals）：定义体内的裸名字视为 ct.<名字>，
 		// 随本次调用展开为独立 temp 变量。参数代入后再改写，使实参中的表内名字同样生效。
-		body = rewriteBareNames(body, Project.custom_ct_variables as string[] | undefined, 'ct');
+		body = rewriteBareNames(body, def.locals as string[] | undefined, 'ct');
 		// customtemp./ct. 作用域：方法体内的 ct.变量 以本次调用为单位展开为独立 temp 变量。
 		// 第 n 次展开 new.test 的调用时，ct.a → temp.test_ct_a{n}（customtemp. 同理）。
 		custom_molang_ct_regex.lastIndex = 0;
