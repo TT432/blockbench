@@ -139,6 +139,12 @@ onVueSetup(function() {
 				Settings.dialog.content_vue.search_term = '';
 			}
 		},
+		onOpen() {
+			// 反馈#146：此前对话框从不读取当前激活的配置，Profile 永远显示“无”，
+			// 于是激活配置的覆盖值在运行时生效、界面却按 master_value 显示，
+			// 用户看到开关是关的（或切换后行为不变），怎么调都“关不掉”。
+			this.content_vue.profile = SettingsProfile.all.find(profile => profile.isActive()) ?? null;
+		},
 		component: {
 			data() {return {
 				structure: Settings.structure,
@@ -174,6 +180,9 @@ onVueSetup(function() {
 							color: '',
 							click: () => {
 								this.profile = null;
+								// 反馈#146：选「无」必须真正停用当前选中的配置。此前只清空编辑对象，
+								// 运行时仍套用该配置的覆盖值，界面显示与行为继续分叉。
+								SettingsProfile.unselect();
 							}
 						}
 					];

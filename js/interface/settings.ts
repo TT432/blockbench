@@ -180,11 +180,12 @@ export class Setting {
 	 */
 	get ui_value(): SettingsValue {
 		let profile = Settings.dialog.content_vue?.$data.profile;
-		if (profile) {
-			return profile.settings[this.id] ?? this.master_value;
-		} else {
-			return this.master_value;
+		if (profile && profile.settings[this.id] !== undefined) {
+			return profile.settings[this.id];
 		}
+		// 反馈#146：没有配置覆盖此项时显示真正生效的值。此前这里返回 master_value，
+		// 当某个激活配置覆盖了该设置时，开关显示为关闭而功能实际仍开启（“关不掉”）。
+		return this.value;
 	}
 	set ui_value(value: SettingsValue) {
 		let profile = Settings.dialog.content_vue?.$data.profile;
@@ -192,7 +193,14 @@ export class Setting {
 		if (profile) {
 			Vue.set(profile.settings, this.id, value);
 		} else {
-			this.master_value = value;
+			// 反馈#146：没有指定编辑对象时，写入正在生效的那个来源（激活配置的覆盖值），
+			// 否则只改 master_value，界面切换后行为不变。
+			let active_profile = SettingsProfile.all.find(profile => profile.isActive() && profile.settings[this.id] !== undefined);
+			if (active_profile) {
+				Vue.set(active_profile.settings, this.id, value);
+			} else {
+				this.master_value = value;
+			}
 		}
 	}
 	delete() {
