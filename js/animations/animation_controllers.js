@@ -1,5 +1,5 @@
 import Wintersky from 'wintersky';
-import { openMolangEditor } from './molang_editor';
+import { openMolangEditor, molangVariableMenuEntries } from './molang_editor';
 import { clipboard, currentwindow, dialog, fs, ipcRenderer } from '../native_apis';
 import { Filesystem } from '../file_system';
 import { Easings } from '../lib/easing';
@@ -2281,6 +2281,7 @@ Interface.definePanels(() => {
 				},
 				openMolangContextMenu(event, state, target_object, target_key) {
 					new Menu([
+						...molangVariableMenuEntries(event),
 						{
 							name: 'menu.text_edit.expression_editor',
 							icon: 'code_blocks',

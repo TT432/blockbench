@@ -1,7 +1,7 @@
 import { markerColors } from "../marker_colors";
 import { clipboard } from "../native_apis";
 import { invertMolang, negateMolang, processMolangReturn } from "../util/molang";
-import { openMolangEditor } from "./molang_editor";
+import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
 
 export class KeyframeDataPoint {
 	constructor(keyframe) {
@@ -1503,6 +1503,7 @@ Interface.definePanels(function() {
 				},
 				openMolangContextMenu(axis, event, value, data_point_i) {
 					new Menu([
+						...molangVariableMenuEntries(event),
 						{
 							name: 'menu.text_edit.expression_editor',
 							icon: 'code_blocks',

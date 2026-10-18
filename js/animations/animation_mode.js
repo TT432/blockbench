@@ -3,7 +3,7 @@ import "./custom_molang.js";
 import Wintersky from 'wintersky';
 import { Mode } from "../modes";
 import { clipboard, fs } from "../native_apis";
-import { openMolangEditor } from "./molang_editor";
+import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
 import { BoneBatcher } from "../preview/bone_batch";
 import './mirror_animating'
 
@@ -1555,6 +1555,7 @@ Interface.definePanels(function() {
 				},
 				openMolangContextMenu(event) {
 					new Menu([
+						...molangVariableMenuEntries(event),
 						{
 							name: 'menu.text_edit.expression_editor',
 							icon: 'code_blocks',
