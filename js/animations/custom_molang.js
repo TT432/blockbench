@@ -49,7 +49,23 @@ function openCustomMolangDialog(edit_def) {
 				autocomplete(text, position) {
 					if (Settings.get('autocomplete_code') == false) return [];
 					return MolangAutocomplete.VariablePlaceholdersContext.autocomplete(text, position);
+				},
+				// v-model="params[i]" 是数组下标赋值，Vue 2 侦测不到，须在交互点手动同步高亮
+				updateParamHighlight() {
+					setCustomMolangParamHighlight(this.params);
+				},
+				addParam() {
+					this.params.push('');
+					this.updateParamHighlight();
+				},
+				removeParam(i) {
+					this.params.splice(i, 1);
+					this.updateParamHighlight();
 				}
+			},
+			// close() 不销毁 Vue 实例，beforeDestroy 不可靠；确认/取消时显式清空参数高亮
+			beforeDestroy() {
+				setCustomMolangParamHighlight([]);
 			},
 			template: `
 				<div class="custom_molang_wrapper">
@@ -61,11 +77,11 @@ function openCustomMolangDialog(edit_def) {
 						<label>${tl('dialog.custom_molang.params')}</label>
 					</div>
 					<div class="dialog_bar custom_molang_param_row" v-for="(param, i) in params" :key="i">
-						<input type="text" class="dark_bordered tab_target" v-model="params[i]" :placeholder="'${tl('dialog.custom_molang.param_name')}'">
-						<div class="tool" :title="'${tl('generic.delete')}'" @click="params.splice(i, 1)"><i class="material-icons">clear</i></div>
+						<input type="text" class="dark_bordered tab_target" v-model="params[i]" @input="updateParamHighlight" :placeholder="'${tl('dialog.custom_molang.param_name')}'">
+						<div class="tool" :title="'${tl('generic.delete')}'" @click="removeParam(i)"><i class="material-icons">clear</i></div>
 					</div>
 					<div class="dialog_bar">
-						<button style="width: 100%;" @click="params.push('')"><i class="icon fa fa-plus"></i></button>
+						<button style="width: 100%;" @click="addParam"><i class="icon fa fa-plus"></i></button>
 					</div>
 					<div class="dialog_bar">
 						<label>${tl('dialog.custom_molang.body')}</label>
@@ -94,6 +110,8 @@ function openCustomMolangDialog(edit_def) {
 					}
 				});
 			}
+			// 编辑已有时参数预填，打开即挂参数高亮
+			setCustomMolangParamHighlight(dialog.content_vue ? dialog.content_vue.$data.params : []);
 		},
 		onConfirm() {
 			let data = dialog.content_vue.$data;
@@ -126,6 +144,10 @@ function openCustomMolangDialog(edit_def) {
 			Project.saved = false;
 			Animator.preview();
 			Blockbench.dispatchEvent('update_custom_molang', {});
+			setCustomMolangParamHighlight([]);
+		},
+		onCancel() {
+			setCustomMolangParamHighlight([]);
 		}
 	});
 	dialog.show();
