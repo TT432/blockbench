@@ -117,6 +117,20 @@ export class CubeFace extends Face {
 		vector.z -= this.cube.origin[2];
 		return vector;
 	}
+	/**
+	 * 面的「纹理 u/v 增加方向」在方块局部空间的单位向量（经 UVToLocal，含 uv 绕序
+	 * ——箱型 UV 的 mirror_uv、面 rotation、负尺寸与膨胀）。用于判断两个面的纹理
+	 * 朝向关系，例如对称纹理复制与负尺寸描边选区。
+	 */
+	getUVBasis() {
+		let u = (this.uv[0] + this.uv[2]) / 2;
+		let v = (this.uv[1] + this.uv[3]) / 2;
+		let origin = this.UVToLocal([u, v]);
+		let du = this.UVToLocal([u + 1, v]).sub(origin);
+		let dv = this.UVToLocal([u, v + 1]).sub(origin);
+		if (du.lengthSq() < 1e-12 || dv.lengthSq() < 1e-12) return null;
+		return {du: du.normalize(), dv: dv.normalize()};
+	}
 }
 CubeFace.prototype.is_rectangular = true;
 new Property(CubeFace, 'number', 'rotation', {default: 0});
@@ -2039,13 +2053,32 @@ BARS.defineActions(function() {
 									let py0 = Math.max(0, Math.round(v * texture.height / uv_h));
 									let py1 = Math.min(texture.height, Math.round((v + rh) * texture.height / uv_h));
 									if (px1 <= px0 || py1 <= py0) return;
+									// 反馈#170：箱型 UV 的 mirror_uv 会翻转源面 uv 绕序，负尺寸壳块的面本身
+									// 也在局部空间镜像了 uv 方向。按两面「纹理 u/v 增加方向」的局部空间点积
+									// 求目标→源的朝向关系，选区图形才能与原面看到的一致；任一面取不到基向量
+									// （退化 uv）时退回不翻转的比例映射。
+									let a11 = 1, a12 = 0, a21 = 0, a22 = 1;
+									let sbasis = src_face.getUVBasis();
+									let tbasis = new_cubes[i]?.faces[fkey]?.getUVBasis();
+									if (sbasis && tbasis) {
+										a11 = Math.round(tbasis.du.dot(sbasis.du));
+										a12 = Math.round(tbasis.dv.dot(sbasis.du));
+										a21 = Math.round(tbasis.du.dot(sbasis.dv));
+										a22 = Math.round(tbasis.dv.dot(sbasis.dv));
+										if (a11 * a22 - a12 * a21 == 0) {
+											a11 = 1; a12 = 0; a21 = 0; a22 = 1;
+										}
+									}
+									let src_w = sx1 - sx0, src_h = sy1 - sy0;
 									// 反向映射：每个描边贴图像素回采源面 UV 对应像素，保证选区覆盖整个目标 UV 区域
 									for (let ty = py0; ty < py1; ty++) {
-										let fy = (ty + 0.5 - py0) / (py1 - py0);
-										let sy = Math.min(sy1 - 1, Math.max(sy0, Math.floor(sy0 + fy * (sy1 - sy0))));
+										let tv = (ty + 0.5 - py0) / (py1 - py0) - 0.5;
 										for (let tx = px0; tx < px1; tx++) {
-											let fx = (tx + 0.5 - px0) / (px1 - px0);
-											let sx = Math.min(sx1 - 1, Math.max(sx0, Math.floor(sx0 + fx * (sx1 - sx0))));
+											let tu = (tx + 0.5 - px0) / (px1 - px0) - 0.5;
+											let su = 0.5 + tu * a11 + tv * a12;
+											let sv = 0.5 + tu * a21 + tv * a22;
+											let sx = Math.clamp(sx0 + Math.floor(su * src_w), sx0, sx1 - 1);
+											let sy = Math.clamp(sy0 + Math.floor(sv * src_h), sy0, sy1 - 1);
 											if (pixels.data[(sy * pixels.width + sx) * 4 + 3] == 0) continue;
 											selection.set(tx, ty, 1);
 										}
