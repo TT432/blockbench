@@ -675,7 +675,19 @@ export class BoneAnimator extends GeneralAnimator {
 			}
 		},
 		new MenuSeparator('presets'),
-		'apply_animation_preset'
+		'apply_animation_preset',
+		new MenuSeparator('view'),
+		{
+			id: 'collapse_other_animators',
+			name: 'menu.animator.collapse_others',
+			icon: 'unfold_less',
+			click(animator) {
+				Timeline.animators.forEach(other => {
+					if (other !== animator) other.expanded = false;
+				});
+				animator.expanded = true;
+			}
+		}
 	])
 // -
 new Property(BoneAnimator, 'boolean', 'rotation_global', {default: false});

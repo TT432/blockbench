@@ -2598,9 +2598,10 @@
 	"dialog.custom_molang.params": "Parameters",
 	"dialog.custom_molang.param_name": "Parameter name",
 	"dialog.custom_molang.body": "Body",
-	"dialog.custom_molang.hint": "Called as n.name(args) or new.name(args) in any molang field. Arguments are substituted wrapped in parentheses, e.g. new.test(a, b) = a + b expands n.test(v.a, v.b + 1) to (v.a) + (v.b + 1).",
+	"dialog.custom_molang.hint": "Called as n.name(args) or new.name(args) in any molang field. Arguments are substituted wrapped in parentheses, e.g. new.test(a, b) = a + b expands n.test(v.a, v.b + 1) to (v.a) + (v.b + 1). Inside the body, ct.x / customtemp.x expands per call to a unique temp variable: the 1st call of new.test turns ct.a into temp.test_ct_a1, the 2nd into temp.test_ct_a2.",
 	"dialog.custom_molang.invalid_name": "Invalid name: use letters, digits and underscores",
 	"dialog.custom_molang.duplicate_name": "A custom molang with this name already exists",
+	"panel.particles.missing_particle": "Particle file not found. Click to re-import",
 
 	"timeline.rotation": "Rotation",
 	"timeline.position": "Position",
@@ -2882,6 +2883,7 @@
 
 	"menu.animator.rotation_global": "Rotate in Global Space",
 	"menu.animator.quaternion_interpolation": "Quaternion Interpolation",
+	"menu.animator.collapse_others": "Close Others",
 
 	"menu.keyframe.quaternion": "Quaternion",
 

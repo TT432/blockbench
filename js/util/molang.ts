@@ -144,11 +144,16 @@ export interface CustomMolangDefinition {
 }
 const custom_molang_call_regex = /(^|[^\w.])(?:n|new)\.(\w+)\s*(\()?/gi;
 const custom_molang_quick_test = /(^|[^\w.])(n|new)\.\w/i;
+const custom_molang_ct_regex = /(^|[^\w.])(?:customtemp|ct)\.(\w+)/gi;
 let custom_molang_cache_project: typeof Project | null = null;
 let custom_molang_cache = new Map<string, string>();
+// customtemp./ct. 作用域计数器：以定义名（小写）为键，每次展开该定义的调用时递增。
+// 与展开缓存同生命周期（切换项目或清除缓存时重置），保证同一输入展开结果稳定。
+let custom_molang_ct_counters = new Map<string, number>();
 
 export function clearCustomMolangCache(): void {
 	custom_molang_cache.clear();
+	custom_molang_ct_counters.clear();
 }
 
 // 按顶层逗号拆分参数（括号内逗号不拆）
@@ -185,6 +190,7 @@ export function expandCustomMolang(input: string, depth = 0): string {
 		if (Project !== custom_molang_cache_project) {
 			custom_molang_cache_project = Project;
 			custom_molang_cache.clear();
+			custom_molang_ct_counters.clear();
 		}
 		let cached_result = custom_molang_cache.get(input);
 		if (cached_result !== undefined) return cached_result;
@@ -227,6 +233,17 @@ export function expandCustomMolang(input: string, depth = 0): string {
 			let param_regex = new RegExp(`(?<![\\w$])${param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`, 'gi');
 			body = body.replace(param_regex, `(${arg})`);
 		});
+		// customtemp./ct. 作用域：方法体内的 ct.变量 以本次调用为单位展开为独立 temp 变量。
+		// 第 n 次展开 new.test 的调用时，ct.a → temp.test_ct_a{n}（customtemp. 同理）。
+		custom_molang_ct_regex.lastIndex = 0;
+		if (custom_molang_ct_regex.test(body)) {
+			let def_key = def.name.toLowerCase();
+			let call_index = (custom_molang_ct_counters.get(def_key) || 0) + 1;
+			custom_molang_ct_counters.set(def_key, call_index);
+			body = body.replace(custom_molang_ct_regex, (_m, prefix: string, var_name: string) => {
+				return `${prefix}temp.${def.name}_ct_${var_name}${call_index}`;
+			});
+		}
 		result += input.substring(cursor, match.index) + match[1] + body;
 		cursor = end;
 		changed = true;

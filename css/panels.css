@@ -929,6 +929,18 @@
 		color: var(--color-subtle_text);
 		font-size: 28px;
 	}
+	/* 缺失粒子（文件找不到）：红色显示，点击条目重新导入 */
+	li.particle_asset.missing {
+		cursor: pointer;
+	}
+	li.particle_asset.missing .texture_name,
+	li.particle_asset.missing .texture_res {
+		color: var(--color-error);
+	}
+	li.particle_asset.missing .particle_missing_icon {
+		color: var(--color-error);
+		font-size: 28px;
+	}
 	.texture.selected img.texture_icon {
 		margin-top: 0;
 	}
