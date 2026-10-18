@@ -18,6 +18,10 @@ export function openMolangEditor(options: MolangEditorOptions, callback: ((resul
 				text: options.text
 			},
 			methods: {
+				openVariableContextMenu(event: MouseEvent) {
+					let entries = molangVariableMenuEntries(event);
+					if (entries.length) new Menu(entries).open(event);
+				},
 				prettyPrint(this: VueData) {
 					this.text = this.text.replace(/;\s*(?!\n)/g, ';\n');
 				},
@@ -71,6 +75,7 @@ export function openMolangEditor(options: MolangEditorOptions, callback: ((resul
 						:autocomplete="autocomplete"
 						:ignoreTabKey="false"
 						:line-numbers="true"
+						@contextmenu.prevent="openVariableContextMenu($event)"
 					/>
 				</div>
 			`
@@ -90,4 +95,85 @@ export function openMolangEditor(options: MolangEditorOptions, callback: ((resul
 		}
 	})
 	dialog.show();
+}
+
+// ---------------------------------------------------------------------------
+// 右键 molang 中的变量 → 添加到项目变量（Project.custom_molang_variables）
+// ---------------------------------------------------------------------------
+
+const molang_variable_regex = /^(?:(?:v|variable)\s*\.\s*)?([A-Za-z_]\w*)$/i;
+// temp./query./context./ct./customtemp./math. 不是项目变量，不提供该动作
+const molang_non_variable_regex = /^\s*(?:t|temp|q|query|c|context|ct|customtemp|math)\s*\./i;
+const molang_non_identifier_token_classes = ['string', 'number', 'operator', 'punctuation', 'keyword', 'boolean', 'function-name'];
+
+/** 从文本片段解析项目变量名：接受 `名字` 与 `v.名字` / `variable.名字`，其余前缀返回 null */
+export function molangVariableNameFromText(text: string): string | null {
+	if (typeof text != 'string') return null;
+	let value = text.trim();
+	if (!value || molang_non_variable_regex.test(value)) return null;
+	let match = value.match(molang_variable_regex);
+	return match ? match[1] : null;
+}
+
+function molangVariableFromEvent(event: MouseEvent): string | null {
+	let target = event.target instanceof Element ? event.target : null;
+	if (!target) return null;
+	// Prism 把标识符渲染成 .token 元素，右键落点直接给出名字
+	let token = target.closest('.token');
+	if (token) {
+		let blocked = molang_non_identifier_token_classes.some(cls => token.classList.contains(cls));
+		if (!blocked) {
+			let from_token = molangVariableNameFromText(token.textContent || '');
+			if (from_token) return from_token;
+		}
+	}
+	// 回退一：编辑器光标处的词
+	let editor = target.closest('.prism-editor-component');
+	let textarea = editor ? editor.querySelector('textarea') : null;
+	if (textarea) {
+		let value = textarea.value || '';
+		let caret = textarea.selectionStart ?? 0;
+		let start = caret, end = caret;
+		while (start > 0 && /[\w.]/.test(value[start - 1])) start--;
+		while (end < value.length && /[\w.]/.test(value[end])) end++;
+		let from_caret = molangVariableNameFromText(value.substring(start, end));
+		if (from_caret) return from_caret;
+	}
+	// 回退二：选中文本
+	let selection = window.getSelection();
+	if (selection && selection.rangeCount && !selection.isCollapsed) {
+		return molangVariableNameFromText(selection.toString());
+	}
+	return null;
+}
+
+/** 把变量名加入项目变量表（去重，忽略大小写），并刷新展开缓存与高亮 */
+export function addProjectCustomVariable(name: string) {
+	if (!Project || !name) return false;
+	let list = Project.custom_molang_variables;
+	if (list.find(entry => (entry || '').toLowerCase() == name.toLowerCase())) {
+		Blockbench.showQuickMessage(tl('message.custom_variable_exists', [name]), 1500);
+		return false;
+	}
+	list.push(name);
+	Project.saved = false;
+	clearCustomMolangCache();
+	if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
+	Blockbench.dispatchEvent('update_custom_molang', {});
+	Blockbench.showQuickMessage(tl('message.custom_variable_added', [name]), 1500);
+	return true;
+}
+
+/**
+ * molang 编辑处右键菜单的「添加到项目变量」条目。
+ * 右键落点不是可识别的项目变量时返回空数组（菜单保持原样）。
+ */
+export function molangVariableMenuEntries(event: MouseEvent) {
+	let name = molangVariableFromEvent(event);
+	if (!name) return [];
+	return [{
+		name: 'action.add_custom_variable',
+		icon: 'playlist_add',
+		click: () => addProjectCustomVariable(name)
+	}];
 }

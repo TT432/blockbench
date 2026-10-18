@@ -1,6 +1,6 @@
 import { Blockbench } from "../api";
 import { Filesystem } from "../file_system";
-import { openMolangEditor } from "./molang_editor";
+import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
 import { clipboard, currentwindow, dialog, fs, ipcRenderer } from "../native_apis";
 import { invertMolang } from "../util/molang";
 import { ScopeColors } from "../multi_file_editing";
@@ -561,6 +561,7 @@ export class Animation extends AnimationItem {
 				methods: {
 					openMolangContextMenu(event, key, value) {
 						new Menu([
+							...molangVariableMenuEntries(event),
 							{
 								name: 'menu.text_edit.expression_editor',
 								icon: 'code_blocks',

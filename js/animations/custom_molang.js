@@ -9,6 +9,7 @@
  */
 
 import { enableColumnSelection } from '../util/column_select';
+import { molangVariableMenuEntries } from './molang_editor';
 
 function sanitizeParams(params) {
 	let seen = new Set();
@@ -70,6 +71,12 @@ function openCustomMolangDialog(edit_def) {
 					this.locals.push('');
 					this.updateHighlight();
 				},
+				// 方法体编辑器右键：命中的若是项目变量，提供「添加到项目变量」
+				openBodyContextMenu(event) {
+					let entries = molangVariableMenuEntries(event);
+					if (!entries.length) return;
+					new Menu(entries).open(event);
+				},
 				removeLocal(i) {
 					this.locals.splice(i, 1);
 					this.updateHighlight();
@@ -112,6 +119,7 @@ function openCustomMolangDialog(edit_def) {
 						class="molang_input"
 						id="custom_molang_body_editor"
 						v-model="body"
+						@contextmenu.prevent="openBodyContextMenu($event)"
 						language="molang"
 						:autocomplete="autocomplete"
 						:ignoreTabKey="false"
