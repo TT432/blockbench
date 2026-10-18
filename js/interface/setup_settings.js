@@ -433,6 +433,17 @@ function setupSettingsProfiles() {
 			if (profile.selected) new_profile.select(false);
 		})
 	}
+	// 反馈#146：开关“关不掉”还有第二个来源——设置配置里的覆盖值。master 已为关，但某个
+	// 激活配置仍把这两项覆盖为开，而旧界面只显示 master，于是开关看着是关的、行为仍是开的。
+	// 升级到 5.3.38 时一次性清掉这两项的全部覆盖并重置为关闭（用户可再手动开启）。
+	Blockbench.onUpdateTo('5.3.38', () => {
+		for (let profile of SettingsProfile.all) {
+			Vue.delete(profile.settings, 'community_keyframe_ctrl_click_interpolation');
+			Vue.delete(profile.settings, 'community_keyframe_shift_click_delete');
+		}
+		settings.community_keyframe_ctrl_click_interpolation.set(false);
+		settings.community_keyframe_shift_click_delete.set(false);
+	})
 	Settings.profile_menu_button = document.getElementById('settings_profiles_header_menu');
 	Settings.profile_menu_button.addEventListener('click', event => {
 		let list = [
