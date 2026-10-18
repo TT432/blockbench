@@ -534,6 +534,23 @@ export const Painter = {
 		}
 
 		let ctx = Painter.current.ctx;
+		// 反馈#161：图层画布可能小于贴图（例如贴图以「裁剪」模式改过尺寸时图层未随之扩大），
+		// 图层外区域原本画不上去。expandTo 会重设 canvas 尺寸，进而清空当前的路径与裁剪区，
+		// 所以必须在 ctx.beginPath()/ctx.clip() 之前扩展图层；否则 clip 作用在空路径上，
+		// 笔画/油漆桶在图层外整片失效（原实现在 useBrush 内、路径构建之后扩展）。
+		if (texture.layers_enabled && !use_screen_projection) {
+			let layer = texture.getActiveLayer();
+			if (layer instanceof TextureLayer) {
+				let area = Painter.editing_area || Painter.setupRectFromFace(uvTag, texture);
+				if (Toolbox.selected.id === 'fill_tool') {
+					layer.expandTo([area[0], area[1]], [area[0] + area[2], area[1] + area[3]]);
+				} else {
+					// 笔刷经压力/倾斜后可放大到 20px，预留足够边距，避免 useBrush 内部再次扩展
+					let size = Math.max(20, BarItems.slider_brush_size.get());
+					layer.expandTo([x - size, y - size], [x + size, y + size]);
+				}
+			}
+		}
 		ctx.save()
 
 		if (use_screen_projection && Toolbox.selected.id !== 'fill_tool') {

@@ -4416,7 +4416,8 @@ Interface.definePanels(function() {
 							return this.all_mappable_elements;
 						}
 						// #87：超大选择集逐个挂载 UV 组件会卡死界面，超过上限只显示贴图本身
-						if (this.mappable_elements.length > UVEditor.max_displayed_elements) return [];
+						// 反馈#163：上限可通过设置关闭（关闭后始终显示全部 UV，性能自负）
+						if (settings.community_paint_uv_display_cap.value && this.mappable_elements.length > UVEditor.max_displayed_elements) return [];
 						return this.mappable_elements;
 					} else {
 						return [];
@@ -4425,6 +4426,7 @@ Interface.definePanels(function() {
 				isDisplayedUVElementsCapped() {
 					return (this.mode == 'uv' || this.uv_overlay)
 						&& this.display_uv !== 'all_elements' && this.mode != 'paint'
+						&& settings.community_paint_uv_display_cap.value
 						&& this.mappable_elements.length > UVEditor.max_displayed_elements;
 				},
 				getMeshFaceOutline(face) {

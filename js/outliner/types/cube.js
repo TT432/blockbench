@@ -1672,8 +1672,28 @@ BARS.defineActions(function() {
 						individual: 'dialog.negative_outline.uv_mode.individual',
 						shared: 'dialog.negative_outline.uv_mode.shared',
 					}},
-					color: {label: 'dialog.negative_outline.color', type: 'color', value: ColorPanel.get()},
+					// 反馈#162：UV 大小可选「每面 1 格」或「与原模型该面 UV 同大小」
+					uv_size: {label: 'dialog.negative_outline.uv_size', type: 'select', value: 'cell', options: {
+						cell: 'dialog.negative_outline.uv_size.cell',
+						source: 'dialog.negative_outline.uv_size.source',
+					}},
+					// 反馈#158：UV 排列起点（四角）与排列方式（按行 / 紧凑近似正方形）
+					corner: {label: 'dialog.negative_outline.corner', type: 'select', value: 'top_left', options: {
+						top_left: 'dialog.negative_outline.corner.top_left',
+						top_right: 'dialog.negative_outline.corner.top_right',
+						bottom_left: 'dialog.negative_outline.corner.bottom_left',
+						bottom_right: 'dialog.negative_outline.corner.bottom_right',
+					}},
+					layout: {label: 'dialog.negative_outline.layout', type: 'select', value: 'rows', options: {
+						rows: 'dialog.negative_outline.layout.rows',
+						compact: 'dialog.negative_outline.layout.compact',
+					}},
+					color: {label: 'dialog.negative_outline.color', type: 'color', value: ColorPanel.get(), condition: (form) => !form.empty_color},
+					// 反馈#158：勾选后不用前景色，而是把分配的 UV 区域擦成纯透明
+					empty_color: {label: 'dialog.negative_outline.empty_color', type: 'checkbox', value: false},
 					read_deleted: {label: 'dialog.negative_outline.read_deleted', type: 'checkbox', value: true},
+					// 反馈#162：按源面 UV 中的有色像素，在描边贴图上生成对应的绘画选区
+					create_selection: {label: 'dialog.negative_outline.create_selection', type: 'checkbox', value: false},
 				},
 				onConfirm(form) {
 					let w = Math.max(0.01, Number(form.width) || 0);
@@ -1702,7 +1722,7 @@ BARS.defineActions(function() {
 					let uv_w = texture.getUVWidth();
 					let uv_h = texture.getUVHeight();
 
-					// 反馈#152：UV 单元从贴图上「未被已有 UV 占用」的位置按行取用，
+					// 反馈#152：UV 单元从贴图上「未被已有 UV 占用」的位置取用，
 					// 避免描边 UV（及其填充色）与原模型已有 UV 区域重叠冲突。
 					let occupied = new Set();
 					let markUsed = face => {
@@ -1724,36 +1744,119 @@ BARS.defineActions(function() {
 							if (face && face.texture !== null && face.getTexture() === texture) markUsed(face);
 						}
 					});
-					let scan_index = 0;
-					function allocCell() {
-						while (scan_index < uv_w * uv_h) {
-							let u = scan_index % uv_w;
-							let v = Math.floor(scan_index / uv_w);
-							scan_index++;
-							let key = u + ',' + v;
-							if (!occupied.has(key)) {
-								occupied.add(key);
-								return [u, v];
+
+					// 反馈#158：排列起点（四角，扫描坐标 → 贴图坐标时翻转）与排列方式（按行 / 紧凑）
+					let corner = ['top_right', 'bottom_left', 'bottom_right'].includes(form.corner) ? form.corner : 'top_left';
+					let flip_u = corner.endsWith('right');
+					let flip_v = corner.startsWith('bottom');
+					let compact_layout = form.layout == 'compact';
+					let source_uv_size = form.uv_size == 'source';
+					let source_size_cache = new Map();
+
+					// 反馈#162：每面所需的 UV 矩形尺寸（UV 单位，整数格）
+					function faceRectSize(cube, fkey) {
+						let key = cube.uuid + ':' + fkey;
+						if (source_size_cache.has(key)) return source_size_cache.get(key);
+						let size = [1, 1];
+						if (source_uv_size) {
+							let face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
+							if (face && face.uv && face.uv.length == 4) {
+								size = [
+									Math.max(1, Math.ceil(Math.abs(face.uv[2] - face.uv[0]) - 1e-6)),
+									Math.max(1, Math.ceil(Math.abs(face.uv[3] - face.uv[1]) - 1e-6)),
+								];
+							}
+						}
+						source_size_cache.set(key, size);
+						return size;
+					}
+					// 扫描坐标（从选定角起算）→ 贴图 UV 坐标
+					function scanToUV(su, sv, rw, rh) {
+						return [flip_u ? uv_w - su - rw : su, flip_v ? uv_h - sv - rh : sv];
+					}
+					function rectFree(u, v, rw, rh) {
+						if (u < 0 || v < 0 || u + rw > uv_w || v + rh > uv_h) return false;
+						for (let x = u; x < u + rw; x++) {
+							for (let y = v; y < v + rh; y++) {
+								if (occupied.has(x + ',' + y)) return false;
+							}
+						}
+						return true;
+					}
+					function claimRect(su, sv, rw, rh) {
+						let [u, v] = scanToUV(su, sv, rw, rh);
+						for (let x = u; x < u + rw; x++) {
+							for (let y = v; y < v + rh; y++) {
+								occupied.add(x + ',' + y);
+							}
+						}
+						return [u, v, rw, rh];
+					}
+					function allocRect(rw, rh) {
+						if (compact_layout) {
+							// 紧凑：从选定角向外按「远边距离」一圈圈扩展，整体接近正方形
+							for (let d = Math.max(rw, rh); d <= uv_w + uv_h; d++) {
+								let su = d - rw;
+								if (su >= 0 && su + rw <= uv_w) {
+									for (let sv = 0; sv + rh <= d && sv + rh <= uv_h; sv++) {
+										let [u, v] = scanToUV(su, sv, rw, rh);
+										if (rectFree(u, v, rw, rh)) return claimRect(su, sv, rw, rh);
+									}
+								}
+								let sv = d - rh;
+								if (sv >= 0 && sv + rh <= uv_h) {
+									for (let su2 = 0; su2 + rw < d && su2 + rw <= uv_w; su2++) {
+										let [u, v] = scanToUV(su2, sv, rw, rh);
+										if (rectFree(u, v, rw, rh)) return claimRect(su2, sv, rw, rh);
+									}
+								}
+							}
+						} else {
+							// 按行：从选定角开始横向填满一行再换行（原有行为）
+							for (let sv = 0; sv + rh <= uv_h; sv++) {
+								for (let su = 0; su + rw <= uv_w; su++) {
+									let [u, v] = scanToUV(su, sv, rw, rh);
+									if (rectFree(u, v, rw, rh)) return claimRect(su, sv, rw, rh);
+								}
 							}
 						}
 						return null;
 					}
-					// 分配：individual（默认）= 每块的每个面独占一个单元；shared = 所有块的所有面共用一个单元
-					let cell_map = [];   // cell_map[cube_index][fkey] = [u, v]
-					let shared_cell = form.uv_mode == 'shared' ? allocCell() : null;
+
+					// 分配：individual（默认）= 每块的每个面独占一个 UV 矩形；shared = 所有块的所有面共用一个矩形
+					let rect_map = [];   // rect_map[cube_index][fkey] = [u, v, w, h]
+					let shared_rect = null;
 					let exhausted = false;
-					cube_list.forEach(() => {
+					if (form.uv_mode == 'shared') {
+						let max_w = 1, max_h = 1;
+						cube_list.forEach(cube => face_keys.forEach(fkey => {
+							let [rw, rh] = faceRectSize(cube, fkey);
+							max_w = Math.max(max_w, rw);
+							max_h = Math.max(max_h, rh);
+						}));
+						shared_rect = allocRect(max_w, max_h);
+						if (!shared_rect) {
+							shared_rect = [0, 0, max_w, max_h];
+							exhausted = true;
+						}
+					}
+					cube_list.forEach(cube => {
 						let map = {};
 						face_keys.forEach(fkey => {
-							let cell = form.uv_mode == 'shared' ? shared_cell : allocCell();
-							if (!cell) {
-								// 贴图 UV 单元耗尽：退化为复用首个单元（填充色一致，仅无法逐面独立）
-								cell = [0, 0];
+							if (shared_rect) {
+								map[fkey] = shared_rect;
+								return;
+							}
+							let [rw, rh] = faceRectSize(cube, fkey);
+							let rect = allocRect(rw, rh);
+							if (!rect) {
+								// 贴图 UV 空间耗尽：退化为复用左上角（填充色一致，仅无法逐面独立）
+								rect = [0, 0, rw, rh];
 								exhausted = true;
 							}
-							map[fkey] = cell;
+							map[fkey] = rect;
 						});
-						cell_map.push(map);
+						rect_map.push(map);
 					});
 					if (exhausted) {
 						Blockbench.showQuickMessage('dialog.negative_outline.uv_full', 4000);
@@ -1766,17 +1869,29 @@ BARS.defineActions(function() {
 					let tex_ctx = tex_canvas.getContext('2d');
 					tex_ctx.imageSmoothingEnabled = false;
 					tex_ctx.fillStyle = color;
+					// 反馈#158：空颜色 = 擦成纯透明；图层纹理需要逐层擦除，否则其他层的像素仍会显示
+					let clear_layers = (form.empty_color && texture.layers_enabled)
+						? texture.layers.filter(l => l.type == 'pixel_layer' && l.visible)
+						: null;
 					let filled = new Set();
-					cell_map.forEach(map => face_keys.forEach(fkey => {
-						let [u, v] = map[fkey];
-						let key = u + ',' + v;
+					rect_map.forEach(map => face_keys.forEach(fkey => {
+						let [u, v, rw, rh] = map[fkey];
+						let key = u + ',' + v + ',' + rw + ',' + rh;
 						if (filled.has(key)) return;
 						filled.add(key);
-						tex_ctx.fillRect(
-							Math.round(u * tex_canvas.width / uv_w),
-							Math.round(v * tex_canvas.height / uv_h),
-							Math.max(1, Math.round(tex_canvas.width / uv_w)),
-							Math.max(1, Math.round(tex_canvas.height / uv_h)));
+						let px = Math.round(u * tex_canvas.width / uv_w);
+						let py = Math.round(v * tex_canvas.height / uv_h);
+						let pw = Math.max(1, Math.round(rw * tex_canvas.width / uv_w));
+						let ph = Math.max(1, Math.round(rh * tex_canvas.height / uv_h));
+						if (clear_layers) {
+							clear_layers.forEach(layer => {
+								layer.ctx.clearRect(px - layer.offset[0], py - layer.offset[1], pw, ph);
+							});
+						} else if (form.empty_color) {
+							tex_ctx.clearRect(px, py, pw, ph);
+						} else {
+							tex_ctx.fillRect(px, py, pw, ph);
+						}
 					}));
 					texture.updateChangesAfterEdit();
 
@@ -1790,8 +1905,8 @@ BARS.defineActions(function() {
 								faces_data[fkey] = {texture: null};
 								return;
 							}
-							let [u, v] = cell_map[i][fkey];
-							faces_data[fkey] = {uv: [u, v, u + 1, v + 1], texture};
+							let [u, v, rw, rh] = rect_map[i][fkey];
+							faces_data[fkey] = {uv: [u, v, u + rw, v + rh], texture};
 						});
 						// 反馈#152：源块可能带「膨胀」（从中心向六个方向扩张/收缩，可为负）与拉伸，
 						// 壳块必须包住膨胀后的实际体积，否则描边会陷进模型内部。
@@ -1814,6 +1929,75 @@ BARS.defineActions(function() {
 						new_cubes.push(shell);
 					});
 					Outliner.selected.replace(new_cubes);
+
+					// 反馈#162：勾选「创建选区」时，按源面贴图有色（alpha>0）像素在描边贴图上生成绘画选区。
+					// 源像素 → 目标 UV 矩形按比例映射，只标记源图形覆盖到的目标像素。
+					if (form.create_selection && texture.width && texture.height) {
+						let src_cache = new Map();
+						function getSourcePixels(src_tex) {
+							if (src_cache.has(src_tex.uuid)) return src_cache.get(src_tex.uuid);
+							let entry = null;
+							let canvas = src_tex.canvas;
+							if (src_tex.layers_enabled) src_tex.updateLayerChanges(false);
+							if (canvas && canvas.width && canvas.height) {
+								try {
+									entry = {
+										width: canvas.width,
+										height: canvas.height,
+										data: canvas.getContext('2d', {willReadFrequently: true}).getImageData(0, 0, canvas.width, canvas.height).data,
+									};
+								} catch (err) {
+									entry = null;
+								}
+							}
+							src_cache.set(src_tex.uuid, entry);
+							return entry;
+						}
+						let selection = texture.selection;
+						selection.changeSize(texture.width, texture.height);
+						selection.setOverride(null);
+						cube_list.forEach((cube, i) => {
+							face_keys.forEach(fkey => {
+								let src_face = cube.faces[negativeOutlineSourceFace(cube, fkey)];
+								if (!src_face || src_face.texture === null || !src_face.uv || src_face.uv.length != 4) return;
+								let src_tex = src_face.getTexture();
+								if (!(src_tex instanceof Texture)) return;
+								let pixels = getSourcePixels(src_tex);
+								if (!pixels) return;
+								let suw = src_tex.getUVWidth() || pixels.width;
+								let suh = src_tex.getUVHeight() || pixels.height;
+								let su0 = Math.min(src_face.uv[0], src_face.uv[2]);
+								let su1 = Math.max(src_face.uv[0], src_face.uv[2]);
+								let sv0 = Math.min(src_face.uv[1], src_face.uv[3]);
+								let sv1 = Math.max(src_face.uv[1], src_face.uv[3]);
+								let sx0 = Math.max(0, Math.floor(su0 * pixels.width / suw));
+								let sx1 = Math.min(pixels.width, Math.ceil(su1 * pixels.width / suw));
+								let sy0 = Math.max(0, Math.floor(sv0 * pixels.height / suh));
+								let sy1 = Math.min(pixels.height, Math.ceil(sv1 * pixels.height / suh));
+								if (sx1 <= sx0 || sy1 <= sy0) return;
+								let [u, v, rw, rh] = rect_map[i][fkey];
+								let px0 = Math.max(0, Math.round(u * texture.width / uv_w));
+								let px1 = Math.min(texture.width, Math.round((u + rw) * texture.width / uv_w));
+								let py0 = Math.max(0, Math.round(v * texture.height / uv_h));
+								let py1 = Math.min(texture.height, Math.round((v + rh) * texture.height / uv_h));
+								if (px1 <= px0 || py1 <= py0) return;
+								// 反向映射：每个描边贴图像素回采源面 UV 对应像素，保证选区覆盖整个目标 UV 区域
+								for (let ty = py0; ty < py1; ty++) {
+									let fy = (ty + 0.5 - py0) / (py1 - py0);
+									let sy = Math.min(sy1 - 1, Math.max(sy0, Math.floor(sy0 + fy * (sy1 - sy0))));
+									for (let tx = px0; tx < px1; tx++) {
+										let fx = (tx + 0.5 - px0) / (px1 - px0);
+										let sx = Math.min(sx1 - 1, Math.max(sx0, Math.floor(sx0 + fx * (sx1 - sx0))));
+										if (pixels.data[(sy * pixels.width + sx) * 4 + 3] == 0) continue;
+										selection.set(tx, ty, 1);
+									}
+								}
+							});
+						});
+						if (Texture.selected != texture) texture.select();
+						UVEditor.updateSelectionOutline();
+					}
+
 					Undo.finishEdit('Create negative outline', {elements: new_cubes, outliner: true, textures: [texture], bitmap: true});
 				}
 			}).show();

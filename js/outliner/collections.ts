@@ -252,7 +252,15 @@ export class Collection {
 	 * Opens the context menu
 	 */
 	showContextMenu(event) {
-		if (!this.selected) this.clickSelect(event);
+		// 反馈#159：右键只把集合行本身标记为选中，不再把它内部的组/元素选进大纲，
+		// 避免用户已选中的分组被集合成员顶掉（需要额外重选一次）。
+		if (!this.selected) {
+			if (!(event?.ctrlOrCmd || event?.shiftKey || Pressing.overrides.ctrl || Pressing.overrides.shift)) {
+				Collection.all.forEach(c => c.selected = false);
+			}
+			this.selected = true;
+			updateSelection();
+		}
 		Collection.menu.open(event, this);
 		return this;
 	}
@@ -421,6 +429,8 @@ export class Collection {
 	}
 	
 	static menu = new Menu([
+		// 反馈#159：右键菜单直接提供「创建集合」（菜单中显示其快捷键）
+		'create_collection',
 		new MenuSeparator('settings'),
 		new MenuSeparator('edit'),
 		'set_collection_content_to_selection',

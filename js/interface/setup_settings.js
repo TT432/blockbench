@@ -398,6 +398,10 @@ function setupSettings() {
 		if (typeof BARS !== 'undefined') BARS.updateConditions();
 	}});
 	new Setting('community_mirror_paint_block_matching', {category: 'community', value: true, group: 'community_group_paint'});
+	// 反馈#163：超大选择集暂停 UV 显示的上限开关（关闭后始终显示全部 UV，大选择集可能卡顿）
+	new Setting('community_paint_uv_display_cap', {category: 'community', value: true, group: 'community_group_paint', onChange() {
+		if (typeof UVEditor !== 'undefined' && UVEditor.vue) UVEditor.vue.$forceUpdate();
+	}});
 
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
 	new Setting('community_tab_groups', {category: 'community', value: true, onChange() {
