@@ -174,6 +174,45 @@ function splitCustomMolangArgs(arg_string: string): string[] {
 	return args;
 }
 
+const custom_molang_string_literal_regex = /("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')/g;
+
+/**
+ * 自定义 molang 变量表（Project.custom_molang_variables）改写：
+ * 表内名字的裸标识符在任何 molang 处视为 variable.<名字>，解析/导出前改写。
+ * 字符串字面量内不改写；v./temp. 等前缀后、成员访问后、函数调用形式的同名串不受影响。
+ */
+function rewriteCustomMolangVariables(input: string): string {
+	if (typeof Project == 'undefined' || !Project) return input;
+	let list = Project.custom_molang_variables as string[] | undefined;
+	if (!list || !list.length) return input;
+	let seen = new Set<string>();
+	let names: string[] = [];
+	list.forEach(name => {
+		name = (name || '').trim();
+		if (!/^\w+$/.test(name)) return;
+		let lower = name.toLowerCase();
+		if (seen.has(lower)) return;
+		seen.add(lower);
+		names.push(name);
+	});
+	if (!names.length) return input;
+	// 长名优先，避免短名先匹配截断（\b 已挡住大部分，双保险）
+	names.sort((a, b) => b.length - a.length);
+	let source = names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+	let variable_regex = new RegExp(`(?<![\\w.])(?:${source})(?![\\w.(])`, 'gi');
+	if (!variable_regex.test(input)) return input;
+	variable_regex.lastIndex = 0;
+	let changed = false;
+	let segments = input.split(custom_molang_string_literal_regex);
+	for (let i = 0; i < segments.length; i += 2) {
+		segments[i] = segments[i].replace(variable_regex, match => {
+			changed = true;
+			return 'variable.' + match;
+		});
+	}
+	return changed ? segments.join('') : input;
+}
+
 /**
  * 展开文本中的项目自定义 molang 调用（n.name(...) / new.name(...)）。
  * 参数一律以括号包裹代入（保证 `n.test(v.a, v.b + 1)` → `(v.a) + (v.b + 1)` 无语义偏移）；
@@ -182,6 +221,11 @@ function splitCustomMolangArgs(arg_string: string): string[] {
  */
 export function expandCustomMolang(input: string, depth = 0): string {
 	if (typeof input != 'string' || depth > 16) return input;
+	let original_input = input;
+	if (depth == 0) {
+		// 自定义变量表（裸名字 → variable.名字）先于调用展开，保证无 n./new. 调用时也生效
+		input = rewriteCustomMolangVariables(input);
+	}
 	if (!custom_molang_quick_test.test(input)) return input;
 	let defs = (typeof Project != 'undefined' && Project ? Project.custom_molangs : null) as CustomMolangDefinition[] | null;
 	if (!defs || !defs.length) return input;
@@ -192,7 +236,7 @@ export function expandCustomMolang(input: string, depth = 0): string {
 			custom_molang_cache.clear();
 			custom_molang_ct_counters.clear();
 		}
-		let cached_result = custom_molang_cache.get(input);
+		let cached_result = custom_molang_cache.get(original_input);
 		if (cached_result !== undefined) return cached_result;
 	}
 
@@ -253,8 +297,10 @@ export function expandCustomMolang(input: string, depth = 0): string {
 	// 展开结果可能仍含自定义调用（嵌套调用、定义间互相引用），递归至收敛
 	result = expandCustomMolang(result, depth + 1);
 	if (depth == 0) {
+		// 方法体代入的文本也可能含变量表裸名字，最终结果统一改写一次
+		result = rewriteCustomMolangVariables(result);
 		if (custom_molang_cache.size > 512) custom_molang_cache.clear();
-		custom_molang_cache.set(input, result);
+		custom_molang_cache.set(original_input, result);
 	}
 	return result;
 }
