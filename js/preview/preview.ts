@@ -2580,8 +2580,9 @@ export function animate() {
 	if (Animator.open) {
 		if (Timeline.playing) {
 			Timeline.loop();
-		} else if (AnimationController.selected) {
-			AnimationController.selected.updatePreview();
+		} else {
+			let active_controller = AnimationController.getActivePreviewController();
+			if (active_controller) active_controller.updatePreview();
 		}
 	}
 	if (Preview.selected) {
