@@ -633,11 +633,14 @@
 	#cubes_list .outliner_object {
 		position: relative;
 	}
+	/* #172：elbow 的包含块是 .outliner_object 的 padding box，行首 border-left 3px 会把
+	   绝对定位坐标整体右移 3px，导致左端与父级竖线间留 1px 缝、右端也差 3px 到不了行内容。
+	   左右两端各把这段 border 宽度补偿掉（6px = 9px-3px / 16px-6px），条纹在缩放比下依然对齐。 */
 	#cubes_list .outliner_line_elbow {
 		position: absolute;
-		left: calc((var(--indentation) - 1) * var(--indentation-offset) + 9px);
+		left: calc((var(--indentation) - 1) * var(--indentation-offset) + 6px);
 		top: 13px;
-		width: calc(var(--indentation-offset) - 9px);
+		width: calc(var(--indentation-offset) - 6px);
 		height: 2px;
 		background: var(--color-guidelines);
 		pointer-events: none;
