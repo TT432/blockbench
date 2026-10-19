@@ -276,6 +276,30 @@ export const Timeline = {
 			playhead_node.style.left = (Timeline.time * Timeline.vue._data.size) + 'px';
 		}
 	},
+	// 动画器行的纵向位置（timeline_body_inner 坐标）。与 windowed_animators 的
+	// 高度/可见性口径完全一致：行高 + 展开后可视通道行。虚拟化后目标行可能不在
+	// DOM 中，滚动定位不能依赖元素查询（反馈#174）。
+	getAnimatorRowOffset(animator) {
+		let vue = Timeline.vue;
+		if (!vue) return null;
+		let row_height = vue.row_height;
+		let offset = 0;
+		for (let item of Timeline.animators) {
+			let height = row_height;
+			if (item.expanded) {
+				for (let channel in item.channels) {
+					if (vue.channels[channel] != false
+						&& Condition(item.channels[channel].condition, item)
+						&& (!vue.channels.hide_empty || item[channel].length)) {
+						height += row_height;
+					}
+				}
+			}
+			if (item === animator) return {offset, height};
+			offset += height;
+		}
+		return null;
+	},
 	setTimecode(time) {
 		let second_fractions = 100;
 		let m = Math.floor(time/60)
