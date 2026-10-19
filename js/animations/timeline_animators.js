@@ -167,23 +167,37 @@ export class GeneralAnimator {
 		if (this instanceof BoneAnimator) Animator.preview();
 		return this;
 	}
-	scrollTo() {
+	scrollTo(retry = true) {
+		var timeline = document.getElementById('timeline_body');
+		if (!timeline) return;
 		var el = $(`#timeline_body_inner > li[uuid=${this.uuid}]`).get(0)
+		var offset, row_height;
 		if (el) {
-			var offset = el.offsetTop;
-			var timeline = document.getElementById('timeline_body');
-			var scroll_top = timeline.scrollTop;
-			var height = timeline.clientHeight;
-			if (offset < scroll_top) {
-				$(timeline).animate({
-					scrollTop: offset
-				}, 200);
-			}
-			if (offset + el.clientHeight > scroll_top + height) {
-				$(timeline).animate({
-					scrollTop: offset - (height - el.clientHeight - 20)
-				}, 200);
-			}
+			offset = el.offsetTop;
+			row_height = el.clientHeight;
+		} else {
+			// 反馈#174：时间轴纵向虚拟化后，视口外的行没有 DOM。按数据计算目标
+			// 行偏移，先直接滚过去让该行进入渲染窗口，下一帧再按真实元素校正。
+			let pos = Timeline.getAnimatorRowOffset(this);
+			if (!pos) return;
+			offset = pos.offset;
+			row_height = pos.height;
+			timeline.scrollTop = Math.max(0, offset - (timeline.clientHeight - row_height) / 2);
+			// scroll 事件在下一帧前派发，等它更新 scroll_top/虚拟窗口后再按元素精确定位
+			if (retry) requestAnimationFrame(() => Vue.nextTick(() => this.scrollTo(false)));
+			return;
+		}
+		var scroll_top = timeline.scrollTop;
+		var height = timeline.clientHeight;
+		if (offset < scroll_top) {
+			$(timeline).animate({
+				scrollTop: offset
+			}, 200);
+		}
+		if (offset + row_height > scroll_top + height) {
+			$(timeline).animate({
+				scrollTop: offset - (height - row_height - 20)
+			}, 200);
 		}
 	}
 }
