@@ -606,8 +606,9 @@ export const Animator = {
 	// 退化为未变换的默认姿态块）。
 	// state_time_offset：洋葱皮采样前后帧时对状态机内部时间的偏移（秒）。
 	stackActiveAnimations(in_loop, state_time_offset = 0) {
-		if (AnimationController.selected?.selected_state) {
-			let controller = AnimationController.selected;
+		let active_controller = AnimationController.getActivePreviewController();
+		if (active_controller) {
+			let controller = active_controller;
 			let {selected_state, last_state} = controller;
 			let state_time = Math.max(0, selected_state.getStateTime() + state_time_offset);
 			let blend_progress = (last_state && last_state.blend_transition) ? Math.clamp(state_time / last_state.blend_transition, 0, 1) : 1;

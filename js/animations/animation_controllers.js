@@ -1300,6 +1300,16 @@ export class AnimationController extends AnimationItem {
 		})
 		dialog.show();
 	}
+	// 当前应驱动预览的控制器。只有控制器是激活的 AnimationItem（或没有任何动画被
+	// 选中）时才成立：插件可能绕过 AnimationItem.selected setter 直接给
+	// AnimationController.selected 赋值，此时动画面板/时间轴仍以 Animation.selected
+	// 为准。若仍走控制器分支，会让时间轴显示冻结、转跳到起点无效（反馈#173）。
+	static getActivePreviewController() {
+		let controller = AnimationController.selected;
+		if (!controller || !controller.selected_state) return null;
+		if (Animation.selected && controller !== AnimationItem.selected) return null;
+		return controller;
+	}
 	static playback_speed = 100
 }
 	Object.defineProperty(AnimationController, 'all', {
