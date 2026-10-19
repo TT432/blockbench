@@ -118,11 +118,16 @@ export class Group extends OutlinerNode {
 		} else {
 		let multi_select = (event.ctrlOrCmd || Pressing.overrides.ctrl);
 
-		// 反馈#43：组的 shift 范围多选已移除（多选只保留 ctrl），shift+点击等同普通点击。
-		// 反馈#105：恢复受限版——仅当锚点与目标是同层级节点时，shift+点击范围选中区间内的全部同层级节点
+		// 反馈#43 曾移除组的 shift 范围多选；反馈#105 由用户要求恢复「受限版」——仅当锚点与
+		// 目标同层级时，shift+点击范围选中区间内的全部同层级节点。
 		if ((event.shiftKey === true || Pressing.overrides.shift) && is_outliner_click) {
-			let anchor = Outliner.selected.last() || Group.multi_selected.last();
-			if (anchor && anchor !== this && anchor.parent === this.parent) {
+			// 反馈#178：锚点必须是目标组的同层级节点。Outliner.selected 只含元素，选中带
+			// 方块的组后其末位是组内方块（parent === 该组），拿它当锚点会误判成不同层级、
+			// 退化为单选；只有空分组（Outliner.selected 为空）时才恰好落到组本身。这里按
+			// 「最近直接选中的组 → 最近选中的元素」顺序取第一个与目标同级且仍在选中态的节点。
+			let anchor = [Group.multi_selected.last(), Outliner.selected.last()]
+				.find(node => node && node.selected && node !== this && node.parent === this.parent);
+			if (anchor) {
 				let siblings = this.parent === 'root' ? Outliner.root : this.parent.children;
 				let i1 = siblings.indexOf(anchor);
 				let i2 = siblings.indexOf(this);
