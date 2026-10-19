@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.42',
+		changes: [
+			'修复#172：大纲父子结构树线的「小拐拐」横向连接段与父级竖线之间留 1px 缝隙、右端也差 3px 到不了行内容——补偿行首 3px 作用域描边对绝对定位包含块的偏移',
+		],
+	},
+	{
 		version: '5.3.41',
 		changes: [
 			'修复#170：负尺寸描边「创建选区」按源面与壳面实际的 UV 朝向映射——箱型 UV 启用「镜像 UV」时，选区图形不再在壳面上反向（「对称纹理」复用同一朝向计算）',
