@@ -583,8 +583,13 @@
 		box-sizing: border-box;
 	}
 	div.outliner_object { /* Higher prio to override older themes */
-		padding-left: calc(var(--indentation) * var(--indentation-offset));
-		border-left: 3px solid var(--color-scope);
+		/* #172 根因：作用域描边若用 border-left，绝对定位子元素（树线小拐拐）的
+		   包含块（padding box）会整体右移 3px，且该 3px 在 dpr/缩放下会被设备像素
+		   取整成 2.67px，任何写死的补偿值都会在大纲树线连接处留下缝隙或重叠。
+		   改用 inset box-shadow 画同一描边：不参与布局，小拐拐与父级竖线共享同一
+		   坐标原点；padding 补回 3px 保持行内容位置不变。 */
+		padding-left: calc(var(--indentation) * var(--indentation-offset) + 3px);
+		box-shadow: inset 3px 0 0 var(--color-scope);
 		height: 28px;
 	}
 	.outliner_object:active {
@@ -633,14 +638,14 @@
 	#cubes_list .outliner_object {
 		position: relative;
 	}
-	/* #172：elbow 的包含块是 .outliner_object 的 padding box，行首 border-left 3px 会把
-	   绝对定位坐标整体右移 3px，导致左端与父级竖线间留 1px 缝、右端也差 3px 到不了行内容。
-	   左右两端各把这段 border 宽度补偿掉（6px = 9px-3px / 16px-6px），条纹在缩放比下依然对齐。 */
+	/* #172：小拐拐与父级竖线在同一坐标系（行 padding box 左缘 = 父级 ul 左缘）：
+	   竖线 x = 父深度*16 + 9，宽 2px；横向段从竖线右缘（+11px）起，到行内容起点
+	   （(深度-1)*16 + 11 + width，width = 16-8）结束。两段相接处不再重叠、也不留缝。 */
 	#cubes_list .outliner_line_elbow {
 		position: absolute;
-		left: calc((var(--indentation) - 1) * var(--indentation-offset) + 6px);
+		left: calc((var(--indentation) - 1) * var(--indentation-offset) + 11px);
 		top: 13px;
-		width: calc(var(--indentation-offset) - 6px);
+		width: calc(var(--indentation-offset) - 8px);
 		height: 2px;
 		background: var(--color-guidelines);
 		pointer-events: none;
