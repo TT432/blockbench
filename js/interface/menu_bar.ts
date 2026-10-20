@@ -622,6 +622,7 @@ export const MenuBar = {
 			{name: 'menu.help.community_feedback', id: 'community_feedback', icon: 'fa-solid.fa-comment-dots', click: () => {
 				Blockbench.openLink('https://my.feishu.cn/share/base/form/shrcnfR7JgUKd19Hav282d7Y6ve');
 			}},
+			'community_features',
 			'community_changelog',
 			new MenuSeparator('backups'),
 			'view_backups',
