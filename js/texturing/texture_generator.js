@@ -175,26 +175,49 @@ export const TextureGenerator = {
 	appendToTemplateDialog() {
 		let texture = Texture.getDefault();
 		if (!texture) return;
-		// 反馈#182：「保持多纹理占用」记住上一次用户的选择（跨对话框/跨启动）。
-		StateMemory.init('texture_append_double_use', 'boolean', true);
+		// 反馈#185：整份对话框参数记住上一次确认的值（箱型 UV / 2 的幂 / 保持多纹理占用 /
+		// 清除未引用像素 / 合并面 / 角度阈值 / 内边距），跨对话框、跨工程、跨启动继承。
+		// 「2 的幂」的缺省跟随当前贴图推算，仅在还没有记忆值时使用。
+		const memory_defaults = {
+			box_uv: false,
+			power: Math.isPowerOfTwo(texture.width),
+			double_use: true,
+			clear_unreferenced: true,
+			combine_polys: true,
+			max_edge_angle: 45,
+			max_island_angle: 45,
+			padding: false,
+		};
+		StateMemory.init('texture_append_template_options', 'object', {});
+		let remembered = Object.assign({}, memory_defaults, StateMemory.texture_append_template_options || {});
 		var dialog = new Dialog({
 			id: 'add_bitmap',
 			title: tl('action.append_to_template'),
 			width: 480,
 			form: {
 				color: 		{label: 'data.color', type: 'color', colorpicker: TextureGenerator.background_color, toggle_enabled: true, toggle_default: false},
-				box_uv: 	{label: 'dialog.project.uv_mode.box_uv', type: 'checkbox', value: false, condition: (form) => (!Project.box_uv && Cube.all.length)},
-				power: 		{label: 'dialog.create_texture.power', description: 'dialog.create_texture.power.desc', type: 'checkbox', value: Math.isPowerOfTwo(texture.width)},
-				double_use: {label: 'dialog.create_texture.double_use', description: 'dialog.create_texture.double_use.desc', type: 'checkbox', value: StateMemory.texture_append_double_use},
-				clear_unreferenced: {label: 'dialog.create_texture.clear_unreferenced', description: 'dialog.create_texture.clear_unreferenced.desc', type: 'checkbox', value: true},
-				combine_polys: {label: 'dialog.create_texture.combine_polys', description: 'dialog.create_texture.combine_polys.desc', type: 'checkbox', value: true, condition: (form) => (Mesh.selected.length)},
-				max_edge_angle: {label: 'dialog.create_texture.max_edge_angle', description: 'dialog.create_texture.max_edge_angle.desc', type: 'number', value: 45, condition: (form) => Mesh.selected.length},
-				max_island_angle: {label: 'dialog.create_texture.max_island_angle', description: 'dialog.create_texture.max_island_angle.desc', type: 'number', value: 45, condition: (form) => Mesh.selected.length},
-				padding:	{label: 'dialog.create_texture.padding', description: 'dialog.create_texture.padding.desc', type: 'checkbox', value: false},
+				box_uv: 	{label: 'dialog.project.uv_mode.box_uv', type: 'checkbox', value: remembered.box_uv, condition: (form) => (!Project.box_uv && Cube.all.length)},
+				power: 		{label: 'dialog.create_texture.power', description: 'dialog.create_texture.power.desc', type: 'checkbox', value: remembered.power},
+				double_use: {label: 'dialog.create_texture.double_use', description: 'dialog.create_texture.double_use.desc', type: 'checkbox', value: remembered.double_use},
+				clear_unreferenced: {label: 'dialog.create_texture.clear_unreferenced', description: 'dialog.create_texture.clear_unreferenced.desc', type: 'checkbox', value: remembered.clear_unreferenced},
+				combine_polys: {label: 'dialog.create_texture.combine_polys', description: 'dialog.create_texture.combine_polys.desc', type: 'checkbox', value: remembered.combine_polys, condition: (form) => (Mesh.selected.length)},
+				max_edge_angle: {label: 'dialog.create_texture.max_edge_angle', description: 'dialog.create_texture.max_edge_angle.desc', type: 'number', value: remembered.max_edge_angle, condition: (form) => Mesh.selected.length},
+				max_island_angle: {label: 'dialog.create_texture.max_island_angle', description: 'dialog.create_texture.max_island_angle.desc', type: 'number', value: remembered.max_island_angle, condition: (form) => Mesh.selected.length},
+				padding:	{label: 'dialog.create_texture.padding', description: 'dialog.create_texture.padding.desc', type: 'checkbox', value: remembered.padding},
 			},
 			onConfirm(options) {
 				dialog.hide()
-				StateMemory.set('texture_append_double_use', !!options.double_use);
+				// 只覆盖本次确认里实际出现的字段：条件隐藏的选项（无 cube / 无 mesh 时不显示）
+				// 不会把已记忆的值清成 false。
+				let next = Object.assign({}, StateMemory.texture_append_template_options || {});
+				for (let key of ['box_uv', 'power', 'double_use', 'clear_unreferenced', 'combine_polys', 'padding']) {
+					if (options[key] !== undefined) next[key] = !!options[key];
+				}
+				for (let key of ['max_edge_angle', 'max_island_angle']) {
+					let value = parseFloat(options[key]);
+					if (!isNaN(value)) next[key] = Math.max(0, Math.min(90, value));
+				}
+				StateMemory.set('texture_append_template_options', next);
 				options.rearrange_uv = true;
 				options.resolution = 16 * texture.width / texture.getUVWidth();
 				if (Format.single_texture) {

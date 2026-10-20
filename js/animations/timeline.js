@@ -155,10 +155,16 @@ export const Timeline = {
 			var max_time = (rect.bx-Timeline.vue._data.head_width-8)/Timeline.vue._data.size;
 
 			Timeline.selected.empty()
-			for (var animator of Timeline.animators) {
-				var node = $('#timeline_body_inner .animator[uuid=' + animator.uuid + ']').get(0)
-				var offset = node && node.offsetTop;
-				for (var kf of animator.keyframes) {
+			let row_height = Timeline.vue._data.row_height;
+			for (let animator of Timeline.animators) {
+				// 反馈#188：纵向虚拟化后，滚动到窗口外的动画器行不在 DOM 中，
+				// $('#…animator[uuid=…]') 查不到 → offsetTop 为 undefined → height 变 NaN →
+				// 整行被静默跳过。框选跨过滚动范围时因此只剩仍在 DOM（靠近指针）的几行
+				// 被选中（"只能框选住距离框选结束位置最近几个"）。行偏移改由行数据算出，
+				// 与 windowed_animators 的行布局同一口径。
+				let row = Timeline.getAnimatorRowOffset(animator);
+				if (!row) continue;
+				for (let kf of animator.keyframes) {
 					if (Timeline.selector.selected_before.includes(kf)) {
 						Timeline.selected.push(kf);
 						continue;
@@ -175,11 +181,14 @@ export const Timeline = {
 							var channel_index = 0 //animator.channels.indexOf(kf.channel);
 							for (var channel in animator.channels) {
 								if (kf.channel == channel) break;
-								if (channels[channel] != false && (!channels.hide_empty || animator[channel].length)) {
+								if (channels[channel] != false
+									&& Condition(animator.channels[channel].condition, animator)
+									&& (!channels.hide_empty || animator[channel].length)) {
 									channel_index++;
 								}
 							}
-							var height = offset + channel_index*24 + 36;
+							// 行首 1 行 + channel_index 个通道行，再取该通道行的竖直中心（+0.5 行）
+							var height = row.offset + (channel_index + 1.5) * row_height;
 
 						} else {
 							var height = Timeline.vue.graph_offset - (kf.display_value || 0) * Timeline.vue.graph_size + Timeline.vue.scroll_top;
