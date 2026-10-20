@@ -848,9 +848,19 @@ BARS.defineActions(function() {
 				add_group = undefined;
 			}
 
+			// 反馈#184：单个非分组节点（方块/网格/空对象等）选中时，旧逻辑只把新分组
+			// 交给 addTo(add_group)——addTo 的「无 children 目标」分支会解析成「父级 + 该节点后一位」，
+			// 于是文件夹被插在节点旁边、节点留在外面。选中 2 个以上时才是「新建分组包住选中项」，
+			// 单个元素应与之一致；单个分组仍沿用「在组内新建空分组」（在现有层级下继续嵌套）。
+			let wrap_nodes = null;
 			if (lowest_selected.length >= 2 && add_group) {
-				base_group.sortInBefore(add_group, 1);
-				lowest_selected.forEach((s) => {
+				wrap_nodes = lowest_selected;
+			} else if (lowest_selected.length == 1 && !(lowest_selected[0] instanceof Group)) {
+				wrap_nodes = lowest_selected;
+			}
+			if (wrap_nodes) {
+				base_group.sortInBefore(add_group || wrap_nodes[0], wrap_nodes.length >= 2 ? 1 : 0);
+				wrap_nodes.forEach((s) => {
 					s.addTo(base_group)
 				})
 			} else {
