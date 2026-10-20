@@ -1254,16 +1254,27 @@ BARS.defineActions(function() {
 				};
 			})
 
-			let previous_speed = 1;
-			let previous_snapping = initial_snapping;
+			// 反馈#185：记住上一次确认的速度与「调整吸附」。
+			// 上次是倍速时，打开即按该倍速生效（与拖动滑条等效；取消由 Undo.cancelEdit 回滚），
+			// 否则滑条显示 2× 而动画没被缩放，确认后与界面不符。
+			StateMemory.init('change_animation_speed_options', 'object', {speed: 1, adjust_snapping: true});
+			let remembered = StateMemory.change_animation_speed_options || {};
+			let initial_speed = Math.clamp(remembered.speed ?? 1, 0.1, 4);
+			let initial_adjust_snapping = remembered.adjust_snapping !== false;
+			let initial_display_snapping = initial_adjust_snapping
+				? Math.roundTo(initial_snapping * initial_speed, 2)
+				: initial_snapping;
+
+			let previous_speed = initial_speed;
+			let previous_snapping = initial_display_snapping;
 			let dialog = new Dialog({
 				id: 'change_animation_speed',
 				title: 'action.change_animation_speed',
 				darken: false,
 				form: {
-					speed: {label: 'dialog.change_animation_speed.speed', type: 'range', value: 1, min: 0.1, max: 4, step: 0.01, editable_range_label: true, full_width: true},
-					adjust_snapping: {label: 'dialog.change_animation_speed.adjust_snapping', type: 'checkbox', value: true},
-					snapping: {label: 'menu.animation.snapping', type: 'number', value: initial_snapping, min: 1, max: 500, condition: result => result.adjust_snapping},
+					speed: {label: 'dialog.change_animation_speed.speed', type: 'range', value: initial_speed, min: 0.1, max: 4, step: 0.01, editable_range_label: true, full_width: true},
+					adjust_snapping: {label: 'dialog.change_animation_speed.adjust_snapping', type: 'checkbox', value: initial_adjust_snapping},
+					snapping: {label: 'menu.animation.snapping', type: 'number', value: initial_display_snapping, min: 1, max: 500, condition: result => result.adjust_snapping},
 				},
 				onFormChange({speed, adjust_snapping, snapping}) {
 					if (speed != previous_speed) {
@@ -1290,12 +1301,23 @@ BARS.defineActions(function() {
 					Animator.preview();
 				},
 				onConfirm(result) {
+					StateMemory.set('change_animation_speed_options', {
+						speed: limitNumber(parseFloat(result.speed) || 1, 0.1, 4),
+						adjust_snapping: result.adjust_snapping !== false,
+					});
 					Undo.finishEdit('Change animation speed');
 				},
 				onCancel() {
 					Undo.cancelEdit();
 				}
 			}).show();
+			if (initial_speed !== 1) {
+				dialog.onFormChange({
+					speed: initial_speed,
+					adjust_snapping: initial_adjust_snapping,
+					snapping: initial_display_snapping,
+				});
+			}
 		}
 	})
 	new Action('merge_animation', {

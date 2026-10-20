@@ -996,6 +996,10 @@ StateMemory.init("timeline_channels", "object", {
 	hide_empty: false,
 });
 
+// 反馈#185：时间轴「播放速度」滑条值记住上一次的设定（跨工程/跨启动）。
+StateMemory.init('timeline_playback_speed', 'number', 100);
+Timeline.playback_speed = limitNumber(StateMemory.timeline_playback_speed, 0, 10000);
+
 Interface.definePanels(() => {
 	function eventTargetToAnimator(target) {
 		let target_node = target;
@@ -2403,7 +2407,9 @@ BARS.defineActions(function() {
 		icon: 'fa-repeat',
 		category: 'animation',
 		condition: {modes: ['animate']},
-		default: false
+		default: false,
+		// 反馈#185：循环播放开关记住上一次的状态（跨工程/跨启动）。
+		save_on_restart: true,
 	})
 	new NumSlider('slider_animation_speed', {
 		category: 'animation',
@@ -2418,6 +2424,7 @@ BARS.defineActions(function() {
 		},
 		change: function(modify) {
 			Timeline.playback_speed = limitNumber(modify(Timeline.playback_speed), 0, 10000)
+			StateMemory.set('timeline_playback_speed', Timeline.playback_speed)
 		},
 		getInterval: (e) => {
 			var val = BarItems.slider_animation_speed.get()
