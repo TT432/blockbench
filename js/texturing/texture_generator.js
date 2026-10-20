@@ -175,6 +175,8 @@ export const TextureGenerator = {
 	appendToTemplateDialog() {
 		let texture = Texture.getDefault();
 		if (!texture) return;
+		// 反馈#182：「保持多纹理占用」记住上一次用户的选择（跨对话框/跨启动）。
+		StateMemory.init('texture_append_double_use', 'boolean', true);
 		var dialog = new Dialog({
 			id: 'add_bitmap',
 			title: tl('action.append_to_template'),
@@ -183,7 +185,7 @@ export const TextureGenerator = {
 				color: 		{label: 'data.color', type: 'color', colorpicker: TextureGenerator.background_color, toggle_enabled: true, toggle_default: false},
 				box_uv: 	{label: 'dialog.project.uv_mode.box_uv', type: 'checkbox', value: false, condition: (form) => (!Project.box_uv && Cube.all.length)},
 				power: 		{label: 'dialog.create_texture.power', description: 'dialog.create_texture.power.desc', type: 'checkbox', value: Math.isPowerOfTwo(texture.width)},
-				double_use: {label: 'dialog.create_texture.double_use', description: 'dialog.create_texture.double_use.desc', type: 'checkbox', value: true},
+				double_use: {label: 'dialog.create_texture.double_use', description: 'dialog.create_texture.double_use.desc', type: 'checkbox', value: StateMemory.texture_append_double_use},
 				clear_unreferenced: {label: 'dialog.create_texture.clear_unreferenced', description: 'dialog.create_texture.clear_unreferenced.desc', type: 'checkbox', value: true},
 				combine_polys: {label: 'dialog.create_texture.combine_polys', description: 'dialog.create_texture.combine_polys.desc', type: 'checkbox', value: true, condition: (form) => (Mesh.selected.length)},
 				max_edge_angle: {label: 'dialog.create_texture.max_edge_angle', description: 'dialog.create_texture.max_edge_angle.desc', type: 'number', value: 45, condition: (form) => Mesh.selected.length},
@@ -192,6 +194,7 @@ export const TextureGenerator = {
 			},
 			onConfirm(options) {
 				dialog.hide()
+				StateMemory.set('texture_append_double_use', !!options.double_use);
 				options.rearrange_uv = true;
 				options.resolution = 16 * texture.width / texture.getUVWidth();
 				if (Format.single_texture) {
