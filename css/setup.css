@@ -686,11 +686,31 @@
 		min-width: 30px;
 		text-align: center;
 	}
+	/* 复选框/单选图标与开关圆钮一律用绝对定位 + 显式居中：
+	   二者的旧定位依赖 ::before 的行内静态位置，垂直偏移量由 input 的
+	   line-height / 字体度量 / padding 决定（实测同一份 CSS 在不同环境可
+	   偏移 10px 以上：input 行高 40px 时图标下沉 16px，padding-top 10px 时
+	   圆钮下沉 10px），组件自身无法感知。 */
+	input[type=checkbox], input[type=radio] {
+		position: relative;
+		/* 图标的绝对定位后，input 不再被图标行高撑高，这里显式钉住原尺寸 */
+		height: 30px;
+	}
+	input[type=radio] {
+		min-width: 20px;
+	}
 	input[type=checkbox]::before {
 		content: "\f0c8";
 		font-family: 'Font Awesome 6 Free';
     	font-weight: 300;
     	font-size: 15pt;
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		line-height: 1.5;
+		pointer-events: none;
 	}
 	input[type=checkbox]:checked::before {
 		content: "\f14a";
@@ -723,14 +743,20 @@
 		width: 10px;
 		height: 10px;
 		border-radius: 50%;
-		margin: 6px;
 		position: absolute;
-		left: 0;
+		/* 显式居中：不再靠 static 位置（受 padding/border/行高影响）。
+		   定位基准是 padding box，故主题给 input 加的 padding 不再推移圆钮。 */
+		inset: auto;
+		top: calc(50% - 5px);
+		left: 6px;
+		display: block;
+		line-height: 1;
+		pointer-events: none;
 		transition: left 120ms ease-out, background-color 120ms ease-out;
 		background-color: var(--color);
 	}
 	input[type=checkbox].toggle_switch:checked::before {
-		left: calc(100% - 22px);
+		left: calc(100% - 16px);
 	}
 
 	input[type=radio]::before {
@@ -738,6 +764,13 @@
 		font-family: 'Font Awesome 6 Free';
     	font-weight: 300;
     	font-size: 15pt;
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		line-height: 1.5;
+		pointer-events: none;
 	}
 	input[type=radio]:checked::before {
 		content: "\f192";
