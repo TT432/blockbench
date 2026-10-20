@@ -870,6 +870,13 @@
 	"dialog.create_variable_placeholder.output": "Output",
 	"dialog.view_built_in_variables.function": "Parameters required",
 
+	"dialog.bulk_rename.mode": "Rename Mode",
+	"dialog.bulk_rename.mode.replace": "Replace Name",
+	"dialog.bulk_rename.mode.prefix": "Add Prefix",
+	"dialog.bulk_rename.mode.suffix": "Add Suffix",
+	"dialog.bulk_rename.affix": "Prefix / Suffix",
+	"dialog.bulk_rename.affix.desc": "Added to the start or end of every selected name, keeping the rest of the name intact.",
+
 	"dialog.create_texture.folder": "Folder",
 	"dialog.create_texture.type": "Type",
 	"dialog.create_texture.type.blank": "Blank",

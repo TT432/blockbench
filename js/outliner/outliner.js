@@ -656,39 +656,76 @@ export function renameOutliner(element) {
 	} else {
 
 		if (Group.first_selected && !element) {
-			Blockbench.textPrompt('generic.rename', Group.first_selected.name, function (name) {
-				name = name.trim();
-				if (name) {
-					Undo.initEdit({groups: Group.multi_selected});
-					for (let group of Group.multi_selected) {
-						group.name = name;
-						if (Format.bone_rig) {
-							group.createUniqueName();
-						}
-					}
-					Undo.finishEdit('Rename group');
-				}
-			})
+			openBulkRenameDialog(Group.multi_selected.slice(), 'group');
 		} else if (Outliner.selected.length) {
-			Blockbench.textPrompt('generic.rename', Outliner.selected[0].name, function (name) {
-				name = name.trim();
-				if (name) {
-					Undo.initEdit({elements: Outliner.selected})
-					Outliner.selected.forEach((element, i) => {
-						element.name = name.replace(/%+/g, val => {
-							return (element.getParentArray().indexOf(element)+1).toDigitString(val.length)
-						}).replace(/\$+/g, val => {
-							return (i+1).toDigitString(val.length)
-						});
-						if (Condition(element.getTypeBehavior('unique_name'))) {
-							element.createUniqueName();
-						}
-					})
-					Undo.finishEdit('Rename')
-				}
-			}, {description: tl('message.rename_elements.numbering')})
+			openBulkRenameDialog(Outliner.selected.slice(), 'element');
 		}
 	}
+}
+// 反馈#186：多选重命名支持批量「添加前缀 / 添加后缀」——旧行为只能把选中的名字
+// 全部替换成同一段文本（分组分支连编号占位符都不支持），加前后缀只能逐个手改。
+// kind = 'group' 时对象来自 Group.multi_selected，撤销快照按分组记录。
+function openBulkRenameDialog(nodes, kind) {
+	nodes = nodes.filter(node => node);
+	if (!nodes.length) return;
+	let dialog = new Dialog({
+		id: 'bulk_rename',
+		title: 'generic.rename',
+		width: 480,
+		form: {
+			mode: {
+				label: 'dialog.bulk_rename.mode',
+				type: 'select',
+				value: 'replace',
+				options: {
+					replace: 'dialog.bulk_rename.mode.replace',
+					prefix: 'dialog.bulk_rename.mode.prefix',
+					suffix: 'dialog.bulk_rename.mode.suffix',
+				},
+			},
+			base_name: {
+				label: 'generic.name',
+				type: 'text',
+				value: nodes[0].name,
+				description: 'message.rename_elements.numbering',
+				condition: form => form.mode == 'replace',
+			},
+			affix: {
+				label: 'dialog.bulk_rename.affix',
+				type: 'text',
+				value: '',
+				description: 'dialog.bulk_rename.affix.desc',
+				condition: form => form.mode != 'replace',
+			},
+		},
+		onConfirm(result) {
+			let mode = result.mode;
+			let name = (result.base_name || '').trim();
+			let affix = result.affix || '';
+			if (mode == 'replace' ? !name : !affix) return false;
+
+			Undo.initEdit(kind == 'group' ? {groups: nodes} : {elements: nodes});
+			nodes.forEach((node, i) => {
+				if (mode == 'replace') {
+					node.name = name.replace(/%+/g, val => {
+						return (node.getParentArray().indexOf(node)+1).toDigitString(val.length)
+					}).replace(/\$+/g, val => {
+						return (i+1).toDigitString(val.length)
+					});
+				} else if (mode == 'prefix') {
+					node.name = affix + node.name;
+				} else {
+					node.name = node.name + affix;
+				}
+				if (kind == 'group' ? Format.bone_rig : Condition(node.getTypeBehavior('unique_name'))) {
+					node.createUniqueName();
+				}
+			})
+			Undo.finishEdit(kind == 'group' ? 'Rename group' : 'Rename');
+			return true;
+		}
+	}).show();
+	return dialog;
 }
 export function stopRenameOutliner(save) {
 	if (Blockbench.hasFlag('renaming')) {
