@@ -10,6 +10,13 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.48',
+		changes: [
+			'修复#188：动画模式框选关键帧时，拖框跨过滚动范围只能选中靠近指针的几行——纵向虚拟化后窗口外的动画器行不在 DOM 中，框选按 DOM 取行偏移拿到 undefined 而整行被跳过；行偏移改为按行数据计算',
+			'补充#185：「向模板追加元素」对话框整份参数都记住上一次确认的值（箱型 UV、2 的幂、保持多纹理占用、清除未引用的像素、合并多边形、角度阈值、内边距），跨工程、跨启动继承',
+		],
+	},
+	{
 		version: '5.3.47',
 		changes: [
 			'修复#183：从其他窗口按住 Alt 点回 Blockbench 时，第一次点击仍按原工具（画笔）落下一笔、之后才切到吸管——Alt 工具切换改以事件自带的 altKey 在窗口捕获阶段判定，并提前到绘制链路真正开始的 pointerdown（Chromium 先派发 pointerdown、后派发 mousedown）',
