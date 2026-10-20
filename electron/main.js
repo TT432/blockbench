@@ -34,6 +34,11 @@ let load_project_data;
 			console.error('No path specified after --userData')
 			process.exit(1)
 		}
+		// NOTE: this only moves Electron's app paths. The single-instance lock is keyed
+		// to Chromium's profile dir, which is fixed from the command line before this
+		// file runs — a second instance with a different --userData still loses the lock
+		// and exits with code 0 (measured on 5.3.44; appending the switch here too late
+		// does not help). Parallel instances need Chromium's --user-data-dir as well.
 		app.setPath('userData', process.argv[index + 1]);
 	}
 })()
