@@ -629,14 +629,7 @@ window.addEventListener('blur', event => {
 
 window.addEventListener('focus', event => {
 	function click_func(event) {
-		if (isSwapToolsEnabled(event) && Toolbox.selected.alt_tool && !Toolbox.original && !open_interface) {
-			var orig = Toolbox.selected;
-			var alt = BarItems[Toolbox.selected.alt_tool];
-			if (alt && Condition(alt) && (Modes.paint || BarItems.swap_tools.keybind.key == 18)) {
-				alt.select()
-				Toolbox.original = orig;
-			}
-		}
+		selectAltTool(event);
 		remove_func();
 	}
 	let removed = false
@@ -648,6 +641,34 @@ window.addEventListener('focus', event => {
 	addEventListeners(window, 'keydown mousedown', click_func, true);
 	setTimeout(remove_func, 100);
 })
+
+/**
+ * Alt 工具切换（按住 Alt 临时使用吸管等）。
+ * 反馈#183：仅在 focus 事件后用捕获监听补一次切换是不够的——用户从外部窗口按住 Alt
+ * 点回 Blockbench 时，渲染进程从未收到 Alt 的 keydown，Pressing.alt 仍是 false，而
+ * 工具链真正开始绘制在 pointerdown（Chromium 先派发 pointerdown、后派发 mousedown），
+ * 若只挂 mousedown，画笔已经先画了一笔才轮到切换。
+ * 因此在 window 捕获阶段常驻监听 pointerdown（+ mousedown 兜底），并以事件自身携带的
+ * altKey 为准判定修饰键——它反映的是操作系统此刻的真实按键状态，与焦点事件何时到达无关。
+ */
+function selectAltTool(event) {
+	if (!isSwapToolsEnabled(event) || !Toolbox.selected.alt_tool || Toolbox.original || open_interface) return false;
+	var orig = Toolbox.selected;
+	var alt = BarItems[Toolbox.selected.alt_tool];
+	if (alt && Condition(alt) && (Modes.paint || BarItems.swap_tools.keybind.key == 18)) {
+		alt.select()
+		Toolbox.original = orig;
+		return true;
+	}
+	return false;
+}
+function altToolPointerHandler(e) {
+	// 只处理主键按下：右键/中键拖动不切工具（Alt+右键仍是轨道/框选操作）
+	if (e.button !== 0 || !e.altKey) return;
+	selectAltTool(e);
+}
+addEventListeners(window, 'pointerdown', altToolPointerHandler, true);
+addEventListeners(window, 'mousedown', altToolPointerHandler, true);
 
 export function getFocusedTextInput() {
 	let element = document.activeElement;
@@ -764,15 +785,8 @@ addEventListeners(document, 'keydown mousedown', function(e) {
 	}
 
 	//Hardcoded Keys
-	if (isSwapToolsHoldKey(e.which) && Toolbox.selected.alt_tool && !Toolbox.original && !open_interface) {
-		//Alt Tool
-		var orig = Toolbox.selected;
-		var alt = BarItems[Toolbox.selected.alt_tool]
-		if (alt && Condition(alt) && (Modes.paint || BarItems.swap_tools.keybind.key == 18)) {
-			e.preventDefault();
-			alt.select()
-			Toolbox.original = orig
-		}
+	if (isSwapToolsHoldKey(e.which) && selectAltTool(e)) {
+		e.preventDefault();
 	} else if (Keybinds.extra.cancel.keybind.isTriggered(e) && PointerTarget.active == PointerTarget.types.gizmo_transform) {
 		Transformer.cancelMovement(e, false);
 		updateSelection();
