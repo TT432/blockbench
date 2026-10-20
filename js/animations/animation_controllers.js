@@ -820,6 +820,11 @@ export class AnimationControllerState {
 		if (!this.start_timestamp) return 0;
 		return (performance.now() - this.start_timestamp) / 1000 * (AnimationController.playback_speed / 100);
 	}
+	// 状态内部时间以 start_timestamp 为原点：控制器预览下「转跳到起点」等操作要
+	// 改变预览时间，必须复位原点，否则下一次预览立刻把时间写回去。
+	resetStateTime() {
+		this.start_timestamp = performance.now();
+	}
 }
 new Property(AnimationControllerState, 'string', 'name', {default: 'default'});
 new Property(AnimationControllerState, 'array', 'animations');
