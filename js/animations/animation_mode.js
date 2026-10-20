@@ -644,6 +644,16 @@ export const Animator = {
 				})
 				Animator.stackAnimations(animations_to_play, in_loop, controller_blend_values, false);
 			}
+
+			// 控制器预览的时间轴时间由状态时间驱动，且整条路径不经过 Timeline.setTime；
+			// 而播放头/时间码是命令式 DOM 写入（只在 setTime 里刷新）。不同步的话数据在走、
+			// 显示冻结在最后一次 setTime 的值（反馈#179：时间码恒 0:00:00、播放头不动）。
+			// 同时把 Timeline.time 从混合期的上一状态时间复位到当前状态时间——后续
+			// preview 步骤（地面位移 molang、洋葱皮基准）读的是「当前」时间。
+			// state_time_offset != 0 是洋葱皮采样调用，由调用方自行保存/恢复时间，不得写 DOM。
+			if (state_time_offset === 0) {
+				Timeline.setTime(state_time);
+			}
 		} else {
 			Animator.stackAnimations(Animation.all.filter(a => a.playing), in_loop, 0, false);
 		}

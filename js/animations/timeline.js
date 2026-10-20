@@ -2459,6 +2459,12 @@ BARS.defineActions(function() {
 			let was_playing = Timeline.playing;
 			if (Timeline.playing) Timeline.pause();
 			let time = Timeline.custom_range[0] || 0;
+			// 控制器预览的时间轴时间由状态时间驱动：只 setTime 的话，接着的 preview()
+			// 与下一帧都会把时间写回状态时间（反馈#179 转跳到起点无效），必须同时复位状态起点。
+			let preview_controller = AnimationController.getActivePreviewController();
+			if (preview_controller && !time) {
+				preview_controller.selected_state.resetStateTime();
+			}
 			Timeline.setTime(time);
 			if (was_playing) {
 				Timeline.start();
