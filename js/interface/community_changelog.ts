@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.46',
+		changes: [
+			'修复#181：设置界面的开关圆钮偏离滑槽（下沉）、表单里的复选框图标与标签错位——两者原先依赖 ::before 的行内静态位置定位，垂直偏移量由 input 的 line-height / 字体度量 / padding 决定，换环境即错位；现改为绝对定位显式居中（圆钮按 padding box 居中），并补回复选框/单选由图标行高撑出的原有尺寸（30×30 / 20×30）',
+		],
+	},
+	{
 		version: '5.3.45',
 		changes: [
 			'修复#180：GitHub release 与软件内更新对话框的「更新日志」只显示 commit 标题——发布说明改为读软件内同一份社区更新日志（发版前追加的条目），不再依赖 tag 注解，条目缺失时发版直接失败',
