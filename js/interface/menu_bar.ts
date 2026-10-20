@@ -625,6 +625,7 @@ export const MenuBar = {
 			{name: 'menu.help.community_feature_list', id: 'community_feature_list', icon: 'fa-solid.fa-table-list', click: () => {
 				Blockbench.openLink('https://my.feishu.cn/base/DXG0bNakPaFqP0sTkSIcKygknZg');
 			}},
+			'community_features',
 			'community_changelog',
 			new MenuSeparator('backups'),
 			'view_backups',
