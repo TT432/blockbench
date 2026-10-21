@@ -11,6 +11,7 @@
 */
 
 import { fs, PathModule, NodeBuffer } from "../native_apis";
+import { resolveEffectPath, effectLookupRef, toEffectRef } from "./effect_path";
 
 // 资源路径归一化键：Windows 上文件系统不区分大小写、两种分隔符等价，
 // 引用字符串（动画 JSON 常见 `/`）与解析出的资产路径（PathModule 产 `\`）
@@ -27,6 +28,12 @@ function effectAssetPathKey(path) {
 function sameAssetPath(a, b) {
 	let key = effectAssetPathKey(a);
 	return !!key && key === effectAssetPathKey(b);
+}
+// 引用与某个资产引用是否指向同一文件：引用可能是相对路径（#190），需先解析再比较。
+function effectRefMatches(ref, target) {
+	if (!ref || !target) return false;
+	if (ref === target) return true;
+	return sameAssetPath(resolveEffectPath(ref), target);
 }
 
 function effectAssetArrayBufferToBase64(buffer) {
@@ -61,6 +68,8 @@ function getAudioMimeType(name) {
 function findParticleRefUsage(old_ref, new_ref) {
 	let keyframes = [];
 	let controllers = [];
+	// 改指后仍按工程目录内的相对引用保存（#190），避免新文件被写死成绝对路径
+	let stored_ref = new_ref === undefined ? undefined : toEffectRef(new_ref);
 	Animation.all.forEach(animation => {
 		for (let uuid in animation.animators) {
 			let animator = animation.animators[uuid];
@@ -68,8 +77,8 @@ function findParticleRefUsage(old_ref, new_ref) {
 			animator.particle.forEach(kf => {
 				let affected = false;
 				kf.data_points.forEach(data_point => {
-					if (data_point.file === old_ref) {
-						if (new_ref !== undefined) data_point.file = new_ref;
+					if (effectRefMatches(data_point.file, old_ref)) {
+						if (stored_ref !== undefined) data_point.file = stored_ref;
 						affected = true;
 					}
 				});
@@ -81,8 +90,8 @@ function findParticleRefUsage(old_ref, new_ref) {
 		let affected = false;
 		controller.states.forEach(state => {
 			state.particles.forEach(particle => {
-				if (particle.file === old_ref) {
-					if (new_ref !== undefined) particle.file = new_ref;
+				if (effectRefMatches(particle.file, old_ref)) {
+					if (stored_ref !== undefined) particle.file = stored_ref;
 					affected = true;
 				}
 			});
@@ -389,6 +398,8 @@ export class ParticleAsset {
 	// where clicking it re-imports the file.
 	static ensureLoaded(ref) {
 		if (!ref) return null;
+		// 引用可能是相对路径或同一文件的不同写法：先规范成资产引用再查表/读盘
+		ref = effectLookupRef(ref);
 		let asset = ParticleAsset.fromRef(ref);
 		if (asset) {
 			asset.loadEmitter();
@@ -684,8 +695,9 @@ export class SoundAsset {
 	}
 	// Resolve any file reference (asset uuid/path or legacy path) to a playable URL
 	static resolvePlaybackSource(ref) {
-		let asset = SoundAsset.fromRef(ref);
-		return asset ? asset.getPlaybackSource() : ref;
+		let resolved = resolveEffectPath(ref);
+		let asset = SoundAsset.fromRef(resolved);
+		return asset ? asset.getPlaybackSource() : resolved;
 	}
 	static fileToSource(file) {
 		if (typeof file.content == 'string' && file.content.startsWith('data:')) {
@@ -734,6 +746,8 @@ export class SoundAsset {
 	}
 	static ensureLoaded(ref) {
 		if (!ref) return null;
+		// 波形与播放源都按规范引用登记，查表方（时间轴/面板）用同样的键
+		ref = effectLookupRef(ref);
 		let asset = SoundAsset.fromRef(ref);
 		if (!asset && isApp && !isUUID(ref) && fs.existsSync(ref)) {
 			asset = SoundAsset.importFromFile({name: pathToName(ref, true), path: ref});

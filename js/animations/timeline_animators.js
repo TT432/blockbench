@@ -1085,7 +1085,7 @@ export class EffectAnimator extends GeneralAnimator {
 				let diff = Timeline.time - kf.time;
 				let i = 0;
 				for (let data_point of kf.data_points) {
-					let particle_effect = data_point.file && Animator.particle_effects[data_point.file]
+					let particle_effect = data_point.file && Animator.particle_effects[data_point.fileLookupRef]
 					if (particle_effect) {
 						let emitter = particle_effect.emitters[kf.uuid + i];
 						if (diff >= 0) {
@@ -1145,7 +1145,8 @@ export class EffectAnimator extends GeneralAnimator {
 			this.sound.forEach(kf => {
 				if (kf.data_points[0].file && !kf.cooldown) {
 					var diff = kf.time - this.animation.time;
-					if (diff < 0 && Timeline.waveforms[kf.data_points[0].file] && Timeline.waveforms[kf.data_points[0].file].duration > -diff) {
+					let waveform = Timeline.waveforms[kf.data_points[0].fileLookupRef];
+					if (diff < 0 && waveform && waveform.duration > -diff) {
 						var media = new Audio(SoundAsset.resolvePlaybackSource(kf.data_points[0].file));
 						media.playbackRate = Math.clamp(Timeline.playback_speed / 100, 0.1, 4.0);
 						media.volume = Math.clamp(settings.volume.value / 100, 0, 1);

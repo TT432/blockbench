@@ -4,6 +4,7 @@ import { clipboard, currentwindow, dialog, fs, ipcRenderer } from '../native_api
 import { Filesystem } from '../file_system';
 import { Easings } from '../lib/easing';
 import { markerColors } from '../marker_colors';
+import { effectLookupRef } from './effect_path';
 
 export class AnimationControllerState {
 	constructor(controller, data = 0) {
@@ -297,7 +298,7 @@ export class AnimationControllerState {
 		
 		if (!this.muted.particle) {
 			this.particles.forEach((particle) => {
-				let particle_effect = particle.file && Animator.particle_effects[particle.file]
+				let particle_effect = particle.file && Animator.particle_effects[effectLookupRef(particle.file)]
 				if (particle_effect) {
 
 					let emitter = particle_effect.emitters[particle.uuid];

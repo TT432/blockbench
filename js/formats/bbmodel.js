@@ -2,6 +2,7 @@ import { invertMolang } from '../util/molang';
 import LZUTF8 from '../lib/lzutf8'
 import { fs } from '../native_apis';
 import VersionUtil from '../util/version_util';
+import { isEffectPathAbsolute } from '../animations/effect_path';
 
 const FORMATV = '5.0';
 
@@ -287,8 +288,14 @@ var codec = new Codec('project', {
 			let path = object[key];
 			if (options.absolute_paths == false) object[key] = undefined;
 			if (!isApp || !Project.save_path || !path) return;
+			// 已经是相对引用（#190 用户填写的形式）：原样保存，随工程目录解析，
+			// 不能在 save_absolute_paths 为 false 时被丢掉。
+			if (!isEffectPathAbsolute(path)) {
+				if (save_relative_paths == false) object[key] = undefined;
+				return;
+			}
 			if (save_absolute_paths == false) object[key] = undefined;
-			if (PathModule.isAbsolute(path) && save_relative_paths) {
+			if (save_relative_paths) {
 				let relative = PathModule.relative(PathModule.dirname(Project.save_path), path);
 				object[relative_key??key] = relative.replace(/\\/g, '/');
 			}
