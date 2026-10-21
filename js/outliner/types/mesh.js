@@ -868,14 +868,29 @@ export class Mesh extends OutlinerElement {
 		this.preview_controller.updateUV(this);
 		return this;
 	}
-	flipSelection(axis, center = 0) {
+	flipSelection(axis, center = 0, in_place = false) {
 		let object_mode = BarItems.selection_mode.value == 'object' || !!Group.first_selected;
 		let selected_vertices = this.getSelectedVertices();
 		const flip = value => center-value+center;
+		// 局部翻转：镜像面取被翻转几何自身的中点所在平面，几何只翻转、不整体平移。
+		// 整体翻转（in_place 为 false）保持原行为：顶点绕对象原点镜像，原点再绕 center 镜像。
+		let vertex_center = 0;
+		if (in_place) {
+			let keys = object_mode ? Object.keys(this.vertices) : selected_vertices;
+			let min = Infinity, max = -Infinity;
+			for (let key of keys) {
+				let coordinate = this.vertices[key]?.[axis];
+				if (typeof coordinate != 'number') continue;
+				min = Math.min(min, coordinate);
+				max = Math.max(max, coordinate);
+			}
+			if (min <= max) vertex_center = (min + max) / 2;
+		}
+		const mirror = value => vertex_center-value+vertex_center;
 		let {vertices, faces} = this;
 		for (let vkey in vertices) {
 			if (object_mode || selected_vertices.includes(vkey)) {
-				vertices[vkey][axis] *= -1;
+				vertices[vkey][axis] = mirror(vertices[vkey][axis]);
 			}
 		}
 		for (let key in faces) {

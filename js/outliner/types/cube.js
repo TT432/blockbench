@@ -523,6 +523,9 @@ export class Cube extends OutlinerElement {
 		this.rotation[(axis+1)%3] *= -1
 		this.rotation[(axis+2)%3] *= -1
 
+		// center 是镜像面在该轴上的坐标：from/to 与枢轴都绕它取反。
+		// 模型几何按“绝对 from/to”渲染（枢轴偏移会被 mesh.position 抵掉），因此镜像结果只由 center 决定；
+		// 旋转过的立方体只有把 center 取成它自己的世界中心，才会只翻转不整体平移（反馈#192 z 轴局部翻转偏移）。
 		var from = this.from[axis]
 		this.from[axis] = center - (this.to[axis] - center)
 		this.to[axis] = center - (from - center)

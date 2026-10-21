@@ -2907,6 +2907,7 @@
 	"menu.animation.reload": "Reload",
 	"menu.animation.unload": "Unload",
 	"menu.animation.flip_keyframes": "Flip Keyframes",
+	"menu.animation.merge_into_above": "Merge into Animation Above",
 	"menu.animation.playing": "Playing",
 
 	"menu.animation_file.save_as": "Save As",

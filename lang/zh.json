@@ -1386,6 +1386,7 @@
 	"menu.animation.start_delay": "启动延迟",
 	"menu.animation.loop_delay": "循环延迟",
 	"menu.animation.flip_keyframes": "翻转关键帧",
+	"menu.animation.merge_into_above": "合并到上方动画",
 	"menu.mobile_keyboard.disable_all": "禁用所有",
 	"panel.keyframe.toggle_uniform_scale": "切换统一比例",
 	"camera_angle.common_isometric_right": "等距右（2:1）",

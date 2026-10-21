@@ -575,12 +575,26 @@ export class SplineMesh extends OutlinerElement {
 		this.preview_controller.updateGeometry(this);
 		return this;
 	}
-	flip(axis, center) {
-		for (let vkey in this.vertices) {
-			this.vertices[vkey][axis] *= -1;
+	flip(axis, center, in_place = false) {
+		if (in_place) {
+			// 局部翻转：镜像面取自身中点所在平面，样条只翻转、不整体平移
+			let min = Infinity, max = -Infinity;
+			for (let vkey in this.vertices) {
+				let coordinate = this.vertices[vkey][axis];
+				if (typeof coordinate != 'number') continue;
+				min = Math.min(min, coordinate);
+				max = Math.max(max, coordinate);
+			}
+			let vertex_center = min <= max ? (min + max) / 2 : 0;
+			for (let vkey in this.vertices) {
+				this.vertices[vkey][axis] = vertex_center - this.vertices[vkey][axis] + vertex_center;
+			}
+		} else {
+			for (let vkey in this.vertices) {
+				this.vertices[vkey][axis] *= -1;
+			}
+			this.origin[axis] *= -1;
 		}
-
-		this.origin[axis] *= -1;
 		this.rotation.forEach((n, i) => {
 			if (i != axis) this.rotation[i] = -n;
 		})

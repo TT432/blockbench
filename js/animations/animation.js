@@ -709,6 +709,154 @@ export const BBAnimation = Animation;
 			}
 		}
 	}
+	/**
+	 * 把 source_animation 的各通道数值叠加合并进 target_animation，然后删除被合并的动画。
+	 * 同一时间码上的数值相加（变换逐轴相加，molang 表达式拼接）。
+	 */
+	function mergeAnimations(source_animation, target_animation) {
+		if (!source_animation || !target_animation || source_animation == target_animation) return false;
+		let animations = [source_animation, target_animation];
+		Undo.initEdit({animations});
+
+		for (let uuid in source_animation.animators) {
+			let source_animator = source_animation.animators[uuid];
+			// Get target animator
+			let target_animator;
+			if (source_animator instanceof BoneAnimator) {
+				let node = source_animator.getElement ? source_animator.getElement() : source_animator.getGroup();
+				target_animator = target_animation.getBoneAnimator(node);
+			} else if (source_animator instanceof EffectAnimator) {
+				if (!target_animation.animators.effects) {
+					target_animation.animators.effects = new EffectAnimator(target_animation);
+				}
+				target_animator = target_animation.animators.effects;
+			}
+			if (!target_animator) continue;
+			for (let channel in source_animator.channels) {
+				let channel_config = source_animator.channels[channel];
+				let source_kfs = source_animator[channel];
+				let target_kfs = target_animator[channel];
+
+				if (source_kfs.length == 0) {
+					continue;
+				} else if (target_kfs.length == 0) {
+					for (let src_kf of source_kfs) {
+						target_animator.createKeyframe(src_kf, src_kf.time, channel, false, false);
+					}
+					continue;
+				}
+
+				let timecodes = {};
+				// Save base values
+				for (let kf of source_kfs) {
+					let key = Math.roundTo(kf.time, 2);
+					if (!timecodes[key]) timecodes[key] = {};
+					timecodes[key].source_kf = kf;
+					timecodes[key].time = kf.time;
+				}
+				for (let kf of target_kfs) {
+					let key = Math.roundTo(kf.time, 2);
+					if (!timecodes[key]) timecodes[key] = {};
+					timecodes[key].target_kf = kf;
+					timecodes[key].time = kf.time;
+				}
+				if (source_animator.interpolate) {
+					// Interpolate in between values before they become affected by changes
+					for (let key in timecodes) {
+						let data = timecodes[key];
+						Timeline.time = data.time;
+						if (!data.target_kf) {
+							data.target_values = target_animator.interpolate(channel, true);
+						}
+						if (!data.source_kf) {
+							data.source_values = source_animator.interpolate(channel, true);
+						}
+					}
+				}
+				function mergeValues(a, b) {
+					if (!a) return b;
+					if (!b) return a;
+					if (typeof a == 'number' && typeof b == 'number') {
+						return a + b;
+					}
+					return '(' + a.toString() + ') + (' + b.toString() + ')';
+				}
+				let keys = Object.keys(timecodes).sort((a, b) => a.time - b.time);
+				for (let key of keys) {
+					let {source_kf, target_kf, target_values, source_values, time} = timecodes[key];
+					Timeline.time = time;
+					if ((source_kf || target_kf).transform) {
+						if (source_kf && target_kf) {
+							for (let axis of 'xyz') {
+								let source_val = source_kf.get(axis);
+								let target_val = target_kf.get(axis);
+								target_kf.set(axis, mergeValues(target_val, source_val));
+							}
+						} else if (source_kf) {
+							let target_kf = target_animator.createKeyframe(null, time, channel, false, false);
+							let i = 0;
+							for (let axis of 'xyz') {
+								let source_val = source_kf.get(axis);
+								let target_val = target_values[i] ?? 0;
+								target_kf.set(axis, mergeValues(target_val, source_val));
+								i++;
+							}
+
+						} else if (target_kf) {
+							let i = 0;
+							for (let axis of 'xyz') {
+								let source_val = source_values[i] ?? 0;
+								let target_val = target_kf.get(axis);
+								target_kf.set(axis, mergeValues(target_val, source_val));
+								i++;
+							}
+						}
+					} else if (source_animator instanceof EffectAnimator) {
+						if (source_kf && target_kf) {
+							if (channel == 'timeline' ) {
+								let source = source_kf.data_points[0].script;
+								let target = target_kf.data_points[0].script;
+								target_kf.data_points[0].script = (source && target) ? (target + '\n' + source) : (source || target);
+							} else if (channel_config?.max_data_points > 1) {
+								for (let src_kfdp of source_kf.data_points) {
+									let new_dp = new KeyframeDataPoint(target_kf);
+									new_dp.extend(src_kfdp);
+									target_kf.data_points.push(new_dp);
+								}
+							}
+
+						} else if (source_kf) {
+							let new_kf = target_animator.createKeyframe(source_kf, source_kf.time, source_kf.channel, false, false);
+							Property.resetUniqueValues(Keyframe, new_kf);
+						}
+					}
+				}
+			}
+		}
+		animations.remove(source_animation);
+		source_animation.remove(false);
+		target_animation.select();
+
+		Undo.finishEdit('Merge animations');
+		return true;
+	}
+	/**
+	 * 动画列表里显示在该动画正上方的那一条；面板未挂载时退回 Animation.all 顺序。
+	 */
+	function getAnimationAbove(animation) {
+		let order = [];
+		let files = Panels.animations?.vue?.files;
+		if (files) {
+			for (let key in files) {
+				for (let item of (files[key].animations || [])) {
+					if (item instanceof Animation) order.push(item);
+				}
+			}
+		}
+		if (!order.includes(animation)) order = Animation.all.slice();
+		let index = order.indexOf(animation);
+		return index > 0 ? order[index - 1] : null;
+	}
 	Animation.prototype.menu = new Menu([
 		'copy',
 		'paste',
@@ -720,6 +868,15 @@ export const BBAnimation = Animation;
 			{name: 'menu.animation.loop.loop', icon: animation => (animation.loop == 'loop' ? 'far.fa-dot-circle' : 'far.fa-circle'), click(animation) {animation.setLoop('loop', true)}},
 		]},
 		'change_animation_speed',
+		{
+			name: 'menu.animation.merge_into_above',
+			icon: 'merge_type',
+			condition: (animation) => Modes.animate && !!getAnimationAbove(animation),
+			click(animation) {
+				let target = getAnimationAbove(animation);
+				if (target) mergeAnimations(animation, target);
+			}
+		},
 		new MenuSeparator('manage'),
 		{
 			name: 'menu.animation.save',
@@ -1347,132 +1504,9 @@ BARS.defineActions(function() {
 				}).show();
 			})
 			if (!options) return;
-			
+
 			let target_animation = Animation.all.find(anim => anim.uuid == options.animation);
-			let animations = [source_animation, target_animation];
-			Undo.initEdit({animations});
-
-
-			for (let uuid in source_animation.animators) {
-				let source_animator = source_animation.animators[uuid];
-				// Get target animator
-				let target_animator;
-				if (source_animator instanceof BoneAnimator) {
-					let node = source_animator.getElement ? source_animator.getElement() : source_animator.getGroup();
-					target_animator = target_animation.getBoneAnimator(node);
-				} else if (source_animator instanceof EffectAnimator) {
-					if (!target_animation.animators.effects) {
-						target_animation.animators.effects = new EffectAnimator(target_animation);
-					}
-					target_animator = target_animation.animators.effects;
-				}
-				if (!target_animator) continue;
-				for (let channel in source_animator.channels) {
-					let channel_config = source_animator.channels[channel];
-					let source_kfs = source_animator[channel];
-					let target_kfs = target_animator[channel];
-
-					if (source_kfs.length == 0) {
-						continue;
-					} else if (target_kfs.length == 0) {
-						for (let src_kf of source_kfs) {
-							target_animator.createKeyframe(src_kf, src_kf.time, channel, false, false);
-						}
-						continue;
-					}
-
-					let timecodes = {};
-					// Save base values
-					for (let kf of source_kfs) {
-						let key = Math.roundTo(kf.time, 2);
-						if (!timecodes[key]) timecodes[key] = {};
-						timecodes[key].source_kf = kf;
-						timecodes[key].time = kf.time;
-					}
-					for (let kf of target_kfs) {
-						let key = Math.roundTo(kf.time, 2);
-						if (!timecodes[key]) timecodes[key] = {};
-						timecodes[key].target_kf = kf;
-						timecodes[key].time = kf.time;
-					}
-					if (source_animator.interpolate) {
-						// Interpolate in between values before they become affected by changes
-						for (let key in timecodes) {
-							let data = timecodes[key];
-							Timeline.time = data.time;
-							if (!data.target_kf) {
-								data.target_values = target_animator.interpolate(channel, true);
-							}
-							if (!data.source_kf) {
-								data.source_values = source_animator.interpolate(channel, true);
-							}
-						}
-					}
-					function mergeValues(a, b) {
-						if (!a) return b;
-						if (!b) return a;
-						if (typeof a == 'number' && typeof b == 'number') {
-							return a + b;
-						}
-						return '(' + a.toString() + ') + (' + b.toString() + ')';
-					}
-					let keys = Object.keys(timecodes).sort((a, b) => a.time - b.time);
-					for (let key of keys) {
-						let {source_kf, target_kf, target_values, source_values, time} = timecodes[key];
-						Timeline.time = time;
-						if ((source_kf || target_kf).transform) {
-							if (source_kf && target_kf) {
-								for (let axis of 'xyz') {
-									let source_val = source_kf.get(axis);
-									let target_val = target_kf.get(axis);
-									target_kf.set(axis, mergeValues(target_val, source_val));
-								}
-							} else if (source_kf) {
-								let target_kf = target_animator.createKeyframe(null, time, channel, false, false);
-								let i = 0;
-								for (let axis of 'xyz') {
-									let source_val = source_kf.get(axis);
-									let target_val = target_values[i] ?? 0;
-									target_kf.set(axis, mergeValues(target_val, source_val));
-									i++;
-								}
-
-							} else if (target_kf) {
-								let i = 0;
-								for (let axis of 'xyz') {
-									let source_val = source_values[i] ?? 0;
-									let target_val = target_kf.get(axis);
-									target_kf.set(axis, mergeValues(target_val, source_val));
-									i++;
-								}
-							}
-						} else if (source_animator instanceof EffectAnimator) {
-							if (source_kf && target_kf) {
-								if (channel == 'timeline' ) {
-									let source = source_kf.data_points[0].script;
-									let target = target_kf.data_points[0].script;
-									target_kf.data_points[0].script = (source && target) ? (target + '\n' + source) : (source || target);
-								} else if (channel_config?.max_data_points > 1) {
-									for (let src_kfdp of source_kf.data_points) {
-										let new_dp = new KeyframeDataPoint(target_kf);
-										new_dp.extend(src_kfdp);
-										target_kf.data_points.push(new_dp);
-									}
-								}
-								
-							} else if (source_kf) {
-								let new_kf = target_animator.createKeyframe(source_kf, source_kf.time, source_kf.channel, false, false);
-								Property.resetUniqueValues(Keyframe, new_kf);
-							}
-						}
-					}
-				}
-			}
-			animations.remove(source_animation);
-			source_animation.remove(false);
-			target_animation.select();
-			
-			Undo.finishEdit('Merge animations');
+			mergeAnimations(source_animation, target_animation);
 		}
 	})
 	let optimize_animation_mode = 'selected_animation';
