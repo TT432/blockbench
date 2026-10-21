@@ -46,11 +46,13 @@
  * Provides access to global Javascript/DOM variables that are overwritten by Blockbench's own variables
  */
 declare const NativeGlobals: {
+	/** The native DOM `Animation` constructor. */
 	Animation: {
 		new (
 			effect?: AnimationEffect | null | undefined,
 			timeline?: AnimationTimeline | null | undefined
 		): Animation
+		/** The prototype of the native `Animation` interface. */
 		prototype: Animation
 	}
 }
@@ -59,13 +61,21 @@ declare const NativeGlobals: {
  * Shader support
  */
 declare module "*.glsl" {
+	/** The shader source code. */
 	const value: string;
 	export default value;
 }
+/**
+ * Theme files imported as modules.
+ */
 declare module "*.bbtheme" {
+	/** The CSS source of the theme. */
 	const value: string | any;
 	export default value;
 }
+/** A PNG image asset module. */
 declare module "*.png"
+/** A WebP image asset module. */
 declare module "*.webp"
+/** A JPEG image asset module. */
 declare module "*.jpeg"

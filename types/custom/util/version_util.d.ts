@@ -1,12 +1,34 @@
+/**
+ * A version string split into its numeric parts.
+ */
 interface ParsedVersion {
+	/**
+	 * The original version string.
+	 */
 	string: string
+	/**
+	 * The dot-separated numbers of the main version.
+	 */
 	version: number[]
+	/**
+	 * The dot-separated numbers of the beta version, if present.
+	 */
 	beta?: number[]
 }
 
+/**
+ * A comparison operator accepted by `VersionUtil.compare`.
+ */
 type Operator = '<=' | '==' | '>=' | '>' | '<'
 
+/**
+ * Utilities to parse, compare and format version strings.
+ */
 declare namespace VersionUtil {
+	/**
+	 * Parses a version string such as `1.2.3` or `1.2.3-beta.4`.
+	 * @param versionString The version string to parse.
+	 */
 	function parse(versionString: string): ParsedVersion
 
 	/**
@@ -27,6 +49,12 @@ declare namespace VersionUtil {
 	function format(version: string): string
 }
 
+/**
+ * The global window interface.
+ */
 declare interface Window {
+	/**
+	 * The version utilities, exposed on the window.
+	 */
 	VersionUtil: typeof VersionUtil
 }
