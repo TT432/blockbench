@@ -11,7 +11,7 @@
 */
 
 import { fs, PathModule, NodeBuffer } from "../native_apis";
-import { resolveEffectPath, effectLookupRef, toEffectRef } from "./effect_path";
+import { resolveEffectPath, effectLookupRef } from "./effect_path";
 
 // 资源路径归一化键：Windows 上文件系统不区分大小写、两种分隔符等价，
 // 引用字符串（动画 JSON 常见 `/`）与解析出的资产路径（PathModule 产 `\`）
@@ -68,8 +68,6 @@ function getAudioMimeType(name) {
 function findParticleRefUsage(old_ref, new_ref) {
 	let keyframes = [];
 	let controllers = [];
-	// 改指后仍按工程目录内的相对引用保存（#190），避免新文件被写死成绝对路径
-	let stored_ref = new_ref === undefined ? undefined : toEffectRef(new_ref);
 	Animation.all.forEach(animation => {
 		for (let uuid in animation.animators) {
 			let animator = animation.animators[uuid];
@@ -78,7 +76,7 @@ function findParticleRefUsage(old_ref, new_ref) {
 				let affected = false;
 				kf.data_points.forEach(data_point => {
 					if (effectRefMatches(data_point.file, old_ref)) {
-						if (stored_ref !== undefined) data_point.file = stored_ref;
+						if (new_ref !== undefined) data_point.file = new_ref;
 						affected = true;
 					}
 				});
@@ -91,7 +89,7 @@ function findParticleRefUsage(old_ref, new_ref) {
 		controller.states.forEach(state => {
 			state.particles.forEach(particle => {
 				if (effectRefMatches(particle.file, old_ref)) {
-					if (stored_ref !== undefined) particle.file = stored_ref;
+					if (new_ref !== undefined) particle.file = new_ref;
 					affected = true;
 				}
 			});
@@ -178,6 +176,16 @@ export class ParticleAsset {
 			effect.config.updateTexture();
 		}
 		return effect;
+	}
+	// 贴图按 dataURL 嵌入工程；只有路径、没有 dataURL 的老工程补读一次。
+	// （粒子 json 还在磁盘上时曾把内嵌贴图清掉，重开工程后贴图丢失）
+	loadTextureFromPath() {
+		if (this.texture || !this.texture_path || !isApp || !fs.existsSync(this.texture_path)) return;
+		try {
+			this.texture = 'data:image/png;base64,' + fs.readFileSync(this.texture_path).toString('base64');
+		} catch (err) {
+			console.warn('Could not embed particle texture', this.texture_path, err);
+		}
 	}
 	// Try to locate the particle's texture image on disk (same logic as the
 	// WinterskyScene fetchTexture callback) and embed it as dataURL.
@@ -524,14 +532,30 @@ export class SoundAsset {
 	extend(data) {
 		if (typeof data.name == 'string') this.name = data.name;
 		if (typeof data.path == 'string') this.path = data.path;
-		if (typeof data.source == 'string') this.source = data.source;
+		if (typeof data.source == 'string' && data.source !== this.source) {
+			this.source = data.source;
+			// 音频源换了：旧波形（时长/采样）作废；登记由 add()/ensureWaveform() 负责
+			// （构造期资产还没进资产表，此时登记会拿到解析不出的路径）
+			delete Timeline.waveforms[this.getRef()];
+		}
 		if (typeof data.saved == 'boolean') this.saved = data.saved;
 		return this;
+	}
+	// 波形（时长 + 采样）由音频源派生：时间轴波形、音频滚动（playAudioStutter）
+	// 与「播放头之前已开始的音频」都依赖它。源就绪即登记，重开工程后不依赖
+	// 上一次会话的缓存。
+	ensureWaveform() {
+		if (!this.source) return;
+		let ref = this.getRef();
+		if (!Timeline.waveforms[ref]) Timeline.visualizeAudioFile(ref).catch?.(() => {});
 	}
 	add(undo) {
 		if (this.path) {
 			let existing = SoundAsset.all.find(a => a !== this && a.path && sameAssetPath(a.path, this.path));
-			if (existing) return existing;
+			if (existing) {
+				existing.ensureWaveform();
+				return existing;
+			}
 		}
 		if (undo === true) {
 			Undo.initEdit({sounds: []});
@@ -540,6 +564,7 @@ export class SoundAsset {
 		} else {
 			SoundAsset.all.push(this);
 		}
+		this.ensureWaveform();
 		Blockbench.dispatchEvent('add_sound_asset', {asset: this});
 		return this;
 	}
@@ -593,7 +618,7 @@ export class SoundAsset {
 				this.saved = false;
 			}
 			delete Timeline.waveforms[this.getRef()];
-			Timeline.visualizeAudioFile(this.getRef());
+			this.ensureWaveform();
 			Undo.finishEdit('Change sound file', {sounds: [this]});
 		})
 	}
@@ -730,9 +755,8 @@ export class SoundAsset {
 		let source = SoundAsset.fileToSource(file);
 		if (!source) return null;
 		if (existing) {
-			existing.source = source;
-			existing.saved = true;
-			delete Timeline.waveforms[existing.getRef()];
+			existing.extend({source, saved: true});
+			existing.ensureWaveform();
 			return existing;
 		}
 		let asset = new SoundAsset({
@@ -861,7 +885,6 @@ BARS.defineActions(function() {
 					let asset = SoundAsset.importFromFile(f);
 					if (asset) {
 						added.safePush(asset);
-						Timeline.visualizeAudioFile(asset.getRef());
 					}
 				});
 				Undo.finishEdit('Import sound', {sounds: added});
@@ -883,7 +906,6 @@ Blockbench.addDragHandler(
 			let asset = SoundAsset.importFromFile(f);
 			if (asset) {
 				added.safePush(asset);
-				Timeline.visualizeAudioFile(asset.getRef());
 			}
 		});
 		Undo.finishEdit('Import sound', {sounds: added});
@@ -1095,7 +1117,6 @@ Interface.definePanels(function() {
 							let asset = SoundAsset.importFromFile(f);
 							if (asset) {
 								added.safePush(asset);
-								Timeline.visualizeAudioFile(asset.getRef());
 							}
 						});
 						Undo.finishEdit('Import sound', {sounds: added});

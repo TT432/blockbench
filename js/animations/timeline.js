@@ -888,7 +888,7 @@ export const Timeline = {
 		let max = Math.max(...samples);
 		samples.forEach((v, i) => samples[i] = v / max);
 		
-		Timeline.vue.$forceUpdate();
+		if (Timeline.vue) Timeline.vue.$forceUpdate();
 
 		return samples;
 	},
