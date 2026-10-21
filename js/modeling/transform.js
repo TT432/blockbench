@@ -262,6 +262,21 @@ export function mirrorSelected(axis) {
 		autoFixMeshEdit()
 	}
 }
+/**
+ * 立方体自身中心沿某轴的坐标（父级空间，含自身旋转与缩放）。
+ * 局部翻转以该平面镜像，旋转过的立方体才会只翻转、不整体平移（反馈#192）。
+ */
+function getCubeCenterAlongAxis(cube, axis) {
+	if (!cube.mesh) return Math.lerp(cube.from[axis], cube.to[axis], 0.5);
+	let offset = new THREE.Vector3(
+		(cube.from[0] + cube.to[0]) / 2 - cube.origin[0],
+		(cube.from[1] + cube.to[1]) / 2 - cube.origin[1],
+		(cube.from[2] + cube.to[2]) / 2 - cube.origin[2],
+	);
+	offset.multiply(cube.mesh.scale);
+	offset.applyQuaternion(cube.mesh.quaternion);
+	return cube.origin[axis] + offset.getComponent(axis);
+}
 export function mirrorSelectedInPlace(axis) {
 	if (!Modes.edit) return;
 	if (!(Outliner.selected.length || Group.first_selected)) return;
@@ -288,11 +303,11 @@ export function mirrorSelectedInPlace(axis) {
 	}
 	Outliner.selected.forEach(function(obj) {
 		if (obj instanceof Mesh) {
-			obj.flipSelection(axis, obj.origin[axis], false);
+			obj.flipSelection(axis, obj.origin[axis], true);
 		} else if (obj instanceof Cube) {
-			obj.flip(axis, Math.lerp(obj.from[axis], obj.to[axis], 0.5), false);
+			obj.flip(axis, getCubeCenterAlongAxis(obj, axis), false);
 		} else {
-			obj.flip(axis, obj.origin[axis], false);
+			obj.flip(axis, obj.origin[axis], true);
 		}
 	})
 	updateSelection();
