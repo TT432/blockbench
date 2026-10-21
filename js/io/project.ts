@@ -659,7 +659,8 @@ new Property(ModelProject, 'string', 'multi_file_ruleset', {
 new Property(ModelProject, 'array', 'variable_placeholder_buttons', {
 	exposed: false,
 });
-// 项目自定义 molang（n./new. 前缀中间格式），元素：{uuid, name, params: string[], body: string}
+// 项目自定义 molang（n./new. 前缀中间格式），
+// 元素：{uuid, name, description, params: string[], outputs: string[], locals: string[], body}
 new Property(ModelProject, 'array', 'custom_molangs', {
 	exposed: false,
 });

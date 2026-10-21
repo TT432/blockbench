@@ -4,6 +4,7 @@ import Wintersky from 'wintersky';
 import { Mode } from "../modes";
 import { clipboard, fs } from "../native_apis";
 import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
+import { getRegisteredCustomMolangs } from "../util/molang";
 import { BoneBatcher } from "../preview/bone_batch";
 import './mirror_animating'
 
@@ -1416,6 +1417,7 @@ Interface.definePanels(function() {
 					'create_variable_placeholder',
 					'view_built_in_variables',
 					'create_custom_molang',
+					'open_molang_manual',
 				]
 			})
 		],
@@ -1426,8 +1428,19 @@ Interface.definePanels(function() {
 				text: '',
 				buttons: [],
 				custom_molangs: [],
+				registered_custom_molangs: [],
 				custom_molang_variables: []
 			}},
+			computed: {
+				// 插件注册的自定义 molang：同名（忽略大小写）时项目定义优先，故已有的不重复列出
+				plugin_molangs() {
+					if (!this.registered_custom_molangs.length) return [];
+					return this.registered_custom_molangs.filter(def => {
+						if (!def || !def.name) return false;
+						return !this.custom_molangs.some(project_def => project_def && project_def.name && project_def.name.toLowerCase() == def.name.toLowerCase());
+					});
+				}
+			},
 			created() {
 				// 自定义 molang 列表/变量表引用 Project 属性数组（同一引用，外部修改自动反映）；
 				// 项目切换/新建/加载/定义增删时重取引用并刷新变量高亮
@@ -1585,11 +1598,14 @@ Interface.definePanels(function() {
 				},
 				refreshCustomMolang() {
 					this.custom_molangs = (typeof Project != 'undefined' && Project) ? Project.custom_molangs : [];
+					this.registered_custom_molangs = getRegisteredCustomMolangs();
 					this.custom_molang_variables = (typeof Project != 'undefined' && Project) ? Project.custom_molang_variables : [];
 					if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
 				},
 				// 自定义 molang 条目右键菜单：修改/删除（新建入口在工具栏，对话框仅新建）
+				// 插件注册的定义只读：右键不提供任何修改入口
 				customMolangContextMenu(def, event) {
+					if (!def || def.readonly) return;
 					new Menu([
 						{
 							name: 'dialog.custom_molang.edit_entry',
@@ -1658,11 +1674,23 @@ Interface.definePanels(function() {
 						</li>
 					</ul>
 
-					<template v-if="custom_molangs.length">
+					<template v-if="custom_molangs.length || plugin_molangs.length">
 						<label class="custom_molang_section_label">${tl('panel.variable_placeholders.custom_molangs')}</label>
 						<ul id="custom_molang_list">
-							<li v-for="def in custom_molangs" :key="def.uuid" @contextmenu="customMolangContextMenu(def, $event)" :title="def.body">
-								<span class="custom_molang_prefix">new.</span><span class="custom_molang_def_name">{{ def.name }}</span><span class="custom_molang_def_params">({{ def.params.join(', ') }})</span>
+							<li v-for="def in custom_molangs" :key="def.uuid" @contextmenu="customMolangContextMenu(def, $event)" :title="def.description || def.body">
+								<div class="custom_molang_def_signature">
+									<span class="custom_molang_prefix">new.</span><span class="custom_molang_def_name">{{ def.name }}</span><span class="custom_molang_def_params">({{ def.params.join(', ') }})</span>
+									<span class="custom_molang_def_outputs" v-if="def.outputs && def.outputs.length">&rarr; ({{ def.outputs.join(', ') }})</span>
+								</div>
+								<div class="custom_molang_def_description" v-if="def.description">{{ def.description }}</div>
+							</li>
+							<li v-for="def in plugin_molangs" :key="def.uuid" class="plugin_definition" @contextmenu.prevent :title="def.description || def.body">
+								<div class="custom_molang_def_signature">
+									<span class="custom_molang_prefix">new.</span><span class="custom_molang_def_name">{{ def.name }}</span><span class="custom_molang_def_params">({{ def.params.join(', ') }})</span>
+									<span class="custom_molang_def_outputs" v-if="def.outputs && def.outputs.length">&rarr; ({{ def.outputs.join(', ') }})</span>
+									<i class="material-icons custom_molang_lock" :title="'${tl('panel.variable_placeholders.custom_molang_readonly')}'">lock</i>
+								</div>
+								<div class="custom_molang_def_description" v-if="def.description">{{ def.description }}</div>
 							</li>
 						</ul>
 					</template>

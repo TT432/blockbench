@@ -626,6 +626,7 @@ export const MenuBar = {
 				Blockbench.openLink('https://my.feishu.cn/base/DXG0bNakPaFqP0sTkSIcKygknZg');
 			}},
 			'community_features',
+			'molang_manual',
 			'community_changelog',
 			new MenuSeparator('backups'),
 			'view_backups',
