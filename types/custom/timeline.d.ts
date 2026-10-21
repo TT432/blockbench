@@ -1,14 +1,35 @@
 /// <reference types="./blockbench"/>
+/**
+ * Timeline state and controls of the animation panel.
+ */
 declare namespace Timeline {
+	/**
+	 * Animators currently listed in the timeline.
+	 */
 	const animators: GeneralAnimator[]
+	/**
+	 * Keyframes that are currently selected.
+	 */
 	const selected: BBKeyframe[]
+	/**
+	 * Audio elements that are currently played by sound keyframes.
+	 */
 	const playing_sounds: any[]
+	/**
+	 * Playback speed in percent.
+	 */
 	let playback_speed: number
 	/**
 	 * Current time
 	 */
 	let time: number
+	/**
+	 * Whether the timeline is currently playing.
+	 */
 	let playing: boolean
+	/**
+	 * Vue instance of the timeline panel.
+	 */
 	let vue: Vue
 
 	/**
@@ -59,8 +80,21 @@ declare namespace Timeline {
 	 */
 	function pause(): void
 
+	/**
+	 * All keyframes of the timeline.
+	 */
 	let keyframes: BBKeyframe[]
+	/**
+	 * Context menu of the timeline.
+	 */
 	let menu: Menu
+	/**
+	 * Opens the context menu of the timeline.
+	 * @param event Mouse event that opened the menu.
+	 */
 	function showMenu(event: Event): void
+	/**
+	 * Animator that is currently selected in the timeline.
+	 */
 	let selected_animator: GeneralAnimator | null
 }
