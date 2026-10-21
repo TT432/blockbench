@@ -5,8 +5,8 @@
 	绝对路径、资产 uuid。需要访问文件系统或资产表时才解析成绝对路径，所以 .bbmodel 里
 	存的是可随工程目录移动的相对引用，输入框也不会被改写成绝对路径。
 
-	Windows 上 node 把 `\x`、`/x` 当成盘符根目录的绝对路径，但效果引用的语义是
-	「bbmodel 同目录」，所以单个前导分隔符按相对处理（`\\server\share` 仍是 UNC 绝对路径）。
+	“相对”完全按操作系统语义判断：Windows 上以单个 `\` 或 `/` 开头（`\x`、`/x`）是
+	盘符根目录的绝对路径，不按工程目录解析（与 node 的 path.isAbsolute 一致）。
 */
 
 import { PathModule } from "../native_apis";
@@ -17,41 +17,22 @@ export function getEffectPathBase() {
 	return path ? PathModule.dirname(path) : '';
 }
 
-// 是否为真正的绝对路径（盘符根写法 `\x` / `/x` 在 Windows 上算相对，见文件头）
+// 是否为绝对路径（按操作系统语义，与 PathModule.isAbsolute 一致）
 export function isEffectPathAbsolute(ref) {
-	if (!ref || typeof ref != 'string') return false;
-	if (typeof Blockbench != 'undefined' && Blockbench.platform == 'win32' && /^[\\/](?![\\/])/.test(ref)) {
-		return false;
-	}
-	return PathModule.isAbsolute(ref);
+	return typeof ref == 'string' && PathModule.isAbsolute(ref);
 }
 
-// 引用 → 绝对路径。资产 uuid、web 端、未保存工程（无基准）时原样返回。
+// 引用 → 绝对路径。绝对路径、资产 uuid、web 端、未保存工程（无基准）时原样返回。
 export function resolveEffectPath(ref) {
 	if (!ref || typeof ref != 'string') return ref;
-	if (isUUID(ref)) return ref;
-	if (!isApp) return ref;
-	if (!isEffectPathAbsolute(ref)) {
-		let base = getEffectPathBase();
-		if (!base) return ref;
-		// 逐段拼接而不是直接 resolve：`.\x`、`\x`、`/x`、`sub\x` 在任何平台上
-		// 都按工程目录相对处理（`.` 与空段丢弃，`..` 保留由 join 归一）
-		let parts = ref.split(/[\\/]+/).filter(part => part && part != '.');
-		return PathModule.join(base, ...parts);
-	}
-	return PathModule.normalize(ref);
-}
-
-// 绝对路径 → 工程目录内的相对引用。工程目录外的文件、未保存的工程保持绝对路径。
-export function toEffectRef(file_path) {
-	if (!file_path || typeof file_path != 'string' || !isApp || !isEffectPathAbsolute(file_path)) return file_path;
+	if (isEffectPathAbsolute(ref) || isUUID(ref) || !isApp) return ref;
 	let base = getEffectPathBase();
-	if (!base) return file_path;
-	let relative = PathModule.relative(base, PathModule.normalize(file_path));
-	if (!relative || relative == '..' || relative.startsWith('..' + PathModule.sep) || isEffectPathAbsolute(relative)) {
-		return file_path;
-	}
-	return relative.replace(/\\/g, '/');
+	if (!base) return ref;
+	// 逐段拼接而不是直接 resolve：`.\x`、`sub\x`、`../x` 在任何平台上都按工程目录
+	// 相对处理（`.` 与空段丢弃，`..` 由 join 归一）
+	let parts = ref.split(/[\\/]+/).filter(part => part && part != '.');
+	if (!parts.length) return ref;
+	return PathModule.join(base, ...parts);
 }
 
 // 资产表/预览查表用的规范引用：同一文件可能被写成不同大小写或分隔符，已加载的资产

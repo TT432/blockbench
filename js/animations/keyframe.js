@@ -2,7 +2,7 @@ import { markerColors } from "../marker_colors";
 import { clipboard } from "../native_apis";
 import { invertMolang, negateMolang, processMolangReturn } from "../util/molang";
 import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
-import { getEffectPathBase, isEffectPathAbsolute, resolveEffectPath, toEffectRef, effectLookupRef } from "./effect_path";
+import { getEffectPathBase, isEffectPathAbsolute, resolveEffectPath, effectLookupRef } from "./effect_path";
 
 export class KeyframeDataPoint {
 	constructor(keyframe) {
@@ -1517,7 +1517,7 @@ Interface.definePanels(function() {
 							let existing = isApp && files[0].path && ParticleAsset.all.find(a => a.path === files[0].path);
 							Undo.initEdit({keyframes: [keyframe], particles: existing ? [existing] : []})
 							let asset = ParticleAsset.importFromFile(files[0]);
-							data_point.file = toEffectRef(asset.getRef());
+							data_point.file = asset.getRef();
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
 							Undo.finishEdit('Change keyframe particle file', {particles: [asset]});
 
@@ -1541,9 +1541,8 @@ Interface.definePanels(function() {
 								Undo.cancelEdit();
 								return;
 							}
-							data_point.file = toEffectRef(asset.getRef());
+							data_point.file = asset.getRef();
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().replace(/\.[a-z]+$/, '').replace(/[^a-z0-9._]+/g, '');
-							Timeline.visualizeAudioFile(asset.getRef());
 							Undo.finishEdit('Change keyframe audio file', {sounds: [asset]})
 						})
 					}

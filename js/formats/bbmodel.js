@@ -296,7 +296,11 @@ var codec = new Codec('project', {
 			}
 			if (save_absolute_paths == false) object[key] = undefined;
 			if (save_relative_paths) {
-				let relative = PathModule.relative(PathModule.dirname(Project.save_path), path);
+				let dir = PathModule.dirname(Project.save_path);
+				// 盘符根写法（`\x`、`/x`）按工程所在盘符解析：node 的 relative() 会拿
+				// 进程工作目录补盘符，dev 版与便携包工作目录不同会写出不同结果
+				let absolute = PathModule.resolve(PathModule.parse(dir).root, path);
+				let relative = PathModule.relative(dir, absolute);
 				object[relative_key??key] = relative.replace(/\\/g, '/');
 			}
 		}
@@ -546,17 +550,20 @@ var codec = new Codec('project', {
 						if (disk_json && disk_json.particle_effect) {
 							asset.content = disk_json;
 							asset.saved = true;
-							asset.texture = '';
-							asset.texture_path = '';
+							// 内嵌贴图来自工程（用户导入的那张），重读 json 时不能丢
+							asset.loadTextureFromPath();
 							asset.loadEmitter();
 							asset.autoResolveTexture();
 						} else {
+							asset.loadTextureFromPath();
 							asset.loadEmitter();
 						}
 					} catch (err) {
+						asset.loadTextureFromPath();
 						asset.loadEmitter();
 					}
 				} else {
+					asset.loadTextureFromPath();
 					asset.loadEmitter();
 				}
 				asset.add(false);
