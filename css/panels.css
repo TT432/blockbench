@@ -1575,16 +1575,21 @@
 	}
 	#custom_molang_list li {
 		display: flex;
-		align-items: baseline;
+		flex-direction: column;
 		padding: 1px 8px;
-		height: 24px;
+		min-height: 24px;
 		overflow: hidden;
-		white-space: nowrap;
 		cursor: default;
 	}
 	#custom_molang_list li:hover {
 		background-color: var(--color-ui);
 		color: var(--color-light);
+	}
+	#custom_molang_list .custom_molang_def_signature {
+		display: flex;
+		align-items: baseline;
+		white-space: nowrap;
+		overflow: hidden;
 	}
 	#custom_molang_list .custom_molang_prefix {
 		color: var(--color-accent);
@@ -1594,6 +1599,26 @@
 	#custom_molang_list .custom_molang_def_params {
 		color: var(--color-subtle_text);
 		margin-left: 2px;
+	}
+	#custom_molang_list .custom_molang_def_outputs {
+		color: var(--color-accent);
+		margin-left: 4px;
+		user-select: none;
+	}
+	#custom_molang_list .custom_molang_def_description {
+		color: var(--color-subtle_text);
+		font-size: 0.88em;
+		line-height: 1.45;
+		padding-bottom: 2px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	#custom_molang_list .custom_molang_lock {
+		margin-left: auto;
+		font-size: 14px;
+		color: var(--color-subtle_text);
+		user-select: none;
 	}
 	ul#custom_molang_variables {
 		flex-shrink: 0;

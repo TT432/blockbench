@@ -1,4 +1,5 @@
 import { isStringNumber } from "../util/math_util"
+import { getCustomMolangDefinitions } from "../util/molang"
 import { EffectAnimator } from "./timeline_animators"
 
 // Per-frame memoization for query.all/any_animations_finished: every keyframe
@@ -1940,6 +1941,21 @@ export function sortAutocompleteResults(results, incomplete) {
 			}).addQueryGetter('temporary_variables', (expression, incomplete) => {
 				const variables = getTemporaryMolangVariables(expression, [incomplete])
 				return [...variables].map((v) => ({ id: v }))
+			})
+		)
+		.addNamespace(
+			new MolangAutocomplete.Namespace({
+				id: 'new',
+				shorthand: 'n',
+			}).addQueryGetter('custom_molang_definitions', () => {
+				// 项目定义与插件注册定义（同名时项目优先）；输出变量以 >名字 提示
+				return getCustomMolangDefinitions().map((definition) => ({
+					id: definition.name,
+					arguments: [
+						...(definition.params || []),
+						...(definition.outputs || []).map((output) => `>${output}`),
+					],
+				}))
 			})
 		)
 

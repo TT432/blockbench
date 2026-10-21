@@ -7,6 +7,7 @@ import { Filesystem } from "./file_system";
 import { MessageBoxOptions } from "./interface/dialog";
 import { currentwindow, electron, shell, SystemInfo } from "./native_apis";
 import { ToastNotification, ToastNotificationOptions } from "./interface/toast_notification";
+import { registerCustomMolang as registerCustomMolangDefinition, CustomMolangDefinition, CustomMolangDefinitionOptions } from "./util/molang";
 
 declare const appVersion: string;
 declare let Format: ModelFormat
@@ -304,6 +305,17 @@ export const Blockbench = {
 	// Globals
 	Format: 0 as (ModelFormat | number),
 	Project: 0 as (ModelProject | number),
+	/**
+	 * Registers a plugin-provided custom Molang definition (`new.name(args)`).
+	 * The definition behaves exactly like a project custom Molang (same name/param/output/local
+	 * validation and the same expansion path) but is read-only in the UI and is not saved with
+	 * the project. It is removed automatically when the registering plugin unloads.
+	 * Returns the registered definition (with `delete()`), or `null` if validation failed or the
+	 * name is already taken.
+	 */
+	registerCustomMolang(definition: CustomMolangDefinitionOptions): CustomMolangDefinition | null {
+		return registerCustomMolangDefinition(definition, Plugins.currently_loading || '');
+	},
 	get Undo() {
 		return Blockbench.Project instanceof ModelProject ? Blockbench.Project.undo : undefined;
 	},

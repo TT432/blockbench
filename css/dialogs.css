@@ -2530,6 +2530,18 @@
 	dialog#custom_molang .custom_molang_name_row input {
 		flex-grow: 1;
 	}
+	dialog#custom_molang .custom_molang_description_row {
+		align-items: flex-start;
+	}
+	dialog#custom_molang .custom_molang_description_row > label {
+		padding-top: 4px;
+	}
+	dialog#custom_molang .custom_molang_description_row textarea {
+		flex-grow: 1;
+		resize: vertical;
+		min-height: 40px;
+		font-family: inherit;
+	}
 	dialog#custom_molang .custom_molang_param_row {
 		align-items: center;
 	}
