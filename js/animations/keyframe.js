@@ -2,6 +2,7 @@ import { markerColors } from "../marker_colors";
 import { clipboard } from "../native_apis";
 import { invertMolang, negateMolang, processMolangReturn } from "../util/molang";
 import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
+import { getEffectPathBase, isEffectPathAbsolute, resolveEffectPath, toEffectRef, effectLookupRef } from "./effect_path";
 
 export class KeyframeDataPoint {
 	constructor(keyframe) {
@@ -18,35 +19,31 @@ export class KeyframeDataPoint {
 		for (var key in KeyframeDataPoint.properties) {
 			KeyframeDataPoint.properties[key].merge(this, data)
 		}
-		if (data.file) {
-			this.file = KeyframeDataPoint.resolveFileRef(data.file);
-		}
+		// 引用保持文件里的写法（相对路径随工程目录解析，见 effect_path.js），
+		// 不改写成绝对路径，否则工程另存/移动后引用会指向旧目录。
 		if (data.file && !file_value_before) {
 			this.loadFileAsset();
 		}
 	}
-	// 相对路径解析基准目录：项目保存路径优先，其次导出路径。
-	// 未保存的工程没有基准，返回空字符串（相对引用保持原样，无法定位）。
-	static getFilePathBase() {
-		let path = (Project && (Project.save_path || Project.export_path)) || '';
-		return path ? PathModule.dirname(path) : '';
+	// 访问文件系统用的绝对路径（相对引用按 bbmodel 目录解析）
+	get resolvedFile() {
+		return resolveEffectPath(this.file);
 	}
-	// 效果资源引用解析（#190）：动画效果粒子/音频帧允许填写相对路径，
-	// 按 bbmodel 所在目录解析（基岩动画常写成 particles/xxx.json）。
-	// 已加载资产的引用（uuid / 规范化路径）与绝对路径原样返回。
-	static resolveFileRef(ref) {
-		if (!ref || typeof ref != 'string') return ref;
-		if (!isApp || PathModule.isAbsolute(ref)) return ref;
-		if (ParticleAsset.fromRef(ref) || SoundAsset.fromRef(ref)) return ref;
-		let base = KeyframeDataPoint.getFilePathBase();
-		return base ? PathModule.resolve(base, ref) : ref;
+	// 预览查表用的规范引用（Animator.particle_effects / Timeline.waveforms 的键）。
+	// 播放循环里逐帧查询，按键缓存，引用或工程目录变化时重算。
+	get fileLookupRef() {
+		let base = getEffectPathBase();
+		let cache = this._file_lookup;
+		if (!cache || cache.source !== this.file || cache.base !== base) {
+			cache = this._file_lookup = {source: this.file, base, ref: effectLookupRef(this.file)};
+		}
+		return cache.ref;
 	}
 	// 按需加载引用指向的粒子/音频文件（内容随之嵌入工程，供预览与保存）
 	loadFileAsset() {
-		let ref = this.file;
+		let ref = this.resolvedFile;
 		if (!ref) return null;
 		if (this.keyframe.channel == 'sound') {
-			Timeline.visualizeAudioFile(ref);
 			return SoundAsset.ensureLoaded(ref);
 		}
 		if (this.keyframe.channel == 'particle') {
@@ -54,14 +51,11 @@ export class KeyframeDataPoint {
 		}
 		return null;
 	}
-	// 检查并修正引用：相对路径无法解析时给出提示（工程未保存，没有基准目录）
-	static checkFileRef(ref) {
-		if (!ref || typeof ref != 'string' || !isApp) return true;
-		if (PathModule.isAbsolute(ref)) return true;
-		if (ParticleAsset.fromRef(ref) || SoundAsset.fromRef(ref)) return true;
-		if (KeyframeDataPoint.getFilePathBase()) return true;
-		Blockbench.showQuickMessage('message.effect_relative_path_needs_save', 3000);
-		return false;
+	// 相对引用缺少基准时的提示：工程还没保存，无法按目录解析
+	static needsSavedProject(ref) {
+		if (!ref || typeof ref != 'string' || !isApp) return false;
+		if (isUUID(ref) || isEffectPathAbsolute(ref)) return false;
+		return !getEffectPathBase();
 	}
 	getUndoCopy() {
 		let copy = {}
@@ -1379,11 +1373,15 @@ Interface.definePanels(function() {
 					Undo.finishEdit('Edit keyframe');
 				},
 				// 粒子/音频帧的资源引用：允许直接填写路径（#190）。
-				// 输入过程中只写入原始文本，离开输入框时解析相对路径并加载文件，
+				// 输入过程中只写入原始文本，离开输入框时按工程目录解析并加载文件，
 				// 避免逐字符解析在不存在的路径上反复创建缺失占位资产。
+				// 引用保持用户填写的写法（相对路径不会回退成绝对路径）。
 				applyFileRef(value, data_point) {
-					if (!KeyframeDataPoint.checkFileRef(value)) return;
-					let ref = KeyframeDataPoint.resolveFileRef(value);
+					let ref = (value || '').trim();
+					if (KeyframeDataPoint.needsSavedProject(ref)) {
+						Blockbench.showQuickMessage('message.effect_relative_path_needs_save', 3000);
+						return;
+					}
 					Timeline.selected.forEach(kf => {
 						let point = kf.data_points[data_point || 0];
 						if (!point) return;
@@ -1508,7 +1506,7 @@ Interface.definePanels(function() {
 							resource_id: 'animation_particle',
 							extensions: ['json'],
 							type: 'Bedrock Particle',
-							startpath: keyframe.data_points[0].file
+							startpath: keyframe.data_points[0].resolvedFile
 						}, function(files) {
 
 							let json = autoParseJSON(files[0].content, {file_path: files[0].path});
@@ -1519,7 +1517,7 @@ Interface.definePanels(function() {
 							let existing = isApp && files[0].path && ParticleAsset.all.find(a => a.path === files[0].path);
 							Undo.initEdit({keyframes: [keyframe], particles: existing ? [existing] : []})
 							let asset = ParticleAsset.importFromFile(files[0]);
-							data_point.file = asset.getRef();
+							data_point.file = toEffectRef(asset.getRef());
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
 							Undo.finishEdit('Change keyframe particle file', {particles: [asset]});
 
@@ -1533,7 +1531,7 @@ Interface.definePanels(function() {
 							extensions: ['ogg', 'wav', 'mp3'],
 							type: 'Audio File',
 							readtype: 'binary',
-							startpath: keyframe.data_points[0].file
+							startpath: keyframe.data_points[0].resolvedFile
 						}, function(files) {
 
 							let existing = isApp && files[0].path && SoundAsset.all.find(a => a.path === files[0].path);
@@ -1543,9 +1541,9 @@ Interface.definePanels(function() {
 								Undo.cancelEdit();
 								return;
 							}
-							data_point.file = asset.getRef();
+							data_point.file = toEffectRef(asset.getRef());
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().replace(/\.[a-z]+$/, '').replace(/[^a-z0-9._]+/g, '');
-							Timeline.visualizeAudioFile(data_point.file);
+							Timeline.visualizeAudioFile(asset.getRef());
 							Undo.finishEdit('Change keyframe audio file', {sounds: [asset]})
 						})
 					}

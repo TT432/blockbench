@@ -329,7 +329,8 @@ export const Timeline = {
 		effect_animator.sound.forEach(kf => {
 			if (kf.data_points[0].file) {
 				var diff = kf.time - effect_animator.animation.time;
-				if (diff < 0 && Timeline.waveforms[kf.data_points[0].file] && Timeline.waveforms[kf.data_points[0].file].duration > -diff) {
+				let waveform = Timeline.waveforms[kf.data_points[0].fileLookupRef];
+				if (diff < 0 && waveform && waveform.duration > -diff) {
 					let audio_path = kf.data_points[0].file;
 					let media = Timeline.paused_sounds.find(sound => sound.keyframe_id == kf.uuid && audio_path == sound.audio_path) ?? new Audio(SoundAsset.resolvePlaybackSource(audio_path));
 					if (media.stutter_timeout) {
@@ -1408,6 +1409,12 @@ Interface.definePanels(() => {
 					if (index == -1 || index == undefined) return;
 					return markerColors[index % markerColors.length].standard;
 				},
+				// 波形按引用查表：关键帧里存的是填写原样（可能是相对路径），
+				// 波形登记在解析后的规范引用上（见 effect_path.js / SoundAsset.ensureLoaded）。
+				waveform(keyframe) {
+					let ref = keyframe.data_points[0]?.fileLookupRef;
+					return (ref && this.waveforms[ref]) || null;
+				},
 				getWaveformPoints(samples, size) {
 					let height = 23;
 					let points = [`0,${height}`];
@@ -2258,8 +2265,8 @@ Interface.definePanels(() => {
 											<i class="icon-keyframe_step" v-else-if="keyframe.interpolation == 'step'"></i>
 											<i :class="keyframe.data_points.length == 1 ? 'icon-keyframe_bezier' : 'icon-keyframe_discontinuous_bezier'" v-else-if="keyframe.interpolation == 'bezier'"></i>
 											<i :class="keyframe.data_points.length == 1 ? 'icon-keyframe' : 'icon-keyframe_discontinuous'" v-else></i>
-											<svg class="keyframe_waveform" v-if="keyframe.channel == 'sound' && keyframe.data_points[0].file && waveforms[keyframe.data_points[0].file]" :style="{width: waveforms[keyframe.data_points[0].file].duration * size}">
-												<polygon :points="getWaveformPoints(waveforms[keyframe.data_points[0].file].samples, size)"></polygon>
+											<svg class="keyframe_waveform" v-if="keyframe.channel == 'sound' && waveform(keyframe)" :style="{width: waveform(keyframe).duration * size}">
+												<polygon :points="getWaveformPoints(waveform(keyframe).samples, size)"></polygon>
 											</svg>
 										</div>
 									</div>
