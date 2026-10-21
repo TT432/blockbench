@@ -2437,6 +2437,7 @@ Interface.definePanels(() => {
 										<input type="text" class="dark_bordered tab_target animation_controller_text_input" v-model="state.animations[i].key">
 										<vue-prism-editor 
 											class="molang_input animation_controller_text_input tab_target"
+											:id="'controller_blend_value_' + animation.uuid"
 											v-model="state.animations[i].blend_value"
 											language="molang"
 											@contextmenu.stop="openMolangContextMenu($event, state, state.animations[i], 'blend_value')"
@@ -2482,6 +2483,7 @@ Interface.definePanels(() => {
 											<label>${tl('timeline.pre_effect_script')}</label>
 											<vue-prism-editor
 												class="molang_input animation_controller_text_input tab_target"
+												:id="'controller_particle_script_' + particle.uuid"
 												v-model="state.particles[i].pre_effect_script"
 												language="molang"
 												@contextmenu.stop="openMolangContextMenu($event, state, state.particles[i], 'pre_effect_script')"
@@ -2530,6 +2532,7 @@ Interface.definePanels(() => {
 								<vue-prism-editor
 									v-if="!state.fold.on_entry"
 									class="molang_input animation_controller_text_input tab_target"
+									:id="'controller_state_script_' + state.uuid + '_on_entry'"
 									:code="state.on_entry"
 									@change="updateStateScript(state, 'on_entry', $event)"
 									language="molang"
@@ -2548,6 +2551,7 @@ Interface.definePanels(() => {
 								<vue-prism-editor
 									v-if="!state.fold.on_exit"
 									class="molang_input animation_controller_text_input tab_target"
+									:id="'controller_state_script_' + state.uuid + '_on_exit'"
 									:code="state.on_exit"
 									@change="updateStateScript(state, 'on_exit', $event)"
 									language="molang"
@@ -2573,6 +2577,7 @@ Interface.definePanels(() => {
 											<div class="bb-select" @click="openTransitionMenu(state, state.transitions[i], $event)">{{ getStateName(state.transitions[i].target) }}</div>
 											<vue-prism-editor 
 												class="molang_input animation_controller_text_input tab_target"
+												:id="'controller_transition_condition_' + transition.uuid"
 												v-model="state.transitions[i].condition"
 												language="molang"
 												@contextmenu.stop="openMolangContextMenu($event, state, state.transitions[i], 'condition')"

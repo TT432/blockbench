@@ -1620,6 +1620,36 @@
 		color: var(--color-subtle_text);
 		user-select: none;
 	}
+	/* 变量表标题行：标题 + 自动扫描按钮 */
+	.custom_molang_section_header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding-right: 8px;
+		flex-shrink: 0;
+	}
+	.custom_molang_section_header .custom_molang_section_label {
+		flex-grow: 1;
+		padding-right: 0;
+	}
+	.custom_molang_scan_button {
+		flex-shrink: 0;
+		height: 22px;
+		padding: 0 8px;
+		font-size: 0.85em;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		background-color: var(--color-button);
+		color: var(--color-text);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.custom_molang_scan_button:hover {
+		color: var(--color-light);
+	}
+	.custom_molang_scan_button .icon {
+		margin-right: 3px;
+	}
 	ul#custom_molang_variables {
 		flex-shrink: 0;
 	}
@@ -1632,7 +1662,29 @@
 	}
 	#custom_molang_variables li input {
 		flex-grow: 1;
+		min-width: 0;
 		height: 24px;
+	}
+	/* 读/写引用计数：点击有引用的徽标弹出可跳转引用列表 */
+	#custom_molang_variables .custom_variable_reference_counts {
+		display: flex;
+		gap: 3px;
+		flex-shrink: 0;
+	}
+	#custom_molang_variables .reference_count {
+		font-size: 0.78em;
+		line-height: 20px;
+		padding: 0 4px;
+		border-radius: 3px;
+		background-color: var(--color-ui);
+		color: var(--color-subtle_text);
+		user-select: none;
+		white-space: nowrap;
+		cursor: default;
+	}
+	#custom_molang_variables .reference_count.clickable:hover {
+		background-color: var(--color-button);
+		color: var(--color-light);
 	}
 	#custom_molang_variables li.custom_molang_variable_add {
 		padding: 2px 8px;

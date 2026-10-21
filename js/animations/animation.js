@@ -585,6 +585,7 @@ export class Animation extends AnimationItem {
 						<div class="dialog_bar form_bar">
 							<label class="name_space_left">${tl('menu.animation.anim_time_update')}:</label>
 							<vue-prism-editor class="molang_input"
+								id="animation_properties_anim_time_update"
 								v-model="anim_time_update"
 								@contextmenu="openMolangContextMenu($event, 'anim_time_update', anim_time_update)"
 								language="molang"
@@ -594,6 +595,7 @@ export class Animation extends AnimationItem {
 						<div class="dialog_bar form_bar">
 							<label class="name_space_left">${tl('menu.animation.blend_weight')}:</label>
 							<vue-prism-editor class="molang_input"
+								id="animation_properties_blend_weight"
 								v-model="blend_weight"
 								@contextmenu="openMolangContextMenu($event, 'blend_weight', blend_weight)"
 								language="molang"
@@ -603,6 +605,7 @@ export class Animation extends AnimationItem {
 						<div class="dialog_bar form_bar">
 							<label class="name_space_left">${tl('menu.animation.start_delay')}:</label>
 							<vue-prism-editor class="molang_input"
+								id="animation_properties_start_delay"
 								v-model="start_delay"
 								@contextmenu="openMolangContextMenu($event, 'start_delay', start_delay)"
 								language="molang"
@@ -612,6 +615,7 @@ export class Animation extends AnimationItem {
 						<div class="dialog_bar form_bar" v-if="loop_mode == 'loop'">
 							<label class="name_space_left">${tl('menu.animation.loop_delay')}:</label>
 							<vue-prism-editor class="molang_input"
+								id="animation_properties_loop_delay"
 								v-model="loop_delay"
 								@contextmenu="openMolangContextMenu($event, 'loop_delay', loop_delay)"
 								language="molang"

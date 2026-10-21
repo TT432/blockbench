@@ -5,6 +5,7 @@ import { Mode } from "../modes";
 import { clipboard, fs } from "../native_apis";
 import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
 import { getRegisteredCustomMolangs } from "../util/molang";
+import { getMolangVariableReferenceIndex, getMolangReferenceLabel, jumpToMolangReference, scanMolangVariableNames } from "./molang_references";
 import { BoneBatcher } from "../preview/bone_batch";
 import './mirror_animating'
 
@@ -1429,7 +1430,11 @@ Interface.definePanels(function() {
 				buttons: [],
 				custom_molangs: [],
 				registered_custom_molangs: [],
-				custom_molang_variables: []
+				custom_molang_variables: [],
+				// 变量表名（小写）→ {name, reads, writes}，由 molang_references 索引重建
+				variable_references: {},
+				// 面板不可见时只标脏，等用户回到面板再全量扫描（大工程避免无谓遍历）
+				variable_references_dirty: false
 			}},
 			computed: {
 				// 插件注册的自定义 molang：同名（忽略大小写）时项目定义优先，故已有的不重复列出
@@ -1445,9 +1450,38 @@ Interface.definePanels(function() {
 				// 自定义 molang 列表/变量表引用 Project 属性数组（同一引用，外部修改自动反映）；
 				// 项目切换/新建/加载/定义增删时重取引用并刷新变量高亮
 				this.refreshCustomMolang();
+				this.refreshVariableReferences(true);
 				['select_project', 'new_project', 'load_project', 'update_custom_molang'].forEach(event_name => {
 					Blockbench.on(event_name, () => this.refreshCustomMolang());
 				});
+				// 引用计数是派生数据：任何编辑落盘/撤销/重做后重算，避免展示陈旧计数
+				['select_project', 'new_project', 'load_project', 'update_custom_molang', 'edit_animation_properties', 'finished_edit', 'undo', 'redo'].forEach(event_name => {
+					Blockbench.on(event_name, () => this.scheduleVariableReferenceRefresh());
+				});
+				// 控制器/关键帧内联编辑器直接写字段、不发全局事件；prism 编辑器在 keyup 才回写内容，两个事件都兜底
+				this._variable_reference_input_listener = event => {
+					let target = event.target;
+					if (target instanceof Element && target.closest('#animation_controllers_wrapper, #panel_keyframe')) {
+						this.scheduleVariableReferenceRefresh();
+					}
+				};
+				document.addEventListener('input', this._variable_reference_input_listener);
+				document.addEventListener('keyup', this._variable_reference_input_listener);
+				// 面板隐藏期间的变更只标脏：用户回到面板时补一次全量刷新
+				this._variable_reference_reveal_listener = event => {
+					let target = event.target;
+					if (!(target instanceof Element) || !target.closest('#panel_variable_placeholders')) return;
+					if (this.variable_references_dirty) this.refreshVariableReferences(true);
+				};
+				document.addEventListener('mousedown', this._variable_reference_reveal_listener, true);
+				document.addEventListener('focusin', this._variable_reference_reveal_listener, true);
+			},
+			beforeDestroy() {
+				clearTimeout(this._variable_reference_timer);
+				document.removeEventListener('input', this._variable_reference_input_listener);
+				document.removeEventListener('keyup', this._variable_reference_input_listener);
+				document.removeEventListener('mousedown', this._variable_reference_reveal_listener, true);
+				document.removeEventListener('focusin', this._variable_reference_reveal_listener, true);
 			},
 			methods: {
 				updateButtons() {
@@ -1638,6 +1672,94 @@ Interface.definePanels(function() {
 				},
 				removeCustomVariable(i) {
 					this.custom_molang_variables.splice(i, 1);
+				},
+				isVariablePanelVisible() {
+					let panel = typeof Panels != 'undefined' && Panels.variable_placeholders;
+					return !panel || typeof panel.isVisible != 'function' || panel.isVisible();
+				},
+				refreshVariableReferences(force = false) {
+					if (typeof Project == 'undefined' || !Project) {
+						this.variable_references = {};
+						this.variable_references_dirty = false;
+						return;
+					}
+					if (!force && !this.isVariablePanelVisible()) {
+						this.variable_references_dirty = true;
+						return;
+					}
+					this.variable_references = getMolangVariableReferenceIndex(this.custom_molang_variables || []);
+					this.variable_references_dirty = false;
+				},
+				// 编辑/撤销可能高频触发，合并到一帧后统一重算
+				scheduleVariableReferenceRefresh() {
+					clearTimeout(this._variable_reference_timer);
+					this._variable_reference_timer = setTimeout(() => {
+						this._variable_reference_timer = null;
+						this.refreshVariableReferences();
+					}, 80);
+				},
+				variableReadCount(name) {
+					let group = this.variable_references[(name || '').toLowerCase()];
+					return group ? group.reads.length : 0;
+				},
+				variableWriteCount(name) {
+					let group = this.variable_references[(name || '').toLowerCase()];
+					return group ? group.writes.length : 0;
+				},
+				openVariableReferenceMenu(name, kind, event) {
+					// 弹菜单前重算，保证跳转列表与当前编辑内容一致
+					this.refreshVariableReferences(true);
+					let group = this.variable_references[(name || '').toLowerCase()];
+					let references = group && group[kind == 'read' ? 'reads' : 'writes'];
+					if (!references || !references.length) return;
+					new Menu(references.map(reference => ({
+						name: getMolangReferenceLabel(reference),
+						icon: kind == 'read' ? 'visibility' : 'edit',
+						click: () => jumpToMolangReference(reference)
+					}))).open(event);
+				},
+				// 扫描工程内所有可编辑 molang 位置的 v./variable. 引用，追加到变量表（保留现有条目）
+				autoScanProjectVariables() {
+					if (typeof Project == 'undefined' || !Project) return;
+					let apply = () => {
+						let names = scanMolangVariableNames();
+						if (!names.length) {
+							Blockbench.showQuickMessage(tl('message.molang_variable_scan_empty'), 1500);
+							return;
+						}
+						let added = [];
+						names.forEach(name => {
+							if (!name) return;
+							if (Project.custom_molang_variables.some(entry => (entry || '').toLowerCase() == name.toLowerCase())) return;
+							Project.custom_molang_variables.push(name);
+							added.push(name);
+						});
+						this.refreshVariableReferences(true);
+						if (!added.length) {
+							Blockbench.showQuickMessage(tl('message.molang_variable_scan_none'), 1500);
+							return;
+						}
+						Project.saved = false;
+						clearCustomMolangCache();
+						if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
+						Blockbench.dispatchEvent('update_custom_molang', {});
+						Blockbench.showQuickMessage(tl('message.molang_variables_scanned', [added.length]), 1500);
+					};
+					if ((this.custom_molang_variables || []).length) {
+						// 用户确认后才写入：列表非空时扫描结果会改变现有列表形态
+						Blockbench.showMessageBox({
+							title: 'dialog.auto_scan_project_variables.title',
+							message: 'dialog.auto_scan_project_variables.message',
+							icon: 'info',
+							buttons: ['dialog.confirm', 'dialog.cancel'],
+							confirmIndex: 0,
+							cancelIndex: 1,
+						}, button => {
+							if (button == 0) apply();
+						});
+					} else {
+						apply();
+					}
 				}
 			},
 			watch: {
@@ -1648,6 +1770,7 @@ Interface.definePanels(function() {
 						this.updateButtons();
 						Project.variable_placeholder_buttons.replace(this.buttons);
 						Timeline.vue.updateGraph();
+						this.scheduleVariableReferenceRefresh();
 					}
 				},
 				// 变量表编辑（增删/改名）即时生效：高亮重建、展开缓存失效、预览刷新
@@ -1659,6 +1782,7 @@ Interface.definePanels(function() {
 						clearCustomMolangCache();
 						if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
 						Animator.preview();
+						this.scheduleVariableReferenceRefresh();
 					}
 				}
 			},
@@ -1695,10 +1819,19 @@ Interface.definePanels(function() {
 						</ul>
 					</template>
 
-					<label class="custom_molang_section_label" :title="'${tl('panel.variable_placeholders.custom_variables.desc')}'">${tl('panel.variable_placeholders.custom_variables')}</label>
+					<div class="custom_molang_section_header">
+						<label class="custom_molang_section_label" :title="'${tl('panel.variable_placeholders.custom_variables.desc')}'">${tl('panel.variable_placeholders.custom_variables')}</label>
+						<button type="button" class="custom_molang_scan_button" :title="'${tl('panel.variable_placeholders.custom_variables.scan.desc')}'" @click="autoScanProjectVariables()">
+							<i class="icon fa fa-search"></i>${tl('panel.variable_placeholders.custom_variables.scan')}
+						</button>
+					</div>
 					<ul id="custom_molang_variables">
 						<li v-for="(name, i) in custom_molang_variables" :key="i">
 							<input type="text" class="dark_bordered" :value="name" @input="setCustomVariable(i, $event.target.value)" :placeholder="'${tl('panel.variable_placeholders.custom_variable_name')}'" />
+							<div class="custom_variable_reference_counts">
+								<span class="reference_count read" :class="{clickable: variableReadCount(name) > 0}" :title="'${tl('panel.variable_placeholders.variable_reads')}'" @click="openVariableReferenceMenu(name, 'read', $event)">${tl('panel.variable_placeholders.variable_read_short')} {{ variableReadCount(name) }}</span>
+								<span class="reference_count write" :class="{clickable: variableWriteCount(name) > 0}" :title="'${tl('panel.variable_placeholders.variable_writes')}'" @click="openVariableReferenceMenu(name, 'write', $event)">${tl('panel.variable_placeholders.variable_write_short')} {{ variableWriteCount(name) }}</span>
+							</div>
 							<div class="tool" :title="'${tl('generic.delete')}'" @click="removeCustomVariable(i)"><i class="material-icons">clear</i></div>
 						</li>
 						<li class="custom_molang_variable_add">
