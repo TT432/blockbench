@@ -16,10 +16,21 @@
 // 材质策略：BB 贴图材质恒为 transparent:true（上游设计），直接合批会丢失逐 cube
 // 的 painter 排序。本模块按内容分流——cube 各面 UV 区域内无半透明 texel
 // （0<alpha<255）时视为镂空/不透明，批次使用共享的不透明变体材质（clone 共享
-// uniforms，transparent:false；shader 对 alpha<0.01 discard，视觉与上游一致，
-// 深度平局按遍历顺序=上游稳定排序平局裁决）；含半透明 texel 的 cube 不合批，
-// 保持逐 cube 原渲染。贴图像素编辑（refreshTranslucency 清 alpha 缓存）或
-// UV 移入半透明区域会在 watcher 中触发重建重查资格。
+// uniforms，transparent:false；shader 对 alpha<0.01 discard）；含半透明 texel 的
+// cube 不合批，保持逐 cube 原渲染。贴图像素编辑（refreshTranslucency 清 alpha
+// 缓存）或 UV 移入半透明区域会在 watcher 中触发重建重查资格。
+//
+// 绘制顺序（updateDrawOrder，等价于「按深度分层、层内保序」）：上游把每个 cube 各自
+// 放进透明通道，three 的 reversePainterSortStable 按「renderOrder → 相机投影 z 由大到小
+// （即由远到近）→ 对象 id」排序；合批后整个批次只画一次，共面/重叠面由索引顺序决定，
+// 顺序不同就会在分层衣服这类共面处翻出不同结果（实测 1483 cube 模型 gt32 从 8201 降到
+// 3711，关掉深度测试后仅剩 3 像素，即顺序已与上游一致）。这里按同一排序键把每个批次
+// 的索引块重排：顶点布局不动，只移动 36 个 index 的块，且只重写序号变化的块。
+// 相机矩阵或几何位置不变时不重算；实测静止 0 次重排、绕行时开销在测量噪声内。
+// 两点已知边界：① 不同材质的批次之间仍由渲染器按材质排序，上游是跨材质按距离交错；
+// ② 顶点在 JS 侧以 float64 变换后写回 float32，与上游在顶点着色器里对
+//    view·matrixWorld 做 float32 组合的末位舍入不同，因此共面面片的深度平局偶尔翻面
+//    （开深度测试后残余 gt32≈0.1% 像素，关掉深度测试即归零）。
 //
 // 逐帧 watcher（渲染前执行，静止时 <1ms）：对 Cube.all 逐 cube 对比缓存——
 // matrixWorld 16 元素、geometry/index/attribute 引用、attribute version
@@ -71,6 +82,9 @@ interface BatchSlot {
 	localNor: Float32Array // 72
 	indexTemplate: ArrayLike<number>
 	indexCount: number
+	draw_rank: number // 索引块位置 = 绘制顺序里的序号（见 updateDrawOrder）
+	draw_z: number // 上一帧相机投影 z（排序键）
+	pending_rank: number // 重排时的目标序号（避免交换时互相覆盖）
 }
 
 interface DirtyRange {
@@ -86,6 +100,7 @@ interface BatchRecord {
 	free: number[]
 	usedSlots: number // 高水位（含已释放槽位）
 	capacitySlots: number
+	draw_count: number // 本帧存活槽位数（updateDrawOrder 内自增）
 	posAttr: THREE.BufferAttribute
 	norAttr: THREE.BufferAttribute
 	uvAttr: THREE.BufferAttribute
@@ -134,7 +149,7 @@ export const CubeBatcher = {
 	element_animated: new Set<string>(),
 
 	// 调试/实测用
-	stats: {watch_ms: 0, rebaked: 0, rebuilt: 0},
+	stats: {watch_ms: 0, rebaked: 0, rebuilt: 0, reordered: 0},
 
 	// 镂空贴图 → 不透明变体材质（getBatchMaterial 缓存；贴图对象回收时随 WeakMap 释放）
 	_cutout_variants: new WeakMap<Texture, THREE.ShaderMaterial>(),
@@ -143,6 +158,14 @@ export const CubeBatcher = {
 	_tmpRel: new THREE.Matrix4(),
 	_tmpModelInv: new THREE.Matrix4(),
 	_tmpM3: new THREE.Matrix3(),
+	_tmpProjScreen: new THREE.Matrix4(),
+	_tmpVec: new THREE.Vector3(),
+
+	// 绘制顺序（见 updateDrawOrder）：相机/几何变化才重算，顺序不变不重写索引
+	_order_dirty: true,
+	_order_camera: null as {view: Float64Array, proj: Float64Array} | null,
+	_order_scratch: new Array<BatchSlot>(),
+	_order_changed: new Array<BatchSlot>(),
 
 	get active(): boolean {
 		return this.enabled && this.batches.size > 0;
@@ -254,11 +277,16 @@ export const CubeBatcher = {
 		}
 	},
 
-	// 写槽位的 36 个 index：可见按模板（含环绕翻转），隐藏写退化三角形（全 0）
+	// 写槽位的 36 个 index：可见按模板（含环绕翻转），隐藏写退化三角形（全 0）。
+	// 块位置用 draw_rank（绘制顺序序号）而不是 slot_index：两者只在顺序变化时不同。
 	writeSlotIndices(slot: BatchSlot) {
+		this.writeSlotIndicesAt(slot, slot.draw_rank);
+	},
+
+	writeSlotIndicesAt(slot: BatchSlot, rank: number, mark = true) {
 		let batch = slot.batch;
 		let dst = batch.idxAttr.array;
-		let base = slot.slot_index * INDEX_STRIDE;
+		let base = rank * INDEX_STRIDE;
 		if (!slot.visible) {
 			dst.fill(0, base, base + INDEX_STRIDE);
 		} else {
@@ -276,7 +304,102 @@ export const CubeBatcher = {
 			}
 			if (n < INDEX_STRIDE) dst.fill(0, base + n, base + INDEX_STRIDE);
 		}
+		if (mark) this.markRange(batch.idxRange, base, INDEX_STRIDE);
+	},
+
+	zeroIndexBlock(batch: BatchRecord, rank: number) {
+		let base = rank * INDEX_STRIDE;
+		batch.idxAttr.array.fill(0, base, base + INDEX_STRIDE);
 		this.markRange(batch.idxRange, base, INDEX_STRIDE);
+	},
+
+	/**
+	 * 复刻上游（关闭合批）的绘制顺序：每个方块各自进透明通道，three 的 reversePainterSortStable
+	 * 按「相机投影 z 由远到近、同 z 按对象 id」排序。合批后整个批次只画一次，共面/重叠面
+	 * 由索引顺序决定，顺序不同就会在分层衣服这类共面处翻出不同结果。
+	 *
+	 * 这里按同一排序键把每个批次的索引块重排（顶点布局不动，只移动 36 个 index 的块），
+	 * 于是同一批次内的绘制顺序与上游一致；跨批次（不同材质）仍由渲染器按材质排序，
+	 * 与上游跨材质交错的情况仍有偏差（见模块头注释）。
+	 *
+	 * 只有在相机矩阵或几何位置变化后才重算；顺序没变则不写索引。
+	 */
+	updateDrawOrder() {
+		if (!this.enabled || !this.batches.size) return;
+		if (typeof Preview == 'undefined' || !Preview.selected) return;
+		let camera = Preview.selected.camera;
+		if (!camera) return;
+		let view = camera.matrixWorldInverse.elements;
+		let proj = camera.projectionMatrix.elements;
+		let cache = this._order_camera;
+		let need = this._order_dirty || !cache;
+		if (!need) {
+			for (let i = 0; i < 16; i++) {
+				if (cache.view[i] !== view[i] || cache.proj[i] !== proj[i]) { need = true; break; }
+			}
+		}
+		if (!need) return;
+		this._order_dirty = false;
+		if (!cache) cache = this._order_camera = {view: new Float64Array(16), proj: new Float64Array(16)};
+		cache.view.set(view);
+		cache.proj.set(proj);
+
+		let slots = this._slot_list;
+		let n = slots.length;
+		if (!n) return;
+		let scratch = this._order_scratch;
+		scratch.length = n;
+		let proj_screen = this._tmpProjScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+		let vec = this._tmpVec;
+		for (let i = 0; i < n; i++) {
+			let slot = slots[i];
+			vec.setFromMatrixPosition(slot.mesh.matrixWorld).applyMatrix4(proj_screen);
+			slot.draw_z = vec.z;
+			scratch[i] = slot;
+		}
+		// 与 three 的 reversePainterSortStable 一致：renderOrder → 投影 z 由大到小（越远越大）→ 对象 id。
+		// 键值口径：Vector3.applyMatrix4 会做透视除法，因此这里是 NDC z（远=大）。
+		scratch.sort((a, b) => (a.mesh.renderOrder - b.mesh.renderOrder)
+			|| (b.draw_z - a.draw_z)
+			|| (a.mesh.id - b.mesh.id));
+
+		for (let batch of this.batches.values()) batch.draw_count = 0;
+		let changed_slots = this._order_changed;
+		changed_slots.length = 0;
+		for (let i = 0; i < n; i++) {
+			let slot = scratch[i];
+			let rank = slot.batch.draw_count++;
+			slot.pending_rank = rank;
+			if (slot.draw_rank !== rank) changed_slots.push(slot);
+		}
+		// 已释放槽位（删除后留下的尾部块）需要写退化三角形
+		let stale = false;
+		for (let batch of this.batches.values()) {
+			if (batch.draw_count < batch.usedSlots) { stale = true; break; }
+		}
+		if (!changed_slots.length && !stale) return;
+
+		if (stale) {
+			for (let batch of this.batches.values()) {
+				let dst = batch.idxAttr.array;
+				for (let rank = batch.draw_count; rank < batch.usedSlots; rank++) {
+					dst.fill(0, rank * INDEX_STRIDE, (rank + 1) * INDEX_STRIDE);
+				}
+				if (batch.usedSlots) this.markRange(batch.idxRange, 0, batch.usedSlots * INDEX_STRIDE);
+			}
+		}
+		// 只重写序号变化的槽位（交换位置的两个槽位都变化，因此不会漏写）。
+		// 写入内容来自 slot.indexTemplate（JS 数组），与本缓冲区无读写依赖。
+		// 变化面较大时把整段索引标脏，省掉上千次 markRange。
+		let whole_batch = stale || changed_slots.length * 4 > n;
+		for (let slot of changed_slots) slot.draw_rank = slot.pending_rank;
+		for (let slot of changed_slots) this.writeSlotIndicesAt(slot, slot.draw_rank, !whole_batch);
+		if (whole_batch) {
+			for (let batch of this.batches.values()) {
+				if (batch.usedSlots) this.markRange(batch.idxRange, 0, batch.usedSlots * INDEX_STRIDE);
+			}
+		}
+		this.stats.reordered++;
 	},
 
 	// geometry 整体替换（含 index 重排）：重读局部模板并重烘全部范围
@@ -360,6 +483,9 @@ export const CubeBatcher = {
 			localNor: new Float32Array(0),
 			indexTemplate: [],
 			indexCount: 0,
+			draw_rank: slot_index,
+			draw_z: 0,
+			pending_rank: slot_index,
 		};
 		batch.slots[slot_index] = slot;
 		this.cube_entry.set(cube.uuid, slot);
@@ -407,6 +533,7 @@ export const CubeBatcher = {
 			free: [],
 			usedSlots: 0,
 			capacitySlots,
+			draw_count: 0,
 			posAttr, norAttr, uvAttr, hlAttr, idxAttr,
 			posRange: freshRange(), norRange: freshRange(), uvRange: freshRange(),
 			hlRange: freshRange(), idxRange: freshRange(),
@@ -493,6 +620,7 @@ export const CubeBatcher = {
 			batch.geometry.setDrawRange(0, batch.usedSlots * INDEX_STRIDE);
 		}
 		this._discovery_pending = false;
+		this._order_dirty = true;
 		this.stats.rebuilt++;
 	},
 
@@ -519,6 +647,7 @@ export const CubeBatcher = {
 		}
 		this.initSlot(batch, cube, slot_index);
 		batch.geometry.setDrawRange(0, batch.usedSlots * INDEX_STRIDE);
+		this._order_dirty = true;
 	},
 
 	// 删除 cube：槽位 index 写退化三角形，槽位进空闲表
@@ -533,6 +662,8 @@ export const CubeBatcher = {
 		delete slot.mesh.userData.cubeBatchSlot;
 		let i = this._slot_list.indexOf(slot);
 		if (i >= 0) this._slot_list.splice(i, 1);
+		// 存活块要向前压实（尾部块由 updateDrawOrder 写退化）
+		this._order_dirty = true;
 	},
 
 	// MARK: 逐帧 watcher
@@ -616,6 +747,8 @@ export const CubeBatcher = {
 				}
 				if (changed) {
 					this.bakeSlotVertices(slot);
+					// 位置/姿态变化会改变相机投影 z → 绘制顺序需要重算
+					this._order_dirty = true;
 					rebaked++;
 				}
 			}
@@ -636,6 +769,9 @@ export const CubeBatcher = {
 				this.writeSlotIndices(slot);
 			}
 		}
+
+		// 绘制顺序（复刻上游透明通道顺序）：必须在 applyRange 之前重写索引块范围
+		this.updateDrawOrder();
 
 		for (let batch of this.batches.values()) {
 			this.applyRange(batch.posAttr, batch.posRange);
@@ -794,6 +930,7 @@ export const CubeBatcher = {
 		this.enabled = !!value;
 		if (this.enabled) {
 			this.structural_dirty = true;
+			this._order_dirty = true;
 		} else {
 			this.disposeBatches();
 			// #83 配对：元素级动画直驱的 cube 在非合批路径也需要自动矩阵更新
@@ -813,6 +950,7 @@ export const CubeBatcher = {
 		this._group_cache.clear();
 		this._transform_dirty.clear();
 		this.structural_dirty = true;
+		this._order_dirty = true;
 	},
 
 	init() {
