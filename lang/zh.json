@@ -240,6 +240,8 @@
 	"settings.community_paint_uv_display_cap.desc": "选中元素超过 250 个时暂停显示它们的 UV，避免界面卡死。关闭后始终显示全部 UV，超大选择集可能导致界面卡顿。",
 	"settings.community_paste_with_textures": "复制粘贴：粘贴结构时同步贴图",
 	"settings.community_paste_with_textures.desc": "复制元素时一并携带贴图，粘贴时导入目标工程。关闭后不带贴图（原版行为）。",
+	"settings.community_rotate_own_pivot": "旋转 90°：绕选中对象自身枢轴",
+	"settings.community_rotate_own_pivot.desc": "工具栏的「旋转 X/Y/Z 轴 90°」按钮改为绕每个选中对象（组）自身的枢轴自转。关闭时按原版行为：居中网格格式绕世界原点、骨架构架绕首个选中组的枢轴、其余格式绕首个选中元素的枢轴。骨架构架（Bedrock 等）本来就用组枢轴，该开关对它们无影响。",
 	"settings.community_tab_groups": "标签页：模型标签分组",
 	"settings.community_tab_groups.desc": "拖动标签与另一个重合停留即可成组，组可折叠、改色并跨重启保留。关闭后拖动标签仅排序（原版行为）。",
 	"settings.community_cube_batching": "性能：按材质合批渲染方块",

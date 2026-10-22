@@ -404,6 +404,10 @@ function setupSettings() {
 	}});
 
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
+	// 反馈#193：工具栏六个「旋转 X/Y/Z 轴 90°」按钮以什么为枢轴。
+	// 关闭（默认，上游行为）= 居中网格格式绕世界原点、骨架构架绕首个选中组枢轴、其余绕首个选中元素枢轴；
+	// 开启 = 每个被旋转的子树绕自身枢轴自转（选一组就绕该组枢轴转）。
+	new Setting('community_rotate_own_pivot', {category: 'community', value: false});
 	new Setting('community_tab_groups', {category: 'community', value: true, onChange() {
 		if (typeof Interface !== 'undefined' && Interface.tab_bar) Interface.tab_bar.$forceUpdate();
 	}});

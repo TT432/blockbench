@@ -2,7 +2,7 @@ import { invertMolang } from '../util/molang';
 import LZUTF8 from '../lib/lzutf8'
 import { fs } from '../native_apis';
 import VersionUtil from '../util/version_util';
-import { isEffectPathAbsolute } from '../animations/effect_path';
+import { isEffectPathAbsolute, resolveEffectPath } from '../animations/effect_path';
 
 const FORMATV = '5.0';
 
@@ -537,11 +537,13 @@ var codec = new Codec('project', {
 		// and state references resolve to the embedded content.
 		if (model.particles instanceof Array) {
 			model.particles.forEach(data => {
-				if (isApp && data.relative_path && Project.save_path) {
-					data.path = PathModule.resolve(PathModule.dirname(Project.save_path), data.relative_path);
-				}
-				if (isApp && data.relative_texture_path && Project.save_path) {
-					data.texture_path = PathModule.resolve(PathModule.dirname(Project.save_path), data.relative_texture_path);
+				// 反馈#199：`relative_*` 与「已经是相对写法」的字段都要按工程目录解析，
+				// 否则后者会被当成相对进程 CWD 的路径，重开工程时贴图/粒子文件找不到。
+				if (isApp) {
+					let source_path = data.relative_path !== undefined ? data.relative_path : data.path;
+					let source_texture_path = data.relative_texture_path !== undefined ? data.relative_texture_path : data.texture_path;
+					if (source_path) data.path = resolveEffectPath(source_path);
+					if (source_texture_path) data.texture_path = resolveEffectPath(source_texture_path);
 				}
 				let asset = new ParticleAsset(data, data.uuid);
 				if (isApp && asset.path && fs.existsSync(asset.path) && !model.meta.backup) {
@@ -571,8 +573,10 @@ var codec = new Codec('project', {
 		}
 		if (model.sounds instanceof Array) {
 			model.sounds.forEach(data => {
-				if (isApp && data.relative_path && Project.save_path) {
-					data.path = PathModule.resolve(PathModule.dirname(Project.save_path), data.relative_path);
+				// 反馈#199：同粒子资产，相对写法一律按工程目录解析
+				if (isApp) {
+					let source_path = data.relative_path !== undefined ? data.relative_path : data.path;
+					if (source_path) data.path = resolveEffectPath(source_path);
 				}
 				let asset = new SoundAsset(data, data.uuid);
 				if (isApp && asset.path && fs.existsSync(asset.path) && !model.meta.backup) {

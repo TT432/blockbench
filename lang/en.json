@@ -1193,6 +1193,8 @@
 	"settings.community_paint_uv_display_cap.desc": "When more than 250 elements are selected, pause rendering their UVs so the editor stays responsive. When off, every UV is always shown; very large selections can freeze the interface.",
 	"settings.community_paste_with_textures": "Copy/Paste: Paste Structures with Textures",
 	"settings.community_paste_with_textures.desc": "Copying elements also copies their textures, and pasting imports them into the target project. When off, textures are not carried over (stock behavior).",
+	"settings.community_rotate_own_pivot": "Rotate 90°: Around Own Pivot",
+	"settings.community_rotate_own_pivot.desc": "The toolbar rotate X/Y/Z 90° buttons rotate each selected element or group around its own pivot. When off, stock behavior applies: centered-grid formats rotate around the world origin, bone rigs around the first selected group, everything else around the first selected element. Bone rig formats (Bedrock etc.) always pivot on the group, so this toggle has no effect there.",
 	"settings.community_tab_groups": "Tabs: Model Tab Groups",
 	"settings.community_tab_groups.desc": "Drag a tab onto another and hold to group tabs; groups can collapse, recolor and persist across restarts. When off, dragging tabs only reorders them (stock behavior).",
 	"settings.community_cube_batching": "Performance: Batch Cubes by Material",
