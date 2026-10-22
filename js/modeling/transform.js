@@ -188,45 +188,176 @@ export function getRotateSelectedGroups() {
 	});
 	return groups;
 }
+/**
+ * 反馈#200：90° 旋转使用的坐标系。与旋转工具（gizmo）共用同一个「旋转空间」工具栏选项：
+ * global → 世界轴；parent → 父级朝向决定的轴；local → 节点自身朝向决定的轴。
+ * 该选项不可见时（当前工具不是旋转工具）仍读它保存的值，默认 local（工具栏默认值）。
+ */
+export function getRotate90Space() {
+	let value = BarItems.rotation_space && BarItems.rotation_space.value;
+	return (value === 'parent' || value === 'local') ? value : 'global';
+}
+/** 节点自身 rotation 的四元数（模型空间；欧拉序与预览网格一致） */
+function getNodeRotationQuaternion(node) {
+	if (!node || !node.rotation) return new THREE.Quaternion();
+	let order = node.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+	return new THREE.Quaternion().setFromEuler(new THREE.Euler(
+		Math.degToRad(node.rotation[0]),
+		Math.degToRad(node.rotation[1]),
+		Math.degToRad(node.rotation[2]),
+		order
+	));
+}
+/** 祖先链的累计旋转 A（从根往下连乘，不含节点自身） */
+function getAncestorChainQuaternion(node) {
+	let chain = [];
+	let current = node.parent;
+	while (current instanceof OutlinerNode) {
+		chain.unshift(current);
+		current = current.parent;
+	}
+	let quaternion = new THREE.Quaternion();
+	chain.forEach(n => quaternion.multiply(getNodeRotationQuaternion(n)));
+	return quaternion;
+}
+/**
+ * 反馈#200：把请求的坐标系换成「数据空间里应该绕哪个轴转」的帧四元数 F（数据侧旋转 Q = F·R_A·F⁻¹）。
+ * 推导依据：数据旋转 Q 在渲染后的世界侧表现为 A·Q·A⁻¹（A = 祖先链累计旋转，数据坐标由祖先链外层施加）：
+ *   - 父级坐标系：世界轴 = A·e ⇒ Q 的轴就是数据空间的 e → F = 单位阵
+ *   - 自身坐标系：世界轴 = A·R_node·e ⇒ Q 的轴 = R_node·e → F = R_node（与 gizmo 自身坐标系的内旋一致）
+ *   - 全局坐标系：世界轴 = e ⇒ Q 的轴 = A⁻¹·e → F = A⁻¹
+ */
+function getRotateFrameQuaternion(node, space) {
+	if (space === 'local') return getNodeRotationQuaternion(node);
+	if (space === 'global') return getAncestorChainQuaternion(node).invert();
+	return new THREE.Quaternion();
+}
+/**
+ * q 等价于「绕 model 轴 axis 转 steps×90°」时返回 {axis, steps}（steps ∈ 1..3），否则 null。
+ * 直角帧（组旋转都是 90° 倍数）走这条路径：方块 from/to 仍是轴对齐盒，旋转可以被「烘焙」进坐标，
+ * 从而不引入任何旋转值（工具语义「不带组旋转」）。
+ */
+function getQuarterTurnFromQuaternion(q) {
+	for (let axis = 0; axis < 3; axis++) {
+		for (let steps = 1; steps < 4; steps++) {
+			if (Math.abs(getRollQuaternion(axis, steps).dot(q)) > 1 - 1e-6) return {axis, steps};
+		}
+	}
+	return null;
+}
+/** 子树的根：父级全部处于选中状态时继续向上（选中一组会级联选中后代） */
+function getRotateSubtreeRoot(node) {
+	let root = node;
+	while (root.parent instanceof OutlinerNode && root.parent.selected) root = root.parent;
+	return root;
+}
+/** 把四元数写回节点 rotation（按预览网格的欧拉序分解，避免读回时姿态不同） */
+function setNodeRotationFromQuaternion(node, quaternion) {
+	let order = node.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+	let euler = new THREE.Euler().setFromQuaternion(quaternion, order);
+	node.rotation.V3_set(
+		Math.roundTo(Math.radToDeg(euler.x), 6),
+		Math.roundTo(Math.radToDeg(euler.y), 6),
+		Math.roundTo(Math.radToDeg(euler.z), 6)
+	);
+	if (node instanceof Cube) {
+		let non_zero = node.rotation.map(v => Math.abs(v) > 1e-4);
+		let axis = non_zero.indexOf(true);
+		if (axis >= 0 && non_zero.indexOf(true, axis + 1) === -1) node.rotation_axis = getAxisLetter(axis);
+	}
+}
+/**
+ * 反馈#200：帧不是直角对齐、或用「旋转值」表达网格坐标旋转时的提示（节流）。
+ * 方块几何只能存轴对齐 from/to，绕非直角轴旋转 90° 后的盒子无法用坐标表达，只能改为写旋转值。
+ */
+function notifyRotateNotRepresentable() {
+	let now = Date.now();
+	if (notifyRotateNotRepresentable.last_warning && now - notifyRotateNotRepresentable.last_warning < 3000) return;
+	notifyRotateNotRepresentable.last_warning = now;
+	Blockbench.showQuickMessage(tl('message.rotate_90_space_fallback'), 4000);
+}
 export function rotateSelected(axis, steps) {
 	let affected = [...Cube.selected, ...Mesh.selected, ...SplineMesh.selected];
 	let groups = getRotateSelectedGroups();
 	if (!affected.length && !groups.length) return;
 	if (!steps) steps = 1
-	let own_pivot = !!Settings.get('community_rotate_own_pivot') && Format.bone_rig !== true;
-	let origin = [8, 8, 8]
+	let own_pivot = !!Settings.get('community_rotate_own_pivot');
+	let space = getRotate90Space();
+	// 关闭自身枢轴时的原版枢轴：骨架构架=首个选中组、居中网格=世界原点、其余=首个选中元素
+	let legacy_origin;
 	if (!own_pivot) {
 		if (Group.first_selected && Format.bone_rig) {
-			origin = Group.first_selected.origin.slice()
+			legacy_origin = Group.first_selected.origin.slice()
 		} else if (Format.centered_grid) {
-			origin = [0, 0, 0]
+			legacy_origin = [0, 0, 0]
 		} else if (affected.length) {
-			origin = affected[0].origin.slice()
+			legacy_origin = affected[0].origin.slice()
 		} else {
-			origin = groups[0].origin.slice()
+			legacy_origin = groups[0].origin.slice()
 		}
 	}
-	// 自身枢轴模式：每个被旋转的子树（父级未被选中的最上层节点）绕自己的枢轴自转
-	let pivot_map = new Map();
-	let getPivot = node => {
-		if (!own_pivot) return origin;
-		let cached = pivot_map.get(node);
+	let base_quaternion = getRollQuaternion(axis, steps);
+	let legacy_turn = {axis, steps};
+	// 每个选中子树一份计划：枢轴（自身枢轴=子树根的 origin）+ 该坐标系下的等效模型轴旋转
+	let plans = new Map();
+	let getPlan = node => {
+		let root = getRotateSubtreeRoot(node);
+		let cached = plans.get(root);
 		if (cached) return cached;
-		let root = node;
-		while (root.parent instanceof OutlinerNode && root.parent.selected) root = root.parent;
-		let pivot = root.origin.slice();
-		pivot_map.set(node, pivot);
-		return pivot;
+		let frame = getRotateFrameQuaternion(root, space);
+		let pivot = own_pivot ? root.origin.slice() : legacy_origin;
+		let quarter_turn = frame.clone().multiply(base_quaternion).multiply(frame.clone().invert());
+		let plan = {
+			root,
+			pivot,
+			turn: getQuarterTurnFromQuaternion(quarter_turn),
+			node_rotation: null,
+		};
+		if (!plan.turn) {
+			let pivot_is_own = pivot[0] === root.origin[0] && pivot[1] === root.origin[1] && pivot[2] === root.origin[2];
+			// 单轴旋转限制格式的方块无法表达任意欧拉角（组不受限）
+			let limited_cube = Format.rotation_limit === true && root instanceof Cube;
+			if (pivot_is_own && !limited_cube) {
+				// 帧非直角：方块盒子坐标无法表达旋转结果，改为写子树根的旋转值。
+				// 数据侧旋转 Q 写成 Q·R（世界 = A·Q·A⁻¹，子级随层级跟随，无需逐级改坐标）；
+				// 枢轴必须是子树根自身的 origin —— 换枢轴时该表示不成立，走下面的兜底。
+				plan.node_rotation = quarter_turn.clone().multiply(getNodeRotationQuaternion(root));
+			} else {
+				notifyRotateNotRepresentable();
+				plan.turn = legacy_turn;
+			}
+		}
+		plans.set(root, plan);
+		return plan;
 	};
-	let quaternion = getRollQuaternion(axis, steps);
+	affected.forEach(getPlan);
+	groups.forEach(getPlan);
+
 	Undo.initEdit({elements: affected, groups});
 	affected.forEach(function(obj) {
-		obj.roll(axis, steps, own_pivot ? getPivot(obj) : origin)
+		let plan = getPlan(obj);
+		if (plan.node_rotation) return;
+		obj.roll(plan.turn.axis, plan.turn.steps, plan.pivot);
 	})
 	groups.forEach(function(group) {
-		rotateGroupRigid(group, axis, steps, new THREE.Vector3().fromArray(getPivot(group)), quaternion);
+		let plan = getPlan(group);
+		if (plan.node_rotation) return;
+		rotateGroupRigid(group, plan.turn.axis, plan.turn.steps, new THREE.Vector3().fromArray(plan.pivot), getRollQuaternion(plan.turn.axis, plan.turn.steps));
 	})
-	if (groups.length) Canvas.updateView({elements: affected, groups});
+	let baked = false;
+	plans.forEach(plan => {
+		if (!plan.node_rotation) {
+			baked = true;
+			return;
+		}
+		setNodeRotationFromQuaternion(plan.root, plan.node_rotation);
+		if (plan.root instanceof Group) {
+			Canvas.updateView({groups: [plan.root], group_aspects: {transform: true}});
+		} else {
+			Canvas.updateView({elements: [plan.root], element_aspects: {transform: true, geometry: false}});
+		}
+	});
+	if (baked && groups.length) Canvas.updateView({elements: affected, groups});
 	updateSelection();
 	Undo.finishEdit('Rotate elements')
 }
@@ -2412,6 +2543,7 @@ Object.assign(window, {
 	getRotationObjects,
 	getPivotObjects,
 	getParentTransformSpace,
+	getRotate90Space,
 	rotateOnAxis,
 	afterRotateOnAxis,
 	selectSplinePoints,

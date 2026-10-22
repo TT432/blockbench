@@ -137,8 +137,19 @@ export const Animator = {
 		[...Group.all, ...Outliner.elements].forEach(node => {
 			if (!node.constructor.animator) return;
 			var mesh = node.mesh;
-			if (mesh.fix_rotation) mesh.rotation.copy(mesh.fix_rotation);
-			if (mesh.fix_position) mesh.position.copy(mesh.fix_position);
+			if (mesh.fix_rotation && mesh.fix_position) {
+				mesh.rotation.copy(mesh.fix_rotation);
+				mesh.position.copy(mesh.fix_position);
+			} else if (node.preview_controller && typeof node.preview_controller.updateTransform == 'function') {
+				// 反馈#194（复报）：fix_* 快照只有组/空物体/骨架骨等内建节点才有。插件把动画器挂到
+				// 其他节点类型（YSM 这类逐元素动画）时快照缺失，动画写入的 mesh 姿态因此永远不被
+				// 复位——退出动画模式、以及切工程再切回后，编辑视图继续显示动画姿态。快照不完整时
+				// 按模型数据重建 TRS（updateTransform 同时刷新 fix_* 快照）。
+				node.preview_controller.updateTransform(node);
+			} else {
+				if (mesh.fix_rotation) mesh.rotation.copy(mesh.fix_rotation);
+				if (mesh.fix_position) mesh.position.copy(mesh.fix_position);
+			}
 			if (node.constructor.animator.prototype.channels && node.constructor.animator.prototype.channels.scale) {
 				mesh.scale.x = mesh.scale.y = mesh.scale.z = 1;
 			}
