@@ -1,6 +1,7 @@
 import { Canvas } from "../preview/canvas";
 import { autoFixMeshEdit } from "./mesh/auto_fix";
 import { getEditTransformSpace } from "./transform/edit_transform";
+import { rotateEulerBy90 } from "../util/math_util";
 
 //Actions
 export function getSelectionCenter(all = false) {
@@ -146,22 +147,86 @@ export function moveElementsRelative(difference, index, event) { //Multiple
 	autoFixMeshEdit()
 }
 //Rotate
+/**
+ * 反馈#193：Cube/Mesh/SplineMesh.roll 内部的 rotateCoord 每步执行的坐标旋转 R_A（模型空间）。
+ * axis 0 → Rx(+90°)、axis 1 → Ry(-90°)、axis 2 → Rz(+90°)。组节点的 origin/rotation 补偿必须
+ * 使用同一个 R_A，否则组与其子方块会被施加不同的变换（这正是子组带自身旋转角时错位的原因）。
+ */
+function getRollQuaternion(axis, steps) {
+	let rad = Math.PI / 2 * steps;
+	let sign = axis === 1 ? -1 : 1;
+	return new THREE.Quaternion().setFromAxisAngle(
+		new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0),
+		sign * rad
+	);
+}
+/**
+ * 反馈#193：组的刚性 90° 旋转。
+ * world = Π R_n^{o_n}·x（每个节点的 rotation 都绕自身 origin 施加在同一模型空间），因此整棵子树
+ * 绕组枢轴做刚体旋转 R_A 等价于：每个节点 origin ← R_A(origin−pivot)+pivot，且 rotation ← R_A·R·R_A⁻¹。
+ * 子元素（Cube/Mesh/SplineMesh）由各自 roll() 完成等价变换；组一级此前完全没被处理，
+ * 于是合成出 R_A·R_sub 的错序结果。选中组自身的 rotation 若为 0 旋转后仍为 0（工具语义「不带组旋转」）。
+ */
+function rotateGroupRigid(group, axis, steps, pivot, q) {
+	let origin_vec = new THREE.Vector3().fromArray(group.origin).sub(pivot).applyQuaternion(q).add(pivot);
+	group.origin.V3_set([origin_vec.x, origin_vec.y, origin_vec.z]);
+	group.rotation.V3_set(rotateEulerBy90(group.rotation, axis, steps));
+}
+/**
+ * 收集 90° 旋转要一起变换的组节点：选中的组本身 + 其全部后代组。
+ * 选中的组会把后代全部选中，但级联只置 selected，不进 Group.multi_selected，需自行展开。
+ */
+export function getRotateSelectedGroups() {
+	let groups = [];
+	let seen = new Set();
+	Group.multi_selected.forEach(group => {
+		if (!seen.has(group)) { seen.add(group); groups.push(group); }
+		if (typeof group.forEachChild != 'function') return;
+		group.forEachChild(child => {
+			if (child instanceof Group && !seen.has(child)) { seen.add(child); groups.push(child); }
+		});
+	});
+	return groups;
+}
 export function rotateSelected(axis, steps) {
 	let affected = [...Cube.selected, ...Mesh.selected, ...SplineMesh.selected];
-	if (!affected.length) return;
-	Undo.initEdit({elements: affected});
+	let groups = getRotateSelectedGroups();
+	if (!affected.length && !groups.length) return;
 	if (!steps) steps = 1
-	var origin = [8, 8, 8]
-	if (Group.first_selected && Format.bone_rig) {
-		origin = Group.first_selected.origin.slice()
-	} else if (Format.centered_grid) {
-		origin = [0, 0, 0]
-	} else {
-		origin = affected[0].origin.slice()
+	let own_pivot = !!Settings.get('community_rotate_own_pivot') && Format.bone_rig !== true;
+	let origin = [8, 8, 8]
+	if (!own_pivot) {
+		if (Group.first_selected && Format.bone_rig) {
+			origin = Group.first_selected.origin.slice()
+		} else if (Format.centered_grid) {
+			origin = [0, 0, 0]
+		} else if (affected.length) {
+			origin = affected[0].origin.slice()
+		} else {
+			origin = groups[0].origin.slice()
+		}
 	}
+	// 自身枢轴模式：每个被旋转的子树（父级未被选中的最上层节点）绕自己的枢轴自转
+	let pivot_map = new Map();
+	let getPivot = node => {
+		if (!own_pivot) return origin;
+		let cached = pivot_map.get(node);
+		if (cached) return cached;
+		let root = node;
+		while (root.parent instanceof OutlinerNode && root.parent.selected) root = root.parent;
+		let pivot = root.origin.slice();
+		pivot_map.set(node, pivot);
+		return pivot;
+	};
+	let quaternion = getRollQuaternion(axis, steps);
+	Undo.initEdit({elements: affected, groups});
 	affected.forEach(function(obj) {
-		obj.roll(axis, steps, origin)
+		obj.roll(axis, steps, own_pivot ? getPivot(obj) : origin)
 	})
+	groups.forEach(function(group) {
+		rotateGroupRigid(group, axis, steps, new THREE.Vector3().fromArray(getPivot(group)), quaternion);
+	})
+	if (groups.length) Canvas.updateView({elements: affected, groups});
 	updateSelection();
 	Undo.finishEdit('Rotate elements')
 }

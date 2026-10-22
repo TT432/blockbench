@@ -1,5 +1,6 @@
 import { Property } from "../../util/property";
 // import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { rotateEulerBy90 } from "../../util/math_util";
 
 // Add dummy Mesh with vertex keys
 export class SplineTubeFace extends MeshFace {
@@ -555,21 +556,8 @@ export class SplineMesh extends OutlinerElement {
 			}
 		}
 		//Rotations
-		var i = 0;
-		var temp_rot = undefined;
-		var temp_i = undefined;
-		while (i < 3) {
-			if (i !== axis) {
-				if (temp_rot === undefined) {
-					temp_rot = this.rotation[i]
-					temp_i = i
-				} else {
-					this.rotation[temp_i] = -this.rotation[i]
-					this.rotation[i] = temp_rot
-				}
-			}
-			i++;
-		}
+		// 反馈#193：按 R_A·R·R_A⁻¹ 精确共轭（旧的分量交换置换只在单步、单轴时等价）
+		this.rotation.V3_set(rotateEulerBy90(this.rotation, axis, steps));
         this.refreshTubeFaces();
 		this.preview_controller.updateTransform(this);
 		this.preview_controller.updateGeometry(this);

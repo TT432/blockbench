@@ -461,9 +461,13 @@ export class ModelProject {
 		scene.remove(this.model_3d);
 		OutlinerNode.uuids = {};
 		MirrorModeling.cached_elements = {};
+		// 反馈 #194/#197：退出模式必须发生在清空 Project/Format 之前。
+		// Animator.leave() → showDefaultPose() 遍历 Group.all / Outliner.elements，这两者都是
+		// Project.groups / Project.elements 的 getter；先清 Project 会让遍历退化为空数组，
+		// 动画姿态永远停留在该工程常驻的 group.mesh 上，切回工程时被合批重新烘焙成编辑姿势。
+		if (Modes.selected instanceof Mode) Modes.selected.unselect();
 		Blockbench.Format = 0;
 		Blockbench.Project = 0;
-		if (Modes.selected instanceof Mode) Modes.selected.unselect();
 		Settings.updateSettingsInProfiles();
 		
 		// Clear spline gizmos, otherwise they force the project open and glitch out the entire app

@@ -1,5 +1,6 @@
 import { Property } from "../../util/property";
 import { Face } from "../abstract/face";
+import { rotateEulerBy90 } from "../../util/math_util";
 
 export class CubeFace extends Face {
 	constructor(direction, data, cube) {
@@ -430,21 +431,8 @@ export class Cube extends OutlinerElement {
 		}
 
 		//Rotations
-		var i = 0;
-		var temp_rot = undefined;
-		var temp_i = undefined;
-		while (i < 3) {
-			if (i !== axis) {
-				if (temp_rot === undefined) {
-					temp_rot = this.rotation[i]
-					temp_i = i
-				} else {
-					this.rotation[temp_i] = -this.rotation[i]
-					this.rotation[i] = temp_rot
-				}
-			}
-			i++;
-		}
+		// 反馈#193：按 R_A·R·R_A⁻¹ 精确共轭（旧的分量交换置换只在单步、单轴时等价）
+		this.rotation.V3_set(rotateEulerBy90(this.rotation, axis, steps));
 
 		function rotateUVFace(number, iterations) {
 			if (!Format.uv_rotation) return 0;

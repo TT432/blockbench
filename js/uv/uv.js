@@ -987,6 +987,9 @@ export const UVEditor = {
 			mesh.preview_controller.updateUV(mesh);
 		})
 		this.displayTools()
+		// 反馈 #196：滑块拖动直接写 face.uv / uv_offset（Vue 2 观测不到），父级 $forceUpdate
+		// 不会重渲染 uv-editor-element 子组件，面板 UV 矩形因此滞后到下次点选才更新。
+		this.updateUVRevisions()
 		this.vue.$forceUpdate()
 	},
 	slideSize(modify, axis) {
@@ -1020,6 +1023,8 @@ export const UVEditor = {
 		})
 		this.displayTools()
 		this.disableAutoUV()
+		// 反馈 #196：同上，尺寸滑块拖动后同步 UV 面板子组件重渲染。
+		this.updateUVRevisions()
 		this.vue.$forceUpdate()
 	},
 	getResolution(axis, texture) {

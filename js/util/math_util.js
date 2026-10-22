@@ -148,6 +148,41 @@ let string_num_regex = /^-?\d+(\.\d+f?)?$/;
 export function isStringNumber(string) {
 	return typeof string == 'number' || string_num_regex.test(string);
 }
+/**
+ * 反馈#193：90° 旋转（Cube/Mesh/SplineMesh/组通用）时，把节点已有的欧拉旋转值随之做共轭变换
+ * R_A·R·R_A⁻¹，使节点的姿态随坐标系一起刚性转动。
+ *
+ * R_A 必须与 roll()/rotateCoord() 每步实际施加的坐标旋转一致：axis 0 → Rx(+90°)、axis 1 → Ry(-90°)、
+ * axis 2 → Rz(+90°)。旧实现用「交换两个分量并取负」的一次性置换，只在 steps=1 且旋转轴单一时
+ * 等价于共轭；steps=2/3（如 CCW 按钮）或旋转值跨多个轴时会得到错误姿态（组内子块与组本身因此错位）。
+ *
+ * @param rotation 欧拉角数组（度）
+ * @param axis 旋转轴（0/1/2）
+ * @param steps 步数，每步 90°
+ * @param order 欧拉顺序，默认取 Format.euler_order
+ * @returns 变换后的欧拉角（度）
+ */
+export function rotateEulerBy90(rotation, axis, steps, order = (typeof Format != 'undefined' && Format.euler_order) || 'ZYX') {
+	let angle = (axis === 1 ? -1 : 1) * Math.PI / 2 * steps;
+	let axis_vector = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+	let q = new THREE.Quaternion().setFromAxisAngle(axis_vector, angle);
+	let current = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+		Math.degToRad(rotation[0] || 0),
+		Math.degToRad(rotation[1] || 0),
+		Math.degToRad(rotation[2] || 0),
+		order
+	));
+	// 世界姿态 = R_A·R·R_A⁻¹；转回欧拉角后抹掉浮点灰尘（否则 90° 旋转会留下 5.7e-15 这类残值）
+	let result = new THREE.Euler().setFromQuaternion(
+		q.clone().multiply(current).multiply(q.clone().invert()),
+		order
+	);
+	let clean = value => {
+		let deg = Math.round(Math.radToDeg(value) * 1e6) / 1e6;
+		return deg === 0 ? 0 : deg;
+	};
+	return [clean(result.x), clean(result.y), clean(result.z)];
+}
 
 
 Object.assign(window, {

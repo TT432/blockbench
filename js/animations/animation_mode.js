@@ -1665,13 +1665,24 @@ Interface.definePanels(function() {
 				},
 				addCustomVariable() {
 					this.custom_molang_variables.push('');
+					this.markVariableTableEdited();
 				},
 				setCustomVariable(i, value) {
 					// Vue 2 数组下标直接赋值不触发响应式，须用 Vue.set
 					Vue.set(this.custom_molang_variables, i, value);
+					this.markVariableTableEdited();
 				},
 				removeCustomVariable(i) {
 					this.custom_molang_variables.splice(i, 1);
+					this.markVariableTableEdited();
+				},
+				// 反馈 #198：标脏必须在真实编辑入口做。旧实现把 Project.saved = false 放在
+				// custom_molang_variables 的 deep watcher 里，而 refreshCustomMolang() 在
+				// created/select_project/load_project 时都会把 Project 的数组重新赋给 data，
+				// 于是任何工程一打开就被标脏，关闭时永远弹「是否保存模型？」。
+				markVariableTableEdited() {
+					if (typeof Project == 'undefined' || !Project) return;
+					Project.saved = false;
 				},
 				isVariablePanelVisible() {
 					let panel = typeof Panels != 'undefined' && Panels.variable_placeholders;
@@ -1774,11 +1785,11 @@ Interface.definePanels(function() {
 					}
 				},
 				// 变量表编辑（增删/改名）即时生效：高亮重建、展开缓存失效、预览刷新
+				// 注意：这里只做派生副作用，不标脏——标脏在 markVariableTableEdited()（反馈 #198）
 				custom_molang_variables: {
 					deep: true,
 					handler() {
 						if (!Project) return;
-						Project.saved = false;
 						clearCustomMolangCache();
 						if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
 						Animator.preview();
