@@ -458,11 +458,26 @@ export function mirrorSelected(axis) {
 		autoFixMeshEdit()
 	}
 }
+/** 把选区公共镜像中心从模型空间转换到元素数据所使用的父级空间。 */
+function getSharedCenterAlongAxis(element, axis, selection_center) {
+	let point = new THREE.Vector3().fromArray(selection_center);
+	if (!Format.centered_grid) point.sub(new THREE.Vector3(8, 0, 8));
+	element.mesh.parent.updateWorldMatrix(true, false);
+	element.mesh.parent.worldToLocal(point);
+	if (element.parent instanceof Group && element.parent.getTypeBehavior('use_absolute_position')) {
+		point.x += element.parent.origin[0];
+		point.y += element.parent.origin[1];
+		point.z += element.parent.origin[2];
+	}
+	return point.getComponent(axis);
+}
 /**
- * 立方体自身中心沿某轴的坐标（父级空间，含自身旋转与缩放）。
- * 局部翻转以该平面镜像，旋转过的立方体才会只翻转、不整体平移（反馈#192）。
+ * 单元素就地翻转使用几何自身中心（#192）；多元素使用整个选区的中心（#216）。
  */
-function getCubeCenterAlongAxis(cube, axis) {
+function getCubeCenterAlongAxis(cube, axis, selection_center) {
+	if (selection_center && cube.mesh?.parent) {
+		return getSharedCenterAlongAxis(cube, axis, selection_center);
+	}
 	if (!cube.mesh) return Math.lerp(cube.from[axis], cube.to[axis], 0.5);
 	let offset = new THREE.Vector3(
 		(cube.from[0] + cube.to[0]) / 2 - cube.origin[0],
@@ -482,6 +497,9 @@ export function mirrorSelectedInPlace(axis) {
 		outliner: Format.bone_rig || Group.first_selected,
 		selection: true
 	});
+	const selection_center = Outliner.selected.length > 1 && (BarItems.selection_mode.value == 'object' || Group.first_selected)
+		? getSelectionCenter()
+		: null;
 	if (Format.bone_rig) {
 		for (let group of Group.multi_selected) {
 			function flipGroup(group) {
@@ -499,9 +517,10 @@ export function mirrorSelectedInPlace(axis) {
 	}
 	Outliner.selected.forEach(function(obj) {
 		if (obj instanceof Mesh) {
-			obj.flipSelection(axis, obj.origin[axis], true);
+			let center = selection_center ? getSharedCenterAlongAxis(obj, axis, selection_center) : obj.origin[axis];
+			obj.flipSelection(axis, center, !selection_center);
 		} else if (obj instanceof Cube) {
-			obj.flip(axis, getCubeCenterAlongAxis(obj, axis), false);
+			obj.flip(axis, getCubeCenterAlongAxis(obj, axis, selection_center), false);
 		} else {
 			obj.flip(axis, obj.origin[axis], true);
 		}

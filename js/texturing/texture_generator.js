@@ -173,7 +173,7 @@ export const TextureGenerator = {
 		}).show()
 	},
 	appendToTemplateDialog() {
-		let texture = Texture.getDefault();
+		let texture = Format.single_texture ? Texture.getDefault() : Texture.all[0];
 		if (!texture) return;
 		// 反馈#185：整份对话框参数记住上一次确认的值（箱型 UV / 2 的幂 / 保持多纹理占用 /
 		// 清除未引用像素 / 合并面 / 角度阈值 / 内边距），跨对话框、跨工程、跨启动继承。
@@ -188,6 +188,11 @@ export const TextureGenerator = {
 			max_island_angle: 45,
 			padding: false,
 		};
+		const texture_options = {};
+		const selectable_textures = Format.single_texture ? [texture] : Texture.all;
+		selectable_textures.forEach(texture => {
+			texture_options[texture.uuid] = texture.name;
+		});
 		StateMemory.init('texture_append_template_options', 'object', {});
 		let remembered = Object.assign({}, memory_defaults, StateMemory.texture_append_template_options || {});
 		var dialog = new Dialog({
@@ -195,6 +200,7 @@ export const TextureGenerator = {
 			title: tl('action.append_to_template'),
 			width: 480,
 			form: {
+				texture:	{label: 'dialog.sequence_frames.texture', type: 'select', options: texture_options, value: texture.uuid},
 				color: 		{label: 'data.color', type: 'color', colorpicker: TextureGenerator.background_color, toggle_enabled: true, toggle_default: false},
 				box_uv: 	{label: 'dialog.project.uv_mode.box_uv', type: 'checkbox', value: remembered.box_uv, condition: (form) => (!Project.box_uv && Cube.all.length)},
 				power: 		{label: 'dialog.create_texture.power', description: 'dialog.create_texture.power.desc', type: 'checkbox', value: remembered.power},
@@ -206,6 +212,8 @@ export const TextureGenerator = {
 				padding:	{label: 'dialog.create_texture.padding', description: 'dialog.create_texture.padding.desc', type: 'checkbox', value: remembered.padding},
 			},
 			onConfirm(options) {
+				let target = Format.single_texture ? Texture.getDefault() : Texture.all.find(texture => texture.uuid == options.texture);
+				if (!target) return false;
 				dialog.hide()
 				// 只覆盖本次确认里实际出现的字段：条件隐藏的选项（无 cube / 无 mesh 时不显示）
 				// 不会把已记忆的值清成 false。
@@ -219,11 +227,9 @@ export const TextureGenerator = {
 				}
 				StateMemory.set('texture_append_template_options', next);
 				options.rearrange_uv = true;
-				options.resolution = 16 * texture.width / texture.getUVWidth();
-				if (Format.single_texture) {
-					options.texture = Texture.getDefault()
-				}
-				TextureGenerator.generateTemplate(options, texture);
+				options.resolution = 16 * target.width / target.getUVWidth();
+				options.texture = target;
+				TextureGenerator.generateTemplate(options, target);
 				return false;
 			}
 		}).show()
@@ -485,7 +491,7 @@ export const TextureGenerator = {
 	},
 	//Face Template
 	async generateTemplate(options, makeTexture) {
-		let res_multiple = options.resolution / 16;
+		let res_multiple;
 		let background_color = options.color;
 		let new_resolution = [];
 		let box_uv_templates = [];
@@ -517,7 +523,7 @@ export const TextureGenerator = {
 			});
 			if (makeTexture instanceof Texture) involved.add(makeTexture);
 			await Promise.all([...involved].map(t => new Promise(resolve => {
-				if (!t.img || (t.img.complete && t.img.naturalWidth > 0)) return resolve();
+				if (!t.img || (t.width > 0 && t.img.complete && t.img.naturalWidth > 0)) return resolve();
 				let done = false;
 				let finish = () => { if (!done) { done = true; resolve(); } };
 				t.img.addEventListener('load', finish, {once: true});
@@ -525,6 +531,11 @@ export const TextureGenerator = {
 				setTimeout(finish, 15000);
 			})));
 		}
+		// options.resolution 可能是在图片尚未解码时计算的 0/NaN；等待完成后才能信赖目标尺寸。
+		if ((!Number.isFinite(Number(options.resolution)) || Number(options.resolution) <= 0) && makeTexture instanceof Texture) {
+			options.resolution = 16 * makeTexture.width / makeTexture.getUVWidth();
+		}
+		res_multiple = options.resolution / 16;
 		function faceRect(cube, face_key, tex, x, y, face_old_pos_id) {
 			this.cube = cube;
 			this.face = cube.faces[face_key];
