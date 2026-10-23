@@ -634,6 +634,12 @@ var news_call = $.ajax({
 	url: 'https://web.blockbench.net/content/news.json',
 	dataType: 'json'
 });
+function updateStartScreenWidth() {
+	const update = () => Interface.Resizers.start_screen_width?.update();
+	if (Interface.Resizers.start_screen_width) update();
+	else if (StartScreen.vue) StartScreen.vue.$nextTick(update);
+}
+
 documentReady.then(() => {
 
 	//Bluesky
@@ -769,7 +775,7 @@ documentReady.then(() => {
 			`
 		}).$mount(section);
 	}
-	Interface.Resizers.start_screen_width.update();
+	updateStartScreenWidth();
 })
 Promise.all([news_call, documentReady]).then((results) => {
 	if (!results || !results[0]) return;
@@ -804,7 +810,7 @@ Promise.all([news_call, documentReady]).then((results) => {
 			addStartScreenSection('psa', data.psa);
 		})()
 	}
-	Interface.Resizers.start_screen_width.update();
+	updateStartScreenWidth();
 })
 
 

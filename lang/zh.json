@@ -3123,6 +3123,8 @@
 	"action.create_smart_object.description": "把该组标记为智能对象，并在独立标签页中单独编辑其内容",
 	"action.edit_smart_object": "编辑智能对象",
 	"action.edit_smart_object.description": "打开专门编辑该组内容的标签页",
+	"action.demote_smart_object": "转为普通组",
+	"action.demote_smart_object.description": "取消智能对象标记，关闭对应编辑标签页并保留当前内容",
 	"action.open_smart_object_parent": "返回主工程",
 	"action.open_smart_object_parent.description": "切换回包含该智能对象的工程"
 }

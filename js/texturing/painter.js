@@ -1855,7 +1855,8 @@ export const Painter = {
 			(even_brush_size ? y : y + 0.5) / getUVFactorY(source_element)
 		];
 
-		// 源点的世界坐标与世界法线
+		// 源点与源法线必须使用同一帧的世界矩阵；直接修改 TRS 后 localToWorld 不会自行刷新。
+		source_element.mesh.updateWorldMatrix(true, false);
 		let world_point = source_element.mesh.localToWorld(source_face.UVToLocal(source_uv));
 		let world_normal = source_element instanceof Cube
 			? new THREE.Vector3().fromArray(cube_face_direction_normals[source_face.direction])
@@ -1989,10 +1990,15 @@ export const Painter = {
 		let getWorldCorners = (element) => {
 			let points = [];
 			if (element instanceof Cube) {
-				for (let cx of [element.from[0], element.to[0]])
-					for (let cy of [element.from[1], element.to[1]])
-						for (let cz of [element.from[2], element.to[2]])
-							points.push(new THREE.Vector3(cx, cy, cz));
+				// #207：与 CubePreviewController.updateGeometry 同口径——先膨胀/拉伸，再减枢轴。
+				// 直接使用绝对 from/to 会让块级镜像优选在偏移枢轴模型上失效并无序回退到错误面。
+				let from = element.from.slice();
+				let to = element.to.slice();
+				adjustFromAndToForInflateAndStretch(from, to, element);
+				for (let cx of [from[0], to[0]])
+					for (let cy of [from[1], to[1]])
+						for (let cz of [from[2], to[2]])
+							points.push(new THREE.Vector3(cx - element.origin[0], cy - element.origin[1], cz - element.origin[2]));
 			} else {
 				let keys = Object.keys(element.vertices);
 				if (keys.length > 200) return null;	// 顶点过多时放弃块级优选，退回物理位置匹配

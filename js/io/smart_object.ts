@@ -1,26 +1,29 @@
 /**
- * 智能对象（反馈 #205）
+ * 智能对象（反馈 #205、#210–#213、#215）
  *
- * 模型内的一个组可以标记为「智能对象」：标记后该组在大纲里显示特殊图标，
- * 并可以在一个独立标签页里单独编辑组内的内容；两个标签页的改动互相同步，
- * 但数据始终只存在主工程的同一个文件里（智能对象标签本身不落盘）。
- *
- * 实现依据（本工程架构约束）：
- * - 一个标签页 = 一个 ModelProject；Blockbench.Project / Format / Outliner / Texture.all / Undo
- *   都是「当前标签页」的单例，因此同一个 Project 不可能同时驱动两个视图；
- * - 唯一可行的形态是「两份对象副本 + 显式同步」，与贴图的 image-editor 标签
- *   （textures.js：openInImageEditor / syncToOtherProject）同构；
- * - 同步只能发生在「目标工程是当前选中工程」的时刻（新建元素会写全局 Project 数组），
- *   所以离开标签页时先取快照，到达目标标签页后再应用；
- * - 元素 uuid 全程保留，主工程里的关键帧/动画器引用不会因为同步失效。
+ * 一个标签页仍对应一个 ModelProject，但智能对象标签只是主工程中某个根组的内容视图：
+ * - 子页不包含根组，Outliner.root 就是根组的 children；根组变换只属于主工程。
+ * - 主工程与它的所有子页共享一个 SmartUndoSystem。切页同步只物化状态，不产生历史。
+ * - 子页历史快照带有可投影到主工程根组的 fragment；undo/redo 始终在主工程上执行。
+ * - 元素 uuid 全程保留，重建子树时继续走 detachNode，不解绑主工程动画器。
  */
 
 type SmartTabState = {
 	parent_uuid: UUID
 	group_uuid: UUID
+	/** 最近一次从主工程生成、或已经成功推回主工程的内容签名 */
+	parent_signature: string
 };
 
 type OutlinerSaveItem = UUID | {uuid: UUID, isOpen?: boolean, children: OutlinerSaveItem[]};
+type PendingPush = {tab_uuid: UUID, fragment: SmartFragment};
+type SmartProjection = {root_uuid: UUID, fragment: SmartFragment};
+type SmartUndoSave = UndoSave & {
+	smart_owner_uuid?: UUID
+	smart_projection?: SmartProjection
+};
+type SmartSelectionSave = UndoSelectionSave & {smart_owner_uuid?: UUID};
+type TransientUndoSystem = UndoSystem & {current_selection_save?: SmartSelectionSave};
 
 /** 贴图同步载荷：getUndoCopy 的推断类型缺少索引签名，这里显式命名用到的字段 */
 export type TextureSyncCopy = {
@@ -31,24 +34,18 @@ export type TextureSyncCopy = {
 	uv_height?: number
 } & Record<string, unknown>;
 
+/** 内容快照。根组只由 root_uuid 标识，绝不携带根组属性或变换。 */
 export type SmartFragment = {
 	root_uuid: UUID
-	root: Group
 	elements: Record<string, unknown>[]
 	groups: Group[]
 	outliner: OutlinerSaveItem[]
 	textures: {uuid: UUID, copy: TextureSyncCopy}[]
 };
 
-/**
- * 智能对象标签页的运行态（不写进模型文件，也不占用 ModelProject 的字段）。
- *
- * 同步载荷单独排队而不挂在标签页对象上：标签页关闭后，它最后的改动仍要能在
- * 主工程下次被选中时合并回去。
- */
 const tab_states = new Map<UUID, SmartTabState>();
 /** 待推送：key = 主工程 uuid，按来源标签页去重（保留最新一份），按入队顺序应用 */
-const pending_pushes = new Map<UUID, {tab_uuid: UUID, fragment: SmartFragment}[]>();
+const pending_pushes = new Map<UUID, PendingPush[]>();
 /** 待拉取：key = 智能对象标签页 uuid */
 const pending_pulls = new Map<UUID, SmartFragment>();
 
@@ -70,11 +67,110 @@ function queuePush(parent_uuid: UUID, tab_uuid: UUID, fragment: SmartFragment | 
 	else queue.push({tab_uuid, fragment});
 	pending_pushes.set(parent_uuid, queue);
 }
+function removePendingPush(tab_uuid: UUID | undefined, parent_uuid?: UUID, group_uuid?: UUID) {
+	const parents = parent_uuid ? [parent_uuid] : Array.from(pending_pushes.keys());
+	for (const uuid of parents) {
+		const queue = pending_pushes.get(uuid);
+		if (!queue) continue;
+		const filtered = queue.filter(entry => {
+			if (entry.tab_uuid == tab_uuid) return false;
+			return !(group_uuid && entry.fragment.root_uuid == group_uuid);
+		});
+		if (filtered.length) pending_pushes.set(uuid, filtered);
+		else pending_pushes.delete(uuid);
+	}
+}
 function isGroupNode(node: OutlinerNode): node is Group {
 	return !!node && node.type == 'group';
 }
 function isSaveGroup(item: unknown): item is {uuid: UUID, isOpen?: boolean, children: OutlinerSaveItem[]} {
 	return typeof item == 'object' && item !== null && 'uuid' in item;
+}
+function setProjectUndo(project: ModelProject, undo: SmartUndoSystem) {
+	// _static 本身冻结，但 properties 容器是既有的可变工程属性表。
+	project._static.properties.undo = undo;
+}
+
+/**
+ * 主工程拥有的共享时间线。子页发起的 undo/redo 先物化到主工程再执行，
+ * 避免子页局部 Outliner 快照直接在主工程回放。
+ */
+class SmartUndoSystem extends UndoSystem {
+	parent_uuid: UUID;
+	replaying = false;
+
+	constructor(parent_uuid: UUID, source?: UndoSystem) {
+		super();
+		this.parent_uuid = parent_uuid;
+		if (source) {
+			this.history = source.history;
+			this.index = source.index;
+		}
+	}
+	replayInParent(direction: 'undo' | 'redo', remote?: boolean, amended?: boolean): boolean {
+		if (this.replaying || !(Project instanceof ModelProject) || Project.uuid == this.parent_uuid) return false;
+		const tab = Project;
+		const parent = ModelProject.all.find(project => project.uuid == this.parent_uuid);
+		if (!parent) return false;
+
+		this.replaying = true;
+		const old_index = this.index;
+		try {
+			// select 会先把所有子页的最新内容物化到主工程，且不会增加历史。
+			if (!parent.select()) return true;
+			if (direction == 'undo') this.undo(remote, amended);
+			else this.redo(remote, amended);
+
+			if (ModelProject.all.includes(tab) && tab_states.has(tab.uuid)) {
+				tab.select();
+				// 选择历史同样返回到子页；不存在的 UUID 会被 selectionSave 自己过滤。
+				if (this.index != old_index) {
+					const entry = direction == 'undo' ? this.history[this.index] : this.history[this.index - 1];
+					const selection = direction == 'undo' ? entry?.selection_before : entry?.selection_post;
+					if (selection && typeof selection.load == 'function') selection.load();
+				}
+			}
+		} finally {
+			this.replaying = false;
+		}
+		return true;
+	}
+	undo(remote?: boolean, amended?: boolean): void {
+		if (this.replayInParent('undo', remote, amended)) return;
+		super.undo(remote, amended);
+	}
+	redo(remote?: boolean, amended?: boolean): void {
+		if (this.replayInParent('redo', remote, amended)) return;
+		super.redo(remote, amended);
+	}
+	loadSave(save: UndoSave, reference: UndoSave, mode?: 'session'): void {
+		const projection = (save as SmartUndoSave).smart_projection;
+		if (projection && Project instanceof ModelProject && Project.uuid == this.parent_uuid) {
+			// bbmodel 读回的 plain object 也走这里，不依赖 instanceof UndoSystem.save。
+			SmartObject.applyFragment(Project, projection.fragment);
+			Blockbench.dispatchEvent('load_undo_save', {save, reference, mode});
+			return;
+		}
+		super.loadSave(save, reference, mode);
+	}
+}
+
+function ensureSharedUndo(parent: ModelProject): SmartUndoSystem {
+	if (parent.undo instanceof SmartUndoSystem) {
+		const shared = parent.undo;
+		ModelProject.all.forEach(tab => {
+			if (stateOf(tab)?.parent_uuid == parent.uuid) setProjectUndo(tab, shared);
+		});
+		return shared;
+	}
+	SmartObject.settleTransient(parent);
+	parent.undo.closeAmendEditMenu();
+	const shared = new SmartUndoSystem(parent.uuid, parent.undo);
+	setProjectUndo(parent, shared);
+	ModelProject.all.forEach(tab => {
+		if (stateOf(tab)?.parent_uuid == parent.uuid) setProjectUndo(tab, shared);
+	});
+	return shared;
 }
 
 export const SmartObject = {
@@ -102,20 +198,24 @@ export const SmartObject = {
 	},
 
 	// =========================================================================
-	// 入口
+	// 入口 / 生命周期
 	// =========================================================================
 	markGroup(group: Group) {
 		if (!group || group.smart_object) return;
+		const group_uuid = group.uuid;
 		Undo.initEdit({groups: [group]});
-		group.smart_object = true;
+		const current = Project.groups.find(item => item.uuid == group_uuid);
+		if (current) current.smart_object = true;
 		Undo.finishEdit('Create smart object');
 		Outliner.updateNodeDisplayRules();
 	},
 	/** 大纲右键 →「创建为智能对象」：打标记并打开编辑标签页 */
 	createFromGroup(group: Group) {
 		if (!group || group.type != 'group') return;
+		const group_uuid = group.uuid;
 		this.markGroup(group);
-		this.openGroup(group);
+		const current = Project.groups.find(item => item.uuid == group_uuid);
+		if (current) this.openGroup(current);
 	},
 	/** 打开（或切换到）智能对象的编辑标签页 */
 	openGroup(group: Group) {
@@ -123,32 +223,37 @@ export const SmartObject = {
 		if (!group.smart_object) this.markGroup(group);
 		const parent = Project;
 		if (this.isSmartTab(parent)) return;
+		const group_uuid = group.uuid;
+		const current_group = parent.groups.find(item => item.uuid == group_uuid);
+		if (!current_group) return;
 
-		const existing = this.getTab(parent.uuid, group.uuid);
+		const shared_undo = ensureSharedUndo(parent);
+		const existing = this.getTab(parent.uuid, group_uuid);
 		if (existing) {
 			existing.select();
 			return existing;
 		}
 
 		// 快照必须在主工程选中时生成（保存拷贝依赖全局 Texture.all 等）
-		const fragment = this.buildFragment(parent, group.uuid);
+		const fragment = this.buildFragment(parent, group_uuid);
 		if (!fragment) return;
-
 		const parent_uuid = parent.uuid;
-		const tab_name = group.name || tl('data.group');
+		const tab_name = current_group.name || tl('data.group');
 
 		setupProject(parent.format);
 		const tab = Project;
 		tab_states.set(tab.uuid, {
 			parent_uuid,
-			group_uuid: group.uuid,
+			group_uuid,
+			parent_signature: this.fragmentSignature(fragment),
 		});
+		setProjectUndo(tab, shared_undo);
 		tab.name = tab_name;
 		tab.box_uv = parent.box_uv;
 		tab.texture_width = parent.texture_width;
 		tab.texture_height = parent.texture_height;
 		tab.mode = 'edit';
-		this.applyFragment(tab, fragment, {create_root: true, undo: false});
+		this.applyFragment(tab, fragment);
 		tab.saved = true;
 		setProjectTitle(tab_name);
 		if (Interface.tab_bar) Interface.tab_bar.$forceUpdate();
@@ -159,50 +264,89 @@ export const SmartObject = {
 		if (parent) parent.select();
 		return parent;
 	},
+	/** 主动退化：先合并内容，再以普通 Undo transaction 去除标记，最后关闭标签。 */
+	demoteGroup(group: Group) {
+		if (!group || !group.smart_object || this.isSmartTab()) return;
+		const parent = Project;
+		const group_uuid = group.uuid;
+		this.pushPending(parent);
+		const current = parent.groups.find(item => item.uuid == group_uuid);
+		if (!current) {
+			this.invalidateGroup(parent.uuid, group_uuid);
+			return;
+		}
+		Undo.initEdit({groups: [current]});
+		const edited = parent.groups.find(item => item.uuid == group_uuid);
+		if (edited) edited.smart_object = false;
+		Undo.finishEdit('Demote smart object');
+		this.invalidateGroup(parent.uuid, group_uuid);
+		Outliner.updateNodeDisplayRules();
+	},
+	/** 供 Group.remove 在真正移除前调用。已删除/退化的对象不允许由旧队列复活。 */
+	onGroupRemoved(group: Group) {
+		if (!group || !(Project instanceof ModelProject) || this.isSmartTab(Project)) return;
+		this.invalidateGroup(Project.uuid, group.uuid);
+	},
+	invalidateGroup(parent_uuid: UUID, group_uuid: UUID) {
+		removePendingPush(undefined, parent_uuid, group_uuid);
+		const tab = this.getTab(parent_uuid, group_uuid);
+		if (tab) this.discardTab(tab);
+	},
 
 	// =========================================================================
 	// 快照 / 应用
 	// =========================================================================
-	/** 生成某个组子树的快照（源工程必须是当前选中工程） */
+	/** 生成内容快照（源工程必须是当前选中工程）。子页以 Outliner.root 为虚拟根。 */
 	buildFragment(project: ModelProject, root_uuid?: UUID): SmartFragment | null {
 		if (!root_uuid) return null;
-		const root = project.groups.find(group => group.uuid == root_uuid);
-		if (!root) return null;
+		const tab_state = stateOf(project);
+		let content: OutlinerNode[];
+		if (tab_state) {
+			if (tab_state.group_uuid != root_uuid) return null;
+			content = project.outliner;
+		} else {
+			const root = project.groups.find(group => group.uuid == root_uuid);
+			if (!root) return null;
+			content = root.children;
+		}
 
 		const meta = syncMeta();
 		const elements: Record<string, unknown>[] = [];
 		const groups: Group[] = [];
 		const texture_uuids = new Set<UUID>();
 
-		const collectOutliner = (node: Group): OutlinerSaveItem[] => {
+		const collectOutliner = (nodes: OutlinerNode[]): OutlinerSaveItem[] => {
 			const result: OutlinerSaveItem[] = [];
-			for (const child of node.children) {
+			for (const child of nodes) {
 				if (isGroupNode(child)) {
-					result.push({uuid: child.uuid, isOpen: !!child.isOpen, children: collectOutliner(child)});
+					result.push({uuid: child.uuid, isOpen: !!child.isOpen, children: collectOutliner(child.children)});
 				} else {
 					result.push(child.uuid);
 				}
 			}
 			return result;
 		};
-
-		root.forEachChild(node => {
-			if (isGroupNode(node)) {
-				groups.push(node.getSaveCopy(false));
-				if (node.texture) texture_uuids.add(node.texture);
-			} else {
-				const copy = node.getSaveCopy(meta) as Record<string, unknown>;
-				elements.push(copy);
-				const faces = copy.faces;
-				if (faces && typeof faces == 'object') {
-					for (const fkey in faces) {
-						const texture_uuid = (faces as Record<string, {texture?: unknown}>)[fkey]?.texture;
-						if (typeof texture_uuid == 'string' && texture_uuid) texture_uuids.add(texture_uuid);
+		const collectNodes = (nodes: OutlinerNode[]) => {
+			for (const node of nodes) {
+				if (isGroupNode(node)) {
+					groups.push(structuredClone(node.getSaveCopy(false)));
+					if (node.texture) texture_uuids.add(node.texture);
+					collectNodes(node.children);
+				} else {
+					const copy = structuredClone(node.getSaveCopy(meta)) as Record<string, unknown>;
+					elements.push(copy);
+					const faces = copy.faces;
+					if (faces && typeof faces == 'object') {
+						for (const fkey in faces) {
+							const texture_uuid = (faces as Record<string, {texture?: unknown}>)[fkey]?.texture;
+							if (typeof texture_uuid == 'string' && texture_uuid) texture_uuids.add(texture_uuid);
+						}
 					}
+					if (node.texture) texture_uuids.add(node.texture);
 				}
-				if (node.texture) texture_uuids.add(node.texture);
 			}
-		});
+		};
+		collectNodes(content);
 
 		const textures: SmartFragment['textures'] = [];
 		project.textures.forEach(texture => {
@@ -213,44 +357,43 @@ export const SmartObject = {
 
 		return {
 			root_uuid,
-			root: root.getSaveCopy(false),
 			elements,
 			groups,
-			outliner: collectOutliner(root),
+			outliner: collectOutliner(content),
 			textures,
 		};
 	},
-	/** 把快照应用到目标工程（目标必须是当前选中工程） */
-	applyFragment(project: ModelProject, fragment?: SmartFragment | null, options: {create_root?: boolean, undo?: boolean} = {}) {
-		if (!fragment) return;
-		const use_undo = options.undo !== false;
+	/** 把内容快照物化到目标工程；永不创建根组、写 Undo 或同步根组变换。 */
+	applyFragment(project: ModelProject, fragment?: SmartFragment | null): boolean {
+		if (!fragment || Project !== project) return false;
+		const tab_state = stateOf(project);
+		let root: Group | undefined;
+		if (tab_state) {
+			const parent = ModelProject.all.find(item => item.uuid == tab_state.parent_uuid);
+			if (!parent?.groups.some(group => group.uuid == tab_state.group_uuid)) {
+				this.discardTab(project);
+				return false;
+			}
+		} else {
+			root = project.groups.find(group => group.uuid == fragment.root_uuid);
+			if (!root) {
+				this.invalidateGroup(project.uuid, fragment.root_uuid);
+				return false;
+			}
+		}
 		const old_elements: OutlinerElement[] = [];
 		const old_groups: Group[] = [];
-		const new_elements: OutlinerElement[] = [];
-		const new_groups: Group[] = [];
-		const textures: Texture[] = [];
-
-		let root = project.groups.find(group => group.uuid == fragment.root_uuid);
-
-		if (use_undo) {
-			if (root) {
-				root.forEachChild(node => {
-					if (isGroupNode(node)) old_groups.push(node);
-					else old_elements.push(node);
-				});
+		const collectOld = (nodes: OutlinerNode[]) => {
+			for (const node of nodes) {
+				if (isGroupNode(node)) {
+					old_groups.push(node);
+					collectOld(node.children);
+				} else {
+					old_elements.push(node);
+				}
 			}
-			fragment.textures.forEach(entry => {
-				const texture = project.textures.find(tex => tex.uuid == entry.uuid);
-				if (texture) textures.push(texture);
-			});
-			Undo.initEdit({
-				elements: old_elements,
-				groups: old_groups,
-				textures,
-				bitmap: textures.length > 0,
-				outliner: true,
-			});
-		}
+		};
+		collectOld(root ? root.children : project.outliner);
 
 		// 1. 贴图：同 uuid 覆盖像素与属性，缺失则新建
 		fragment.textures.forEach(entry => {
@@ -269,48 +412,24 @@ export const SmartObject = {
 			}
 		});
 
-		// 2. 根组自身属性
-		if (!root) {
-			root = new Group(fragment.root, fragment.root_uuid).init();
-			if (options.create_root) {
-				root.removeFromParent();
-				project.outliner.push(root);
-				root.parent = Outliner.ROOT;
-				root.isOpen = true;
-			}
-		} else {
-			// 大纲展开状态属于各标签页自己的视图状态，不跟着内容同步
-			const is_open = root.isOpen;
-			root.extend(fragment.root);
-			if (fragment.root.origin) root.origin.V3_set(fragment.root.origin);
-			if (fragment.root.rotation) root.rotation.V3_set(fragment.root.rotation);
-			root.isOpen = is_open;
-		}
-
-		// 3. 清掉旧子树（不走 node.remove()：它会解绑动画器，主工程的关键帧必须保留）
+		// 2. 清掉旧内容（不走 node.remove()：它会解绑动画器）
 		old_elements.concat(old_groups).forEach(node => this.detachNode(node, project));
 
-		// 4. 按快照重建元素与子组（uuid 保留）
+		// 3. 按快照重建元素与后代组（uuid 保留）
 		fragment.elements.forEach(copy => {
-			const element = OutlinerElement.fromSave(copy, true);
-			if (element) new_elements.push(element);
+			OutlinerElement.fromSave(copy, true);
 		});
 		fragment.groups.forEach(copy => {
-			new_groups.push(new Group(copy, copy.uuid).init());
+			new Group(copy, copy.uuid).init();
 		});
 
-		// 5. 重建大纲结构
-		root.children.empty();
-		this.attachOutliner(fragment.outliner, root);
-
-		if (use_undo) {
-			Undo.finishEdit('Sync smart object', {
-				elements: old_elements.concat(new_elements),
-				groups: old_groups.concat(new_groups),
-				textures,
-				bitmap: textures.length > 0,
-				outliner: true,
-			});
+		// 4. 主工程挂到现存根组，子页挂到 Outliner.root 虚拟根
+		if (root) {
+			root.children.empty();
+			this.attachOutliner(fragment.outliner, root);
+		} else {
+			project.outliner.empty();
+			this.attachOutliner(fragment.outliner, null);
 		}
 
 		Canvas.updateAllFaces();
@@ -319,15 +438,16 @@ export const SmartObject = {
 		Outliner.updateNodeDisplayRules();
 		updateSelection();
 		if (!Modes.animate && !Modes.pose) Animator.showDefaultPose(true);
-		return this;
+		return true;
 	},
-	attachOutliner(list: OutlinerSaveItem[], parent: Group) {
+	attachOutliner(list: OutlinerSaveItem[], parent: Group | null) {
+		const children = parent ? parent.children : Outliner.root;
 		for (const item of list) {
 			const node = OutlinerNode.uuids[isSaveGroup(item) ? item.uuid : item];
 			if (!node) continue;
 			node.removeFromParent();
-			parent.children.push(node);
-			node.parent = parent;
+			children.push(node);
+			node.parent = parent || Outliner.ROOT;
 			if (isSaveGroup(item)) {
 				node.isOpen = !!item.isOpen;
 				if (isGroupNode(node)) {
@@ -354,7 +474,7 @@ export const SmartObject = {
 	},
 
 	// =========================================================================
-	// 双向同步
+	// 双向同步（只物化状态，不写历史）
 	// =========================================================================
 	fragmentSignature(fragment?: SmartFragment | null): string {
 		if (!fragment) return '';
@@ -366,107 +486,169 @@ export const SmartObject = {
 			}
 			return [entry.uuid, entry.copy.name, entry.copy.uv_width, entry.copy.uv_height, data.length, hash];
 		});
-		// 大纲展开状态不同步，签名里剔除以避免切换标签页时反复重建
-		const root_copy = Object.assign({}, fragment.root, {isOpen: undefined});
+		// 展开状态是每个标签自己的视图状态，不参与内容相等判断。
+		const groups = fragment.groups.map(group => Object.assign({}, group, {isOpen: undefined}));
+		const outliner = (nodes: OutlinerSaveItem[]): unknown[] => nodes.map(item => {
+			if (!isSaveGroup(item)) return item;
+			return [item.uuid, outliner(item.children)];
+		});
 		return JSON.stringify([
 			fragment.elements,
-			fragment.groups,
-			fragment.outliner,
-			root_copy,
+			groups,
+			outliner(fragment.outliner),
 			texture_signature,
 		]);
 	},
+	/** 结束当前工程尚未完成的事务，绝不让共享 current_save 跨工程提交。 */
+	settleTransient(project: ModelProject) {
+		const undo = project.undo as TransientUndoSystem;
+		if (!undo) return;
+		const current_save = undo.current_save as SmartUndoSave | undefined;
+		if (current_save) {
+			if (current_save.smart_owner_uuid && current_save.smart_owner_uuid != project.uuid) {
+				delete undo.current_save;
+			} else {
+				undo.cancelEdit(true);
+			}
+		}
+		const selection_save = undo.current_selection_save;
+		if (selection_save) {
+			if (selection_save.smart_owner_uuid && selection_save.smart_owner_uuid != project.uuid) {
+				delete undo.current_selection_save;
+			} else {
+				undo.cancelSelection(true);
+			}
+		}
+	},
 	/** 离开某个工程前抓快照（此时它仍是选中工程） */
 	onProjectUnselected(project: ModelProject) {
+		if (project.undo instanceof SmartUndoSystem) this.settleTransient(project);
 		const state = stateOf(project);
 		if (state) {
 			const fragment = this.buildFragment(project, state.group_uuid);
 			const parent = this.parentProject(project);
-			if (parent) {
+			if (parent && fragment && this.fragmentSignature(fragment) != state.parent_signature) {
 				queuePush(parent.uuid, project.uuid, fragment);
-				if (fragment) parent.saved = false;
 			}
 		}
-		ModelProject.all.forEach(tab => {
+		const invalid_tabs: ModelProject[] = [];
+		ModelProject.all.slice().forEach(tab => {
 			const tab_state = stateOf(tab);
 			if (tab_state && tab_state.parent_uuid == project.uuid) {
 				const fragment = this.buildFragment(project, tab_state.group_uuid);
-				if (fragment) pending_pulls.set(tab.uuid, fragment);
+				if (fragment) {
+					pending_pulls.set(tab.uuid, fragment);
+					tab_state.parent_signature = this.fragmentSignature(fragment);
+				} else {
+					invalid_tabs.push(tab);
+				}
 			}
 		});
+		invalid_tabs.forEach(tab => this.discardTab(tab));
 	},
-	/** 进入某个工程后应用待同步的快照（此时它是选中工程） */
+	/** 进入某个工程后应用待同步快照（此时它是选中工程） */
 	onProjectLoaded(project: ModelProject) {
+		if (project.undo instanceof SmartUndoSystem) this.settleTransient(project);
 		const state = stateOf(project);
 		if (state) {
+			const parent = this.parentProject(project);
+			if (!parent?.groups.some(group => group.uuid == state.group_uuid)) {
+				this.discardTab(project);
+				return;
+			}
 			const fragment = pending_pulls.get(project.uuid);
 			pending_pulls.delete(project.uuid);
-			if (!fragment || !this.parentProject(project)) return;
-			// 本标签页还有未合并回主工程的改动时，它的数据更新，不能被主工程的旧状态覆盖
+			if (!fragment) return;
+			// 本标签页还有未合并回主工程的改动时，它的数据更新，不能被主工程旧状态覆盖。
 			const queued = pending_pushes.get(state.parent_uuid);
 			if (queued && queued.some(entry => entry.tab_uuid == project.uuid)) return;
 			const current = this.buildFragment(project, state.group_uuid);
 			if (this.fragmentSignature(fragment) == this.fragmentSignature(current)) return;
-			this.applyFragment(project, fragment, {create_root: false, undo: true});
-			// 快照替换了工程内容，旧 undo 记录引用的对象已不存在
-			this.clearUndo(project);
+			this.applyFragment(project, fragment);
 		} else {
+			// 即使尚未重新打开子页，bbmodel 中的 projection 历史也必须由共享实现回放。
+			ensureSharedUndo(project);
 			this.pushPending(project);
 		}
 	},
 	pushPending(project: ModelProject): boolean {
 		const queue = pending_pushes.get(project.uuid);
-		if (!queue || !queue.length) return false;
+		if (!queue || !queue.length || Project !== project) return false;
 		pending_pushes.delete(project.uuid);
+		let changed = false;
 		for (const entry of queue) {
-			this.applyFragment(project, entry.fragment, {create_root: false, undo: true});
+			const current = this.buildFragment(project, entry.fragment.root_uuid);
+			if (!current) {
+				this.invalidateGroup(project.uuid, entry.fragment.root_uuid);
+				continue;
+			}
+			const signature = this.fragmentSignature(entry.fragment);
+			if (signature == this.fragmentSignature(current)) {
+				const state = tab_states.get(entry.tab_uuid);
+				if (state) state.parent_signature = signature;
+				continue;
+			}
+			if (this.applyFragment(project, entry.fragment)) {
+				changed = true;
+				const state = tab_states.get(entry.tab_uuid);
+				if (state) state.parent_signature = signature;
+			}
 		}
-		project.saved = false;
-		return true;
-	},
-	clearUndo(project: ModelProject) {
-		const undo = project.undo;
-		if (!undo) return;
-		undo.history.empty();
-		undo.index = 0;
-		if (undo.current_save) delete undo.current_save;
+		if (changed) project.saved = false;
+		return changed;
 	},
 	/** 智能对象标签里保存 = 把改动推回主工程并保存主工程 */
 	saveFromTab() {
 		const tab = Project;
 		const parent = this.parentProject(tab);
-		if (!parent) return;
-		parent.select();	// 选中过程会把待推送快照应用到主工程
+		if (!parent || !parent.select()) return;
 		parent.saved = false;
 		BarItems.save_project.trigger();
-		tab.select();
+		if (ModelProject.all.includes(tab) && tab_states.has(tab.uuid)) tab.select();
 	},
 	/** 关闭前处理：标签页抓快照，主工程应用待推送快照 */
 	onBeforeClose(project: ModelProject) {
+		if (project.undo instanceof SmartUndoSystem) this.settleTransient(project);
 		const state = stateOf(project);
 		if (state) {
 			const fragment = this.buildFragment(project, state.group_uuid);
 			const parent = this.parentProject(project);
-			if (parent) {
+			if (parent && fragment && this.fragmentSignature(fragment) != state.parent_signature) {
 				queuePush(parent.uuid, project.uuid, fragment);
-				if (fragment) parent.saved = false;
 			}
 			project.saved = true;
 		} else {
 			this.pushPending(project);
 		}
 	},
-	/** 主工程关闭后丢弃它的智能对象标签（内容已在 pushPending 里合并） */
+	/** 正常关闭子页保留最后 push；关闭主工程则丢弃它的所有子页和队列。 */
 	onProjectClosed(project: ModelProject) {
+		const state = stateOf(project);
+		if (state) {
+			tab_states.delete(project.uuid);
+			pending_pulls.delete(project.uuid);
+			return;
+		}
 		pending_pushes.delete(project.uuid);
-		ModelProject.all.filter(tab => {
-			const state = stateOf(tab);
-			return !!state && state.parent_uuid == project.uuid;
-		}).forEach(tab => this.discardTab(tab));
+		ModelProject.all.slice().filter(tab => stateOf(tab)?.parent_uuid == project.uuid)
+			.forEach(tab => this.discardTab(tab));
 	},
+	/** 失效关闭：先删状态与 pending，再处理当前标签，避免关闭钩子重新入队。 */
 	discardTab(tab: ModelProject) {
-		if (!tab || Project === tab) return;
+		if (!tab) return;
+		const state = stateOf(tab);
 		tab_states.delete(tab.uuid);
+		pending_pulls.delete(tab.uuid);
+		removePendingPush(tab.uuid);
+
+		if (Project === tab) {
+			const parent = state && ModelProject.all.find(project => project.uuid == state.parent_uuid);
+			if (parent) parent.select();
+			else {
+				tab.close(true);
+				return;
+			}
+		}
 		const data = ProjectData[tab.uuid];
 		if (data) {
 			for (const uuid in data.nodes_3d) {
@@ -481,6 +663,27 @@ export const SmartObject = {
 		delete ProjectData[tab.uuid];
 	},
 };
+
+// =========================================================================
+// 共享 Undo 快照钩子
+// =========================================================================
+Blockbench.on('create_undo_save', ({save}) => {
+	if (!(Project instanceof ModelProject)) return;
+	const target = save as SmartUndoSave;
+	target.smart_owner_uuid = Project.uuid;
+	const state = stateOf(Project);
+	if (!state || !(Project.undo instanceof SmartUndoSystem)) return;
+	const fragment = SmartObject.buildFragment(Project, state.group_uuid);
+	if (fragment) {
+		target.smart_projection = {
+			root_uuid: state.group_uuid,
+			fragment,
+		} satisfies SmartProjection;
+	}
+});
+Blockbench.on('init_selection_change', ({save}) => {
+	if (Project instanceof ModelProject) (save as SmartSelectionSave).smart_owner_uuid = Project.uuid;
+});
 
 // =========================================================================
 // 注册：组属性、图标、右键菜单项、动作
@@ -518,6 +721,17 @@ BARS.defineActions(() => {
 		click() {
 			const group = Group.first_selected;
 			if (group instanceof Group) SmartObject.openGroup(group);
+		},
+	});
+	new Action('demote_smart_object', {
+		icon: 'folder',
+		category: 'edit',
+		condition: () => Modes.edit && !SmartObject.isSmartTab() &&
+			Group.first_selected instanceof Group &&
+			!!Group.first_selected.smart_object,
+		click() {
+			const group = Group.first_selected;
+			if (group instanceof Group) SmartObject.demoteGroup(group);
 		},
 	});
 	new Action('open_smart_object_parent', {

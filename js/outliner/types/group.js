@@ -266,6 +266,7 @@ export class Group extends OutlinerNode {
 		return this;
 	}
 	remove(undo) {
+		if (typeof SmartObject != 'undefined') SmartObject.onGroupRemoved(this);
 		let elements = [];
 		let groups = [this];
 		if (undo) {
@@ -604,6 +605,7 @@ Group.addBehaviorOverride({
 		new MenuSeparator('manage'),
 		'create_smart_object',
 		'edit_smart_object',
+		'demote_smart_object',
 		'resolve_group',
 		'delete_empty_groups',
 		'rename',

@@ -3335,6 +3335,8 @@
 	"action.create_smart_object.description": "Mark this group as a smart object and open it in its own tab for separate editing",
 	"action.edit_smart_object": "Edit Smart Object",
 	"action.edit_smart_object.description": "Open the dedicated tab that edits the content of this group",
+	"action.demote_smart_object": "Convert to Normal Group",
+	"action.demote_smart_object.description": "Remove the smart object marker, close its editing tab, and keep the current content",
 	"action.open_smart_object_parent": "Back to Main Project",
 	"action.open_smart_object_parent.description": "Switch back to the project that contains this smart object"
 }
