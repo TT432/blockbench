@@ -3,6 +3,7 @@ import LZUTF8 from '../lib/lzutf8'
 import { fs } from '../native_apis';
 import VersionUtil from '../util/version_util';
 import { isEffectPathAbsolute, resolveEffectPath } from '../animations/effect_path';
+import { serializeUndoSave } from '../undo';
 
 const FORMATV = '5.0';
 
@@ -425,8 +426,8 @@ var codec = new Codec('project', {
 			model.history = [];
 			Undo.history.forEach(h => {
 				var e = {
-					before: omitKeys(h.before, ['aspects']),
-					post: omitKeys(h.post, ['aspects']),
+					before: serializeUndoSave(h.before),
+					post: serializeUndoSave(h.post),
 					action: h.action,
 					time: h.time
 				}

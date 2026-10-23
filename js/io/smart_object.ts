@@ -22,6 +22,8 @@ type LegacySmartProjection = {root_uuid: UUID, fragment: SmartFragment};
 type SmartUndoSave = UndoSave & {
 	smart_owner_uuid?: UUID
 	smart_projection?: SmartProjection | LegacySmartProjection
+	_detach_node?: (node: OutlinerNode) => void
+	_project_texture_order?: (target: UUID[], reference?: UUID[]) => UUID[]
 };
 type SmartSelectionSave = UndoSelectionSave & {smart_owner_uuid?: UUID};
 type TransientUndoSystem = UndoSystem & {current_selection_save?: SmartSelectionSave};
@@ -113,6 +115,30 @@ function textureSignature(entry: SmartFragment['textures'][number]): string {
 	return JSON.stringify([entry.uuid, copy, source, image_data]);
 }
 
+/** 把局部贴图顺序投影到完整列表的既有 scoped 槽位，外部贴图的索引与相对顺序不变。 */
+function projectTextureOrder(current_order: UUID[], target_order: UUID[], reference_order: UUID[]): UUID[] {
+	const scoped = new Set<UUID>(target_order);
+	for (const uuid of reference_order) scoped.add(uuid);
+	const present = new Set(current_order);
+	const ordered = target_order.filter(uuid => present.has(uuid));
+	const included = new Set<UUID>(ordered);
+	for (const uuid of current_order) {
+		if (scoped.has(uuid) && !included.has(uuid)) {
+			ordered.push(uuid);
+			included.add(uuid);
+		}
+	}
+	let index = 0;
+	return current_order.map(uuid => scoped.has(uuid) ? ordered[index++] : uuid);
+}
+function projectSmartTextureOrder(target_order: UUID[], reference_order: UUID[] = []): UUID[] {
+	return projectTextureOrder(Texture.all.map(texture => texture.uuid), target_order, reference_order);
+}
+function detachProjectionNode(node: OutlinerNode) {
+	if (!(Project instanceof ModelProject)) return;
+	SmartObject.detachNode(node, Project);
+}
+
 function normalizeProjection(save?: UndoSave): SmartProjection | undefined {
 	const target = save as SmartUndoSave | undefined;
 	const stored = target?.smart_projection;
@@ -191,11 +217,15 @@ class SmartUndoSystem extends UndoSystem {
 			const had_outliner = Object.prototype.hasOwnProperty.call(outliner_save, 'outliner');
 			const original_outliner = outliner_save.outliner;
 			outliner_save.outliner = projected_outliner || undefined;
+			target._detach_node = detachProjectionNode;
+			target._project_texture_order = projectSmartTextureOrder;
 			try {
 				super.loadSave(target, reference, mode);
 			} finally {
 				if (had_outliner) outliner_save.outliner = original_outliner;
 				else delete outliner_save.outliner;
+				delete target._detach_node;
+				delete target._project_texture_order;
 			}
 			if (!projected_outliner) SmartObject.invalidateGroup(Project.uuid, projection.root_uuid);
 			return;
@@ -445,10 +475,13 @@ export const SmartObject = {
 		for (const copy of fragment.groups) group_signatures.set(copy.uuid as UUID, nodeSignature(copy));
 		for (const entry of fragment.textures) texture_signatures.set(entry.uuid, textureSignature(entry));
 		const same_outliner = nodeSignature(current_fragment.outliner) == nodeSignature(fragment.outliner);
+		const same_texture_order = current_fragment.textures.length == fragment.textures.length &&
+			current_fragment.textures.every((entry, index) => entry.uuid == fragment.textures[index].uuid);
 		const unchanged = current_fragment.elements.length == fragment.elements.length &&
 			current_fragment.groups.length == fragment.groups.length &&
 			current_fragment.textures.length == fragment.textures.length &&
 			same_outliner &&
+			same_texture_order &&
 			fragment.elements.every(copy => current_element_signatures.get(copy.uuid as UUID) == element_signatures.get(copy.uuid as UUID)) &&
 			fragment.groups.every(copy => current_group_signatures.get(copy.uuid as UUID) == group_signatures.get(copy.uuid as UUID)) &&
 			fragment.textures.every(entry => current_texture_signatures.get(entry.uuid) == texture_signatures.get(entry.uuid));
@@ -476,6 +509,19 @@ export const SmartObject = {
 				texture.extend(data);
 				if (image_data && (image_data != current_image || entry.copy.layers)) texture.updateSource(image_data);
 				else texture.updateMaterial();
+			}
+		}
+
+		if (!same_texture_order) {
+			const current_order = project.textures.map(texture => texture.uuid);
+			const texture_order = projectTextureOrder(
+				current_order,
+				fragment.textures.map(entry => entry.uuid),
+				current_fragment.textures.map(entry => entry.uuid),
+			);
+			if (texture_order.some((uuid, index) => uuid != current_order[index])) {
+				project.textures.sort((a, b) => texture_order.indexOf(a.uuid) - texture_order.indexOf(b.uuid));
+				Canvas.updateLayeredTextures();
 			}
 		}
 
@@ -591,9 +637,15 @@ export const SmartObject = {
 			}
 		}
 	},
-	/** 从工程里摘掉一个节点，但不动动画器绑定 */
+	/** 从工程里摘掉一个节点，但不动动画器绑定；智能标签失效语义与 Group.remove 一致。 */
 	detachNode(node: OutlinerNode, project: ModelProject) {
 		if (!node) return;
+		if (isGroupNode(node)) {
+			this.onGroupRemoved(node);
+			node.forEachChild(child => {
+				if (isGroupNode(child)) this.onGroupRemoved(child);
+			});
+		}
 		if (node.preview_controller) node.preview_controller.remove(node);
 		if (OutlinerNode.uuids[node.uuid] == node) delete OutlinerNode.uuids[node.uuid];
 		node.unselect();

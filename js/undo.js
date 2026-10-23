@@ -278,6 +278,21 @@ export class UndoSystem {
 		save.load(reference, mode);
 	}
 }
+/**
+ * 序列化可跨窗口/会话传输的 Undo 快照。
+ * 恢复窄元素/组快照所需的字段列表必须保留，其余运行时 aspect 引用仍省略。
+ */
+export function serializeUndoSave(save) {
+	const serialized = omitKeys(save, ['aspects']);
+	const aspects = save?.aspects;
+	if (aspects?.element_fields || aspects?.group_fields) {
+		serialized.aspects = {};
+		if (aspects.element_fields) serialized.aspects.element_fields = aspects.element_fields.slice();
+		if (aspects.group_fields) serialized.aspects.group_fields = aspects.group_fields.slice();
+	}
+	return serialized;
+}
+
 UndoSystem.save = class {
 	constructor(aspects) {
 		if (aspects) {
@@ -480,12 +495,27 @@ UndoSystem.save = class {
 
 				let new_element = OutlinerNode.uuids[uuid]
 				if (new_element) {
-					if (this.aspects?.element_fields) {
-						// #87：窄快照恢复——只写回指定字段，不重建整个元素
-						for (let field of this.aspects.element_fields) {
-							new_element[field] = element[field];
+					const fields = this.aspects?.element_fields;
+					let legacy_visibility_save = !fields && element && typeof element == 'object' &&
+						'uuid' in element && 'type' in element && 'visibility' in element;
+					if (legacy_visibility_save) {
+						for (let key in element) {
+							if (key != 'uuid' && key != 'type' && key != 'visibility') {
+								legacy_visibility_save = false;
+								break;
+							}
 						}
-						if (this.aspects.element_fields.includes('visibility') && new_element.preview_controller.updateVisibility) {
+					}
+					if (fields || legacy_visibility_save) {
+						// #87：窄快照恢复——只写回指定字段，不重建整个元素
+						if (legacy_visibility_save) {
+							new_element.visibility = element.visibility;
+						} else {
+							for (let field of fields) {
+								new_element[field] = element[field];
+							}
+						}
+						if ((legacy_visibility_save || fields.includes('visibility')) && new_element.preview_controller.updateVisibility) {
 							new_element.preview_controller.updateVisibility(new_element);
 						}
 					}
@@ -508,8 +538,12 @@ UndoSystem.save = class {
 				if (reference.elements.hasOwnProperty(uuid) && !this.elements.hasOwnProperty(uuid)) {
 					let obj = OutlinerNode.uuids[uuid]
 					if (obj) {
-						if (obj.children instanceof Array) obj.children.empty();
-						obj.remove();
+						if (typeof this._detach_node == 'function') {
+							this._detach_node(obj);
+						} else {
+							if (obj.children instanceof Array) obj.children.empty();
+							obj.remove();
+						}
 					}
 				}
 			}
@@ -555,8 +589,12 @@ UndoSystem.save = class {
 				if (!this.groups.find(g => g.uuid == group_data.uuid)) {
 					let group = OutlinerNode.uuids[group_data.uuid];
 					if (group) {
-						group.children.empty();
-						group.remove();
+						if (typeof this._detach_node == 'function') {
+							this._detach_node(group);
+						} else {
+							group.children.empty();
+							group.remove();
+						}
 					}
 				}
 			}
@@ -718,8 +756,12 @@ UndoSystem.save = class {
 		}
 
 		if (this.texture_order) {
+			let texture_order = this.texture_order;
+			if (typeof this._project_texture_order == 'function') {
+				texture_order = this._project_texture_order(texture_order, reference.texture_order);
+			}
 			Texture.all.sort((a, b) => {
-				return this.texture_order.indexOf(a.uuid) - this.texture_order.indexOf(b.uuid);
+				return texture_order.indexOf(a.uuid) - texture_order.indexOf(b.uuid);
 			})
 			Canvas.updateLayeredTextures()
 		}
