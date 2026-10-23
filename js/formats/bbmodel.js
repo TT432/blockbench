@@ -1026,6 +1026,12 @@ BARS.defineActions(function() {
 		keybind: new Keybind({key: 's', ctrl: true, alt: true}),
 		condition: () => Project,
 		click: function () {
+			// 反馈#205：智能对象标签没有独立文件，保存 = 把改动合并回主工程并保存主工程
+			if (typeof SmartObject != 'undefined' && SmartObject.isSmartTab()) {
+				SmartObject.saveFromTab();
+				return;
+			}
+			if (typeof SmartObject != 'undefined') SmartObject.pushPending(Project);
 			saveTextures(true)
 			if (isApp && Project.save_path) {
 				codec.write(codec.compile(), Project.save_path);
@@ -1067,7 +1073,7 @@ BARS.defineActions(function() {
 		icon: 'save',
 		category: 'file',
 		keybind: new Keybind({key: 's', ctrl: true, alt: true, shift: true}),
-		condition: () => Project,
+		condition: () => Project && !(typeof SmartObject != 'undefined' && SmartObject.isSmartTab()),
 		click: function () {
 			saveTextures(true)
 			codec.export()

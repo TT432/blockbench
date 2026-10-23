@@ -3330,5 +3330,11 @@
 	"preview_model.transform": "Transform",
 	"preview_model.reset_transform": "Reset Transform",
 	"preview_model.minecraft_player": "Minecraft Player",
-	"preview_model.minecraft_crafting_table": "Minecraft Crafting Table"
+	"preview_model.minecraft_crafting_table": "Minecraft Crafting Table",
+	"action.create_smart_object": "Create Smart Object",
+	"action.create_smart_object.description": "Mark this group as a smart object and open it in its own tab for separate editing",
+	"action.edit_smart_object": "Edit Smart Object",
+	"action.edit_smart_object.description": "Open the dedicated tab that edits the content of this group",
+	"action.open_smart_object_parent": "Back to Main Project",
+	"action.open_smart_object_parent.description": "Switch back to the project that contains this smart object"
 }

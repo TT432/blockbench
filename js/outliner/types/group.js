@@ -602,6 +602,8 @@ Group.addBehaviorOverride({
 		'add_all_to_timeline',
 		'add_locator',
 		new MenuSeparator('manage'),
+		'create_smart_object',
+		'edit_smart_object',
 		'resolve_group',
 		'delete_empty_groups',
 		'rename',

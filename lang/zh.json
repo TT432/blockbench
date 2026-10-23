@@ -3118,5 +3118,11 @@
 	"preview_model.minecraft_crafting_table": "Minecraft Crafting Table",
 	"dialog.extrude.animated": "Animated Texture",
 	"dialog.scale.box_uv_warning_required": "Scaling cubes that use Box UV may break the UV mapping. Instead, try to scale your model during implementation, or use Inflate.",
-	"menu.color_picker.picker_type.wheel_static": "Wheel (Static)"
+	"menu.color_picker.picker_type.wheel_static": "Wheel (Static)",
+	"action.create_smart_object": "创建为智能对象",
+	"action.create_smart_object.description": "把该组标记为智能对象，并在独立标签页中单独编辑其内容",
+	"action.edit_smart_object": "编辑智能对象",
+	"action.edit_smart_object.description": "打开专门编辑该组内容的标签页",
+	"action.open_smart_object_parent": "返回主工程",
+	"action.open_smart_object_parent.description": "切换回包含该智能对象的工程"
 }
