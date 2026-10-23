@@ -372,6 +372,11 @@ export class ModelProject {
 		}
 
 		Modes.options[this.mode].select();
+		// 反馈#194/#197：切工程回来时若不在动画模式，姿态必须回到模型数据姿势。工程未激活
+		// 期间谁都可能把选中动画的姿态写进 mesh（面板 watcher、插件预览），而编辑模式没有
+		// 任何重置路径——模型就会卡在动画姿势。这里补一次幂等的姿态复位（动画模式/姿态模式
+		// 有自己的姿态管线，不能动）。
+		if (!Modes.animate && !Modes.pose) Animator.showDefaultPose(true);
 		let tool = BarItems[this.tool];
 		if (tool instanceof Tool && Condition(tool.condition)) {
 			tool.select();

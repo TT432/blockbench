@@ -1434,7 +1434,8 @@ BARS.defineActions(function() {
 
 	let toggle_pos_per_element = new Toggle('position_slider_per_element', {
 		icon: 'shuffle',
-		default: false,
+		// 反馈#202：默认开启（原版手感），需要「整组一起移动」时手动关掉
+		default: true,
 		category: 'transform',
 		condition: slider_pos_common_options.condition,
 		onChange() {
@@ -1899,7 +1900,8 @@ BARS.defineActions(function() {
 	};
 	let origin_slider_direct_values = new Toggle('origin_slider_direct_values', {
 		icon: 'view_real_size',
-		default: false,
+		// 反馈#202：默认开启（原版手感）：枢轴滑块直接写枢轴值
+		default: true,
 		category: slider_origin_common_options.category,
 		condition: () => {
 			if (!slider_origin_common_options.condition()) return false;
