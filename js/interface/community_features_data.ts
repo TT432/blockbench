@@ -751,16 +751,6 @@ export const COMMUNITY_FEATURES: CommunityFeature[] = [
 		toggle: '设置 → 社区版功能 → 性能：按材质合批渲染方块',
 	},
 	{
-		id: 'bone_batching',
-		name: '骨骼合批渲染',
-		area: '设置',
-		kind: '新增',
-		entry: '设置 → 预览 → preview_bone_batching（该设置项目前没有中文标签，默认开启）',
-		summary: '骨骼模型的顶点按骨骼批次合并渲染，骨骼多、方块多的模型帧率更稳。',
-		compare: '原版没有该渲染路径。',
-		toggle: '设置 → 预览 → preview_bone_batching',
-	},
-	{
 		id: 'negative_size_front_faces',
 		name: '负尺寸块按「外面」渲染',
 		area: '设置',

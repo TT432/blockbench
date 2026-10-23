@@ -6,7 +6,6 @@ import { clipboard, fs } from "../native_apis";
 import { openMolangEditor, molangVariableMenuEntries } from "./molang_editor";
 import { getRegisteredCustomMolangs } from "../util/molang";
 import { getMolangVariableReferenceIndex, getMolangReferenceLabel, jumpToMolangReference, scanMolangVariableNames } from "./molang_references";
-import { BoneBatcher } from "../preview/bone_batch";
 import './mirror_animating'
 
 export const Animator = {
@@ -123,9 +122,6 @@ export const Animator = {
 		three_grid.position.z = three_grid.position.x;
 		Canvas.ground_plane.position.z = Canvas.ground_plane.position.x;
 		Animator.showDefaultPose();
-		// 姿态已复位到默认，但合批代理网格仍冻结在最后一帧动画姿态
-		// （编辑模式下 needsRebake 因 Animator.open=false 短路，不会自发重烘焙）
-		BoneBatcher.requestRebake();
 		if (Project) Project.model_3d.scale.set(1, 1, 1);
 
 		if (Panels.transform) {
@@ -683,9 +679,8 @@ export const Animator = {
 		Animator.stackActiveAnimations(in_loop);
 
 
-		// 姿态应用之后的全部环境/装饰步骤包进 try/catch（反馈#36）：任何一步抛异常都不得中断
-		// 姿态管线——requestRebake 被跳过会让合批代理网格永久冻结（画面停在旧姿态），
-		// 故异常仅上报（保留堆栈供定位），requestRebake 在其后无条件执行。
+		// 姿态应用之后的全部环境/装饰步骤包进 try/catch（反馈#36）：异常仅上报并保留堆栈，
+		// 不能向外中断输入或后续渲染；CubeBatcher watcher 会在渲染前按世界矩阵变化重烘。
 		try {
 			// Shift ground
 			if (Canvas.ground_plane.visible && Animation.selected && Animation.selected.anim_time_update.includes('modified_distance_moved')) {
@@ -752,11 +747,6 @@ export const Animator = {
 		} catch (error) {
 			console.error('Error in animation preview post-pose steps:', error);
 		}
-
-		// 姿态管线完整跑过一帧（拖动时间轴/编辑关键帧值/播放等所有路径汇聚于此），
-		// 合并网格需重烘焙，否则批量代理网格停在旧姿态形成"影分身"。
-		// 状态机静态姿态快速路径不调用本函数，不受影响。
-		BoneBatcher.requestRebake();
 
 		Blockbench.dispatchEvent('display_animation_frame', {in_loop});
 	},

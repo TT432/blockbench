@@ -22,7 +22,6 @@ let current_index_path = path.join(__dirname, './../index.html');
 let current_version = null;
 
 let all_wins = [];
-let orig_win;
 let load_project_data;
 
 (() => {
@@ -118,7 +117,6 @@ function createWindow(second_instance, options = {}) {
 		win_options.y = Math.max(options.position[1] - 100, 0);
 	}
 	let win = new BrowserWindow(win_options)
-	if (!orig_win) orig_win = win;
 	all_wins.push(win);
 
 	remote.enable(win.webContents)
@@ -205,8 +203,9 @@ function createWindow(second_instance, options = {}) {
 		win.show();
 	});
 	win.on('closed', () => {
+		let index = all_wins.indexOf(win);
+		if (index !== -1) all_wins.splice(index, 1);
 		win = null;
-		all_wins.splice(all_wins.indexOf(win), 1);
 	})
 	if (second_instance === true) {
 		win.webContents.second_instance = true;

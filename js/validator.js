@@ -418,7 +418,7 @@ function getCubeWorldGeometryFingerprint(cube) {
 	to.forEach((v, i) => to[i] -= cube.origin[i]);
 	let matrix;
 	if (cube.mesh) {
-		// matrixWorld 可能滞后（matrixAutoUpdate 已关），与 bone_batch 相同沿父链刷新
+		// matrixWorld 可能滞后（matrixAutoUpdate 已关），与 cube_batcher 相同沿父链刷新
 		cube.mesh.updateWorldMatrix(true, false);
 		matrix = cube.mesh.matrixWorld;
 	} else {

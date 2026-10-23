@@ -7,12 +7,6 @@
 // outline/grid_box 等子节点留在 layer 0 照常渲染）。射线拾取继续作用于原 mesh
 // （raycaster 启用 SOURCE_LAYER），faceIndex/uv/point 语义零改动，无需映射表。
 //
-// 与 BoneBatcher（bone_batch.js，preview_bone_batching）的关系：本模块是其
-// 取代者——BoneBatcher 的共面冲突排除在密集体素模型上会把绝大多数 cube 排除
-// 在合批外（6340 cube 模型实测仅 972 入批，仍有 ~3700 draw call）。本模块启用时
-// 会压制 BoneBatcher（两个系统同时隐藏 cube 会互相干扰）；本开关关闭时也不恢复
-// BoneBatcher，保证「关闭=完全原始渲染路径」。
-//
 // 材质策略：BB 贴图材质恒为 transparent:true（上游设计），直接合批会丢失逐 cube
 // 的 painter 排序。本模块按内容分流——cube 各面 UV 区域内无半透明 texel
 // （0<alpha<255）时视为镂空/不透明，批次使用共享的不透明变体材质（clone 共享
@@ -42,7 +36,7 @@
 import { THREE } from '../lib/libs';
 import { Setting, settings } from '../interface/settings';
 
-const SOURCE_LAYER = 7; // 0-6 已被默认层/侧网格(1-3)/gizmo(4-6) 占用（同 bone_batch）
+const SOURCE_LAYER = 7; // 0-6 已被默认层/侧网格(1-3)/gizmo(4-6) 占用
 
 const VERT_STRIDE = 24;   // cube geometry 固定 24 顶点（BoxGeometry 1x1x1）
 const INDEX_STRIDE = 36;  // 6 面 × 2 三角形 × 3 顶点
@@ -133,7 +127,6 @@ export const CubeBatcher = {
 	SOURCE_LAYER,
 	enabled: true,
 	_initialized: false,
-	_bone_suppressed: false,
 	_scene_matrices_fresh: false,
 	structural_dirty: true,
 
@@ -199,8 +192,7 @@ export const CubeBatcher = {
 	// （上游设计：贴图可能含 alpha），此时仅当该 cube 显示的 texel 全部为
 	// 不透明/镂空（无 0<alpha<255）才可合批——批次使用共享的不透明变体
 	// （clone + transparent:false + 共享 uniforms；shader 对 alpha<0.01 一律
-	// discard，镂空视觉与上游一致，深度/平局裁决与 BoneBatcher 头部注释的
-	// 论证相同）。含半透明 texel 的 cube 保持逐 cube 原渲染（painter 排序）。
+	// discard，镂空视觉与上游一致）。含半透明 texel 的 cube 保持逐 cube 原渲染（painter 排序）。
 	getBatchMaterial(cube: Cube): {material: THREE.Material, cutoutTex: Texture | null} | null {
 		let mesh = cube.mesh;
 		if (!mesh || Array.isArray(mesh.material) || !mesh.material) return null;
@@ -874,7 +866,6 @@ export const CubeBatcher = {
 
 	// MARK: 渲染钩子（Preview.render 每帧调用）
 	beforeRender(preview: Preview) {
-		this.suppressBoneBatcher();
 		if (!this.enabled || !Project || typeof Outliner === 'undefined') return;
 		// 射线拾取需命中 SOURCE_LAYER 上的原 cube mesh（相机不渲染该层）
 		if (preview.raycaster && !(preview.raycaster.layers.mask & (1 << SOURCE_LAYER))) {
@@ -892,19 +883,6 @@ export const CubeBatcher = {
 			this._scene_matrices_fresh = true;
 		}
 		this.watch();
-	},
-
-	// BoneBatcher 与本模块互斥：两个系统都会隐藏原 cube mesh，同时激活会互相干扰。
-	// 本模块启用期间压制 BoneBatcher；本开关关闭后不恢复它（保证「关闭=原始路径」）。
-	suppressBoneBatcher() {
-		if (this._bone_suppressed) return;
-		this._bone_suppressed = true;
-		if (typeof BoneBatcher === 'undefined' || !BoneBatcher) return;
-		if (BoneBatcher.enabled) BoneBatcher.setEnabled(false);
-		let original = BoneBatcher.setEnabled.bind(BoneBatcher);
-		BoneBatcher.setEnabled = (value: boolean) => {
-			original(!!value && !this.enabled);
-		};
 	},
 
 	// RenderTargetSnapshot（绘画笔刷 GPU 拾取）用相机渲染场景换取像素：
