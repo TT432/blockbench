@@ -99,6 +99,20 @@ function cloneOutliner(nodes: OutlinerSaveItem[]): OutlinerSaveItem[] {
 		? {uuid: item.uuid, isOpen: item.isOpen, children: cloneOutliner(item.children)}
 		: item);
 }
+function nodeSignature(copy: unknown): string {
+	return JSON.stringify(copy, (key, value) => key == 'isOpen' ? undefined : value);
+}
+function textureSignature(entry: SmartFragment['textures'][number]): string {
+	const copy = Object.assign({}, entry.copy);
+	const source = copy.source;
+	const image_data = copy.image_data;
+	// 选择/保存状态属于各标签视图；全部内容字段和完整位图必须参与相等判定。
+	for (const key of ['source', 'image_data', 'selected', 'selected_layer', 'saved', 'old_width', 'old_height', 'sync_to_project']) {
+		delete copy[key];
+	}
+	return JSON.stringify([entry.uuid, copy, source, image_data]);
+}
+
 function normalizeProjection(save?: UndoSave): SmartProjection | undefined {
 	const target = save as SmartUndoSave | undefined;
 	const stored = target?.smart_projection;
@@ -399,8 +413,8 @@ export const SmartObject = {
 			textures,
 		};
 	},
-	/** 把内容快照物化到目标工程；永不创建根组、写 Undo 或同步根组变换。 */
-	applyFragment(project: ModelProject, fragment?: SmartFragment | null): boolean {
+	/** 把内容快照协调到目标工程；未变节点保留身份，不写 Undo、不同步根组变换。 */
+	applyFragment(project: ModelProject, fragment?: SmartFragment | null, current_fragment?: SmartFragment | null): boolean {
 		if (!fragment || Project !== project) return false;
 		const tab_state = stateOf(project);
 		let root: Group | undefined;
@@ -417,23 +431,39 @@ export const SmartObject = {
 				return false;
 			}
 		}
-		const old_elements: OutlinerElement[] = [];
-		const old_groups: Group[] = [];
-		const collectOld = (nodes: OutlinerNode[]) => {
-			for (const node of nodes) {
-				if (isGroupNode(node)) {
-					old_groups.push(node);
-					collectOld(node.children);
-				} else {
-					old_elements.push(node);
-				}
-			}
-		};
-		collectOld(root ? root.children : project.outliner);
+		current_fragment ||= this.buildFragment(project, fragment.root_uuid);
+		if (!current_fragment) return false;
 
-		// 1. 贴图：同 uuid 覆盖像素与属性，缺失则新建
-		fragment.textures.forEach(entry => {
+		const current_textures = new Map(current_fragment.textures.map(entry => [entry.uuid, entry]));
+		const current_element_signatures = new Map(current_fragment.elements.map(copy => [copy.uuid as UUID, nodeSignature(copy)] as const));
+		const current_group_signatures = new Map(current_fragment.groups.map(copy => [copy.uuid as UUID, nodeSignature(copy)] as const));
+		const current_texture_signatures = new Map(current_fragment.textures.map(entry => [entry.uuid, textureSignature(entry)] as const));
+		const element_signatures = new Map<UUID, string>();
+		const group_signatures = new Map<UUID, string>();
+		const texture_signatures = new Map<UUID, string>();
+		for (const copy of fragment.elements) element_signatures.set(copy.uuid as UUID, nodeSignature(copy));
+		for (const copy of fragment.groups) group_signatures.set(copy.uuid as UUID, nodeSignature(copy));
+		for (const entry of fragment.textures) texture_signatures.set(entry.uuid, textureSignature(entry));
+		const same_outliner = nodeSignature(current_fragment.outliner) == nodeSignature(fragment.outliner);
+		const unchanged = current_fragment.elements.length == fragment.elements.length &&
+			current_fragment.groups.length == fragment.groups.length &&
+			current_fragment.textures.length == fragment.textures.length &&
+			same_outliner &&
+			fragment.elements.every(copy => current_element_signatures.get(copy.uuid as UUID) == element_signatures.get(copy.uuid as UUID)) &&
+			fragment.groups.every(copy => current_group_signatures.get(copy.uuid as UUID) == group_signatures.get(copy.uuid as UUID)) &&
+			fragment.textures.every(entry => current_texture_signatures.get(entry.uuid) == texture_signatures.get(entry.uuid));
+		if (unchanged) return true;
+		let full_refresh = !same_outliner;
+		let reattach_outliner = !same_outliner;
+		let groups_changed = false;
+
+		// 1. 贴图：只写变化的属性与像素，避免重复触发图片解码和材质上传。
+		for (const entry of fragment.textures) {
+			const current = current_textures.get(entry.uuid);
+			if (current && current_texture_signatures.get(entry.uuid) == texture_signatures.get(entry.uuid)) continue;
+			full_refresh = true;
 			const image_data = entry.copy.image_data || entry.copy.source;
+			const current_image = current && (current.copy.image_data || current.copy.source);
 			const data = Object.assign({}, entry.copy);
 			delete data.image_data;
 			delete data.source;
@@ -444,33 +474,85 @@ export const SmartObject = {
 				if (image_data) texture.fromDataURL(image_data);
 			} else {
 				texture.extend(data);
-				if (image_data) texture.updateSource(image_data);
+				if (image_data && (image_data != current_image || entry.copy.layers)) texture.updateSource(image_data);
+				else texture.updateMaterial();
 			}
-		});
-
-		// 2. 清掉旧内容（不走 node.remove()：它会解绑动画器）
-		old_elements.concat(old_groups).forEach(node => this.detachNode(node, project));
-
-		// 3. 按快照重建元素与后代组（uuid 保留）
-		fragment.elements.forEach(copy => {
-			OutlinerElement.fromSave(copy, true);
-		});
-		fragment.groups.forEach(copy => {
-			new Group(copy, copy.uuid).init();
-		});
-
-		// 4. 主工程挂到现存根组，子页挂到 Outliner.root 虚拟根
-		if (root) {
-			root.children.empty();
-			this.attachOutliner(fragment.outliner, root);
-		} else {
-			project.outliner.empty();
-			this.attachOutliner(fragment.outliner, null);
 		}
 
-		Canvas.updateAllFaces();
-		Canvas.updateAllBones();
-		Canvas.updateAllPositions();
+		// 2. 元素：复刻原生 Undo 的就地恢复；仅新增或换型时重建。
+		for (const copy of fragment.elements) {
+			const uuid = copy.uuid as UUID;
+			const current = current_element_signatures.has(uuid);
+			const signature = element_signatures.get(uuid);
+			if (current && current_element_signatures.get(uuid) == signature) continue;
+			let element = OutlinerNode.uuids[uuid] as OutlinerElement | undefined;
+			if (element && current && element.type == copy.type) {
+				if (element instanceof SplineMesh) {
+					element.overwrite(copy);
+				} else {
+					for (const face in element.faces) element.faces[face].reset();
+					element.extend(copy);
+				}
+				element.preview_controller.updateAll(element);
+			} else {
+				full_refresh = true;
+				reattach_outliner = true;
+				if (element) this.detachNode(element, project);
+				OutlinerElement.fromSave(copy, true);
+			}
+		}
+		for (const copy of current_fragment.elements) {
+			const uuid = copy.uuid as UUID;
+			if (element_signatures.has(uuid)) continue;
+			const element = OutlinerNode.uuids[uuid];
+			reattach_outliner = true;
+			if (element && !isGroupNode(element)) this.detachNode(element, project);
+		}
+
+		// 3. 后代组：与原生 Undo 一样就地合并，避免整棵骨骼树重新初始化和重烘焙。
+		for (const copy of fragment.groups) {
+			const uuid = copy.uuid as UUID;
+			const current = current_group_signatures.has(uuid);
+			if (current && current_group_signatures.get(uuid) == group_signatures.get(uuid)) continue;
+			groups_changed = true;
+			let group = OutlinerNode.uuids[uuid] as Group | undefined;
+			if (group && current) {
+				group.extend(copy);
+				if (Format.bone_rig) {
+					group.forEachChild(node => {
+						if (node.preview_controller) node.preview_controller.updateTransform(node);
+					});
+				}
+				group.preview_controller.updateAll(group);
+			} else {
+				full_refresh = true;
+				reattach_outliner = true;
+				if (group) this.detachNode(group, project);
+				new Group(copy, uuid).init();
+			}
+		}
+		for (const copy of current_fragment.groups) {
+			const uuid = copy.uuid as UUID;
+			if (group_signatures.has(uuid)) continue;
+			const group = OutlinerNode.uuids[uuid];
+			reattach_outliner = true;
+			if (isGroupNode(group)) this.detachNode(group, project);
+		}
+
+		// 4. 结构变化或节点重建时重挂；纯单点属性编辑不触碰整棵大纲。
+		if (reattach_outliner) {
+			if (root) {
+				root.children.empty();
+				this.attachOutliner(fragment.outliner, root);
+			} else {
+				project.outliner.empty();
+				this.attachOutliner(fragment.outliner, null);
+			}
+		}
+
+		if (full_refresh || (groups_changed && Format.per_group_texture)) Canvas.updateAllFaces();
+		if (full_refresh || groups_changed) Canvas.updateAllBones();
+		if (full_refresh) Canvas.updateAllPositions();
 		Outliner.updateNodeDisplayRules();
 		updateSelection();
 		if (!Modes.animate && !Modes.pose) Animator.showDefaultPose(true);
@@ -530,14 +612,7 @@ export const SmartObject = {
 	// =========================================================================
 	fragmentSignature(fragment?: SmartFragment | null): string {
 		if (!fragment) return '';
-		const texture_signature = fragment.textures.map(entry => {
-			const data = entry.copy.image_data || entry.copy.source || '';
-			let hash = 0;
-			for (let i = 0; i < data.length; i += 61) {
-				hash = (hash * 31 + data.charCodeAt(i)) | 0;
-			}
-			return [entry.uuid, entry.copy.name, entry.copy.uv_width, entry.copy.uv_height, data.length, hash];
-		});
+		const texture_signature = fragment.textures.map(textureSignature);
 		// 展开状态是每个标签自己的视图状态，不参与内容相等判断。
 		const groups = fragment.groups.map(group => Object.assign({}, group, {isOpen: undefined}));
 		const outliner = (nodes: OutlinerSaveItem[]): unknown[] => nodes.map(item => {
@@ -589,8 +664,12 @@ export const SmartObject = {
 			if (tab_state && tab_state.parent_uuid == project.uuid) {
 				const fragment = this.buildFragment(project, tab_state.group_uuid);
 				if (fragment) {
-					pending_pulls.set(tab.uuid, fragment);
-					tab_state.parent_signature = this.fragmentSignature(fragment);
+					const signature = this.fragmentSignature(fragment);
+					// 刚推回主工程且未再变化时，不让子页重复构建和比较同一棵子树。
+					if (signature != tab_state.parent_signature || pending_pulls.has(tab.uuid)) {
+						pending_pulls.set(tab.uuid, fragment);
+						tab_state.parent_signature = signature;
+					}
 				} else {
 					invalid_tabs.push(tab);
 				}
@@ -616,7 +695,7 @@ export const SmartObject = {
 			if (queued && queued.some(entry => entry.tab_uuid == project.uuid)) return;
 			const current = this.buildFragment(project, state.group_uuid);
 			if (this.fragmentSignature(fragment) == this.fragmentSignature(current)) return;
-			this.applyFragment(project, fragment);
+			this.applyFragment(project, fragment, current);
 		} else {
 			if (needsSharedUndo(project)) ensureSharedUndo(project);
 			this.pushPending(project);
@@ -639,7 +718,7 @@ export const SmartObject = {
 				if (state) state.parent_signature = signature;
 				continue;
 			}
-			if (this.applyFragment(project, entry.fragment)) {
+			if (this.applyFragment(project, entry.fragment, current)) {
 				changed = true;
 				const state = tab_states.get(entry.tab_uuid);
 				if (state) state.parent_signature = signature;
