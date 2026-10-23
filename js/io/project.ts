@@ -382,6 +382,9 @@ export class ModelProject {
 			tool.select();
 		}
 
+		// 反馈#205：智能对象在工程激活后应用待同步快照（此刻本工程是选中工程）
+		if (typeof SmartObject != 'undefined') SmartObject.onProjectLoaded(this);
+
 		(BarItems.lock_motion_trail as Toggle).set(!!Project.motion_trail_lock);
 
 		BarItems.mirror_modeling.set(!!Project.mirror_modeling_enabled);
@@ -445,6 +448,8 @@ export class ModelProject {
 	 * @param closing Set to true when the project is being closed
 	 */
 	unselect(closing: boolean = false) {
+		// 反馈#205：智能对象在离开标签页时抓取快照（此时本工程仍是选中工程，保存拷贝才可靠）
+		if (!closing && typeof SmartObject != 'undefined') SmartObject.onProjectUnselected(this);
 		if (!closing) {
 			this.updateThumbnail();
 			this.saveEditorState();
@@ -511,6 +516,8 @@ export class ModelProject {
 		} catch (err) {
 			console.error(err);
 		}
+		// 反馈#205：主工程关闭前先把智能对象标签里的改动合并回来；智能对象标签关闭时不提示保存
+		if (typeof SmartObject != 'undefined') SmartObject.onBeforeClose(this);
 
 		async function saveWarning() {
 			return await new Promise((resolve) => {
@@ -573,6 +580,8 @@ export class ModelProject {
 			ModelProject.all.remove(this);
 			delete ProjectData[this.uuid];
 			Blockbench.Project = 0;
+			// 反馈#205：主工程已关闭，它的智能对象标签失去宿主，一并丢弃
+			if (typeof SmartObject != 'undefined') SmartObject.onProjectClosed(this);
 			
 			await AutoBackup.removeBackup(this.uuid);
 
