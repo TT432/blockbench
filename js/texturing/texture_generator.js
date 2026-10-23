@@ -1141,6 +1141,46 @@ export const TextureGenerator = {
 						
 					}
 				})
+
+				if (options.padding && !append_occupancy_snapshot) {
+					// 反馈#208：填充间隙必须与「贴图里已存在的像素」也隔开一格，而不只是与面的 UV 矩形隔开。
+					// 「清除未引用的像素」关闭时，UV 之外被保留的绘制内容（画笔涂出 UV、导入的图）会原样
+					// 搬进新贴图，只按 UV 矩形占位的话新模板可以直接压到这些像素上，游戏里串色。
+					let src_canvas = document.createElement('canvas');
+					src_canvas.width = makeTexture.width;
+					src_canvas.height = makeTexture.height;
+					let src_ctx = src_canvas.getContext('2d', {willReadFrequently: true});
+					src_ctx.imageSmoothingEnabled = false;
+					src_ctx.drawImage(makeTexture.img, 0, 0);
+					let cells_x = Math.ceil(src_canvas.width / res_multiple);
+					let cells_y = Math.ceil(src_canvas.height / res_multiple);
+					let painted_grid = new Uint8Array(cells_x * cells_y);
+					try {
+						let pixels = src_ctx.getImageData(0, 0, src_canvas.width, src_canvas.height).data;
+						for (let py = 0; py < src_canvas.height; py++) {
+							let row = Math.floor(py / res_multiple) * cells_x;
+							let index = (py * src_canvas.width) * 4 + 3;
+							for (let px = 0; px < src_canvas.width; px++, index += 4) {
+								if (pixels[index] == 0) continue;
+								painted_grid[row + Math.floor(px / res_multiple)] = 1;
+							}
+						}
+					} catch (error) {
+						// 画布不可读（未解码/跨域）时退化为只按 UV 矩形占位
+					}
+					for (let cx = 0; cx < cells_x; cx++) {
+						for (let cy = 0; cy < cells_y; cy++) {
+							if (!painted_grid[cy * cells_x + cx]) continue;
+							if (!fill_map[cx]) fill_map[cx] = {};
+							fill_map[cx][cy] = true;
+							// 与 UV 外扩同一口径：已有内容向右/下各留一格，配合新模板自身的右/下填充环，
+							// 四个方向都不会紧贴
+							if (!fill_map[cx+1]) fill_map[cx+1] = {};
+							fill_map[cx+1][cy] = true;
+							fill_map[cx][cy+1] = true;
+						}
+					}
+				}
 			}
 
 			
