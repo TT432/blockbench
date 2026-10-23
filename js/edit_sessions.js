@@ -1,5 +1,6 @@
 import Peer from "peerjs";
 import { clipboard, getPCUsername } from "./native_apis";
+import { serializeUndoSave } from "./undo";
 
 export class EditSession {
 	constructor() {
@@ -210,8 +211,8 @@ export class EditSession {
 	}
 	sendEdit(entry) {
 		var new_entry = {
-			before: omitKeys(entry.before, ['aspects']),
-			post: omitKeys(entry.post, ['aspects']),
+			before: serializeUndoSave(entry.before),
+			post: serializeUndoSave(entry.post),
 			save_history: entry.save_history,
 			action: entry.action,
 			time: entry.time || Date.now()
