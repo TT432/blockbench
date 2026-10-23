@@ -4,7 +4,7 @@
  * 一个标签页仍对应一个 ModelProject，但智能对象标签只是主工程中某个根组的内容视图：
  * - 子页不包含根组，Outliner.root 就是根组的 children；根组变换只属于主工程。
  * - 主工程与它的所有子页共享一个 SmartUndoSystem。切页同步只物化状态，不产生历史。
- * - 子页历史快照带有可投影到主工程根组的 fragment；undo/redo 始终在主工程上执行。
+ * - 子页历史只附加可投影到主工程根组的结构 Outliner；原生 aspect 仍由 UndoSystem 回放。
  * - 元素 uuid 全程保留，重建子树时继续走 detachNode，不解绑主工程动画器。
  */
 
@@ -17,10 +17,11 @@ type SmartTabState = {
 
 type OutlinerSaveItem = UUID | {uuid: UUID, isOpen?: boolean, children: OutlinerSaveItem[]};
 type PendingPush = {tab_uuid: UUID, fragment: SmartFragment};
-type SmartProjection = {root_uuid: UUID, fragment: SmartFragment};
+type SmartProjection = {root_uuid: UUID, outliner: OutlinerSaveItem[]};
+type LegacySmartProjection = {root_uuid: UUID, fragment: SmartFragment};
 type SmartUndoSave = UndoSave & {
 	smart_owner_uuid?: UUID
-	smart_projection?: SmartProjection
+	smart_projection?: SmartProjection | LegacySmartProjection
 };
 type SmartSelectionSave = UndoSelectionSave & {smart_owner_uuid?: UUID};
 type TransientUndoSystem = UndoSystem & {current_selection_save?: SmartSelectionSave};
@@ -66,6 +67,8 @@ function queuePush(parent_uuid: UUID, tab_uuid: UUID, fragment: SmartFragment | 
 	if (existing >= 0) queue[existing] = {tab_uuid, fragment};
 	else queue.push({tab_uuid, fragment});
 	pending_pushes.set(parent_uuid, queue);
+	const parent = ModelProject.all.find(project => project.uuid == parent_uuid);
+	if (parent) parent.saved = false;
 }
 function removePendingPush(tab_uuid: UUID | undefined, parent_uuid?: UUID, group_uuid?: UUID) {
 	const parents = parent_uuid ? [parent_uuid] : Array.from(pending_pushes.keys());
@@ -85,6 +88,27 @@ function isGroupNode(node: OutlinerNode): node is Group {
 }
 function isSaveGroup(item: unknown): item is {uuid: UUID, isOpen?: boolean, children: OutlinerSaveItem[]} {
 	return typeof item == 'object' && item !== null && 'uuid' in item;
+}
+function saveOutliner(nodes: OutlinerNode[]): OutlinerSaveItem[] {
+	return nodes.map(node => isGroupNode(node)
+		? {uuid: node.uuid, isOpen: !!node.isOpen, children: saveOutliner(node.children)}
+		: node.uuid);
+}
+function cloneOutliner(nodes: OutlinerSaveItem[]): OutlinerSaveItem[] {
+	return nodes.map(item => isSaveGroup(item)
+		? {uuid: item.uuid, isOpen: item.isOpen, children: cloneOutliner(item.children)}
+		: item);
+}
+function normalizeProjection(save?: UndoSave): SmartProjection | undefined {
+	const target = save as SmartUndoSave | undefined;
+	const stored = target?.smart_projection;
+	if (!stored) return;
+	if ('fragment' in stored) {
+		const projection = {root_uuid: stored.root_uuid, outliner: stored.fragment.outliner};
+		target.smart_projection = projection;
+		return projection;
+	}
+	return stored;
 }
 function setProjectUndo(project: ModelProject, undo: SmartUndoSystem) {
 	// _static 本身冻结，但 properties 容器是既有的可变工程属性表。
@@ -144,18 +168,41 @@ class SmartUndoSystem extends UndoSystem {
 		super.redo(remote, amended);
 	}
 	loadSave(save: UndoSave, reference: UndoSave, mode?: 'session'): void {
-		const projection = (save as SmartUndoSave).smart_projection;
+		const target = save as SmartUndoSave;
+		const projection = normalizeProjection(target);
 		if (projection && Project instanceof ModelProject && Project.uuid == this.parent_uuid) {
-			// bbmodel 读回的 plain object 也走这里，不依赖 instanceof UndoSystem.save。
-			SmartObject.applyFragment(Project, projection.fragment);
-			Blockbench.dispatchEvent('load_undo_save', {save, reference, mode});
+			// 子页局部 Outliner 不能覆盖主工程。先嵌入现存智能根，再让原生回放处理所有 aspect。
+			const projected_outliner = SmartObject.resolveProjectionOutliner(projection);
+			const outliner_save = target as unknown as {outliner?: OutlinerSaveItem[]};
+			const had_outliner = Object.prototype.hasOwnProperty.call(outliner_save, 'outliner');
+			const original_outliner = outliner_save.outliner;
+			outliner_save.outliner = projected_outliner || undefined;
+			try {
+				super.loadSave(target, reference, mode);
+			} finally {
+				if (had_outliner) outliner_save.outliner = original_outliner;
+				else delete outliner_save.outliner;
+			}
+			if (!projected_outliner) SmartObject.invalidateGroup(Project.uuid, projection.root_uuid);
 			return;
 		}
 		super.loadSave(save, reference, mode);
 	}
 }
 
+function needsSharedUndo(project: ModelProject): boolean {
+	if (project.undo instanceof SmartUndoSystem || pending_pushes.has(project.uuid)) return true;
+	if (project.groups.some(group => group.smart_object)) return true;
+	if (ModelProject.all.some(tab => stateOf(tab)?.parent_uuid == project.uuid)) return true;
+	return project.undo.history.some(entry =>
+		!!((entry.before as SmartUndoSave)?.smart_projection || (entry.post as SmartUndoSave)?.smart_projection));
+}
+
 function ensureSharedUndo(parent: ModelProject): SmartUndoSystem {
+	parent.undo.history.forEach(entry => {
+		normalizeProjection(entry.before);
+		normalizeProjection(entry.post);
+	});
 	if (parent.undo instanceof SmartUndoSystem) {
 		const shared = parent.undo;
 		ModelProject.all.forEach(tab => {
@@ -315,17 +362,6 @@ export const SmartObject = {
 		const groups: Group[] = [];
 		const texture_uuids = new Set<UUID>();
 
-		const collectOutliner = (nodes: OutlinerNode[]): OutlinerSaveItem[] => {
-			const result: OutlinerSaveItem[] = [];
-			for (const child of nodes) {
-				if (isGroupNode(child)) {
-					result.push({uuid: child.uuid, isOpen: !!child.isOpen, children: collectOutliner(child.children)});
-				} else {
-					result.push(child.uuid);
-				}
-			}
-			return result;
-		};
 		const collectNodes = (nodes: OutlinerNode[]) => {
 			for (const node of nodes) {
 				if (isGroupNode(node)) {
@@ -359,7 +395,7 @@ export const SmartObject = {
 			root_uuid,
 			elements,
 			groups,
-			outliner: collectOutliner(content),
+			outliner: saveOutliner(content),
 			textures,
 		};
 	},
@@ -439,6 +475,22 @@ export const SmartObject = {
 		updateSelection();
 		if (!Modes.animate && !Modes.pose) Animator.showDefaultPose(true);
 		return true;
+	},
+	/** 把子页结构嵌入主工程当前大纲；返回新树，原生回放不会改写历史中的 projection。 */
+	resolveProjectionOutliner(projection: SmartProjection): OutlinerSaveItem[] | null {
+		const full_outliner = Outliner.toJSON() as OutlinerSaveItem[];
+		const embed = (nodes: OutlinerSaveItem[]): boolean => {
+			for (const item of nodes) {
+				if (!isSaveGroup(item)) continue;
+				if (item.uuid == projection.root_uuid) {
+					item.children = cloneOutliner(projection.outliner);
+					return true;
+				}
+				if (embed(item.children)) return true;
+			}
+			return false;
+		};
+		return embed(full_outliner) ? full_outliner : null;
 	},
 	attachOutliner(list: OutlinerSaveItem[], parent: Group | null) {
 		const children = parent ? parent.children : Outliner.root;
@@ -566,8 +618,7 @@ export const SmartObject = {
 			if (this.fragmentSignature(fragment) == this.fragmentSignature(current)) return;
 			this.applyFragment(project, fragment);
 		} else {
-			// 即使尚未重新打开子页，bbmodel 中的 projection 历史也必须由共享实现回放。
-			ensureSharedUndo(project);
+			if (needsSharedUndo(project)) ensureSharedUndo(project);
 			this.pushPending(project);
 		}
 	},
@@ -673,13 +724,16 @@ Blockbench.on('create_undo_save', ({save}) => {
 	target.smart_owner_uuid = Project.uuid;
 	const state = stateOf(Project);
 	if (!state || !(Project.undo instanceof SmartUndoSystem)) return;
-	const fragment = SmartObject.buildFragment(Project, state.group_uuid);
-	if (fragment) {
-		target.smart_projection = {
-			root_uuid: state.group_uuid,
-			fragment,
-		} satisfies SmartProjection;
-	}
+	target.smart_projection = {
+		root_uuid: state.group_uuid,
+		outliner: saveOutliner(Project.outliner),
+	} satisfies SmartProjection;
+});
+// smart_object 先于 bbmodel codec 初始化；首次 load_project 时 codec 已存在，且仍早于 parsed。
+Blockbench.once('load_project', () => {
+	Codecs.project.on('parsed', () => {
+		if (Project instanceof ModelProject && !stateOf(Project) && needsSharedUndo(Project)) ensureSharedUndo(Project);
+	});
 });
 Blockbench.on('init_selection_change', ({save}) => {
 	if (Project instanceof ModelProject) (save as SmartSelectionSave).smart_owner_uuid = Project.uuid;

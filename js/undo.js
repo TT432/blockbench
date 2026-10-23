@@ -480,7 +480,7 @@ UndoSystem.save = class {
 
 				let new_element = OutlinerNode.uuids[uuid]
 				if (new_element) {
-					if (this.aspects.element_fields) {
+					if (this.aspects?.element_fields) {
 						// #87：窄快照恢复——只写回指定字段，不重建整个元素
 						for (let field of this.aspects.element_fields) {
 							new_element[field] = element[field];
