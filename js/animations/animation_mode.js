@@ -1803,7 +1803,11 @@ Interface.definePanels(function() {
 						if (!Project) return;
 						clearCustomMolangCache();
 						if (typeof updateCustomMolangVariableHighlight == 'function') updateCustomMolangVariableHighlight();
-						Animator.preview();
+						// 反馈#194/#197：切工程/重载工程时 refreshCustomMolang() 会把 Project 的
+						// 变量表重新赋给 data，触发本 watcher。此前无条件调 preview()，编辑模式下
+						// 会把当前选中动画的姿态写进 mesh，且编辑模式没有复位路径——模型停留在
+						// 动画姿势。只有动画模式下的姿态预览需要重跑。
+						if (Modes.animate) Animator.preview();
 						this.scheduleVariableReferenceRefresh();
 					}
 				}

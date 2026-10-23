@@ -539,11 +539,16 @@ var codec = new Codec('project', {
 			model.particles.forEach(data => {
 				// 反馈#199：`relative_*` 与「已经是相对写法」的字段都要按工程目录解析，
 				// 否则后者会被当成相对进程 CWD 的路径，重开工程时贴图/粒子文件找不到。
+				let relative_texture_ref = false;
 				if (isApp) {
 					let source_path = data.relative_path !== undefined ? data.relative_path : data.path;
 					let source_texture_path = data.relative_texture_path !== undefined ? data.relative_texture_path : data.texture_path;
 					if (source_path) data.path = resolveEffectPath(source_path);
-					if (source_texture_path) data.texture_path = resolveEffectPath(source_texture_path);
+					if (source_texture_path) {
+						data.texture_path = resolveEffectPath(source_texture_path);
+						// 相对引用随工程目录走：目录被复制/挪动后用户替换的同名贴图应当生效
+						relative_texture_ref = !isEffectPathAbsolute(source_texture_path);
+					}
 				}
 				let asset = new ParticleAsset(data, data.uuid);
 				if (isApp && asset.path && fs.existsSync(asset.path) && !model.meta.backup) {
@@ -553,19 +558,19 @@ var codec = new Codec('project', {
 							asset.content = disk_json;
 							asset.saved = true;
 							// 内嵌贴图来自工程（用户导入的那张），重读 json 时不能丢
-							asset.loadTextureFromPath();
+							asset.loadTextureFromPath(relative_texture_ref);
 							asset.loadEmitter();
 							asset.autoResolveTexture();
 						} else {
-							asset.loadTextureFromPath();
+							asset.loadTextureFromPath(relative_texture_ref);
 							asset.loadEmitter();
 						}
 					} catch (err) {
-						asset.loadTextureFromPath();
+						asset.loadTextureFromPath(relative_texture_ref);
 						asset.loadEmitter();
 					}
 				} else {
-					asset.loadTextureFromPath();
+					asset.loadTextureFromPath(relative_texture_ref);
 					asset.loadEmitter();
 				}
 				asset.add(false);

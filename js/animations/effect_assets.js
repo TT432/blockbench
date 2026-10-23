@@ -179,8 +179,11 @@ export class ParticleAsset {
 	}
 	// 贴图按 dataURL 嵌入工程；只有路径、没有 dataURL 的老工程补读一次。
 	// （粒子 json 还在磁盘上时曾把内嵌贴图清掉，重开工程后贴图丢失）
-	loadTextureFromPath() {
-		if (this.texture || !this.texture_path || !isApp || !fs.existsSync(this.texture_path)) return;
+	// prefer_disk（#199）：工程里存的是相对引用时，磁盘上的那张才是权威——整目录挪走后
+	// 用户替换同名贴图应当生效，内嵌 dataURL 只作为文件缺失时的兜底。
+	loadTextureFromPath(prefer_disk = false) {
+		if (!this.texture_path || !isApp || !fs.existsSync(this.texture_path)) return;
+		if (this.texture && !prefer_disk) return;
 		try {
 			this.texture = 'data:image/png;base64,' + fs.readFileSync(this.texture_path).toString('base64');
 		} catch (err) {
