@@ -1166,7 +1166,7 @@ new NodePreviewController(Cube, {
 		// #83 性能：cube mesh 的局部变换只在编辑时变化（播放动画驱动的是骨骼组）。
 		// 默认 matrixAutoUpdate 会让渲染循环对每立方体每帧重做 TRS compose
 		// （YSM 级模型 6k+ 立方体时占帧耗 ~8%），改为关闭并在 updateTransform 里
-		// 显式 updateMatrix。被元素级动画直接驱动的 cube 由 BoneBatcher.rebuild
+		// 显式 updateMatrix。被元素级动画直接驱动的 cube 由 CubeBatcher.recomputeAnimatedSet
 		// 恢复为自动更新。
 		mesh.matrixAutoUpdate = false;
 

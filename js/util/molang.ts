@@ -124,16 +124,6 @@ export function negateMolang(molang: number|string): number|string {
 		return `-(${expression})`;
 	});
 }
-function testInvertMolang(input: string) {
-	let positive_result = Animator.MolangParser.parse(input);
-	let inverted = invertMolang(input);
-	let negative_result = Animator.MolangParser.parse(inverted);
-	if (Math.epsilon(positive_result, -negative_result, 0.00001)) {
-		return inverted
-	} else {
-		console.warn([positive_result, negative_result], inverted);
-	}
-}
 
 // MARK: Custom Molang（项目自定义 molang + 插件注册的自定义 molang，n./new. 前缀，执行/导出前文本展开）
 export interface CustomMolangDefinition {
@@ -557,7 +547,6 @@ function warnCustomMolangCall(def: CustomMolangDefinition, message: string) {
 
 const global = {
 	invertMolang,
-	testInvertMolang,
 	processMolangReturn,
 	expandCustomMolang,
 	clearCustomMolangCache,
@@ -571,7 +560,6 @@ const global = {
 };
 declare global {
 	const invertMolang: typeof global.invertMolang
-	const testInvertMolang: typeof global.testInvertMolang
 	const processMolangReturn: typeof global.processMolangReturn
 	const expandCustomMolang: typeof global.expandCustomMolang
 	const clearCustomMolangCache: typeof global.clearCustomMolangCache

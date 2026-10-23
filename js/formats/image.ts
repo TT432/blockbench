@@ -118,9 +118,10 @@ let codec = new Codec('image', {
 			let prio_color_accuracy = false;
 			let width = texture.width;
 			let height = texture.display_height;
+			let frame_count = texture.frameCount || 1;
 			let interval = 1000 / options.animation_fps;
 			let {ctx} = texture;
-			for (let frame = 0; frame < texture.frameCount; frame++) {
+			for (let frame = 0; frame < frame_count; frame++) {
 				let data = ctx.getImageData(0, frame * height, width, height).data;
 				let palette = quantize(data, {has_transparency, prio_color_accuracy});
 				let index;

@@ -10,6 +10,14 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.60',
+		changes: [
+			'修复单帧贴图导出 GIF 时生成无法解码的空文件——单帧贴图的 frameCount 为空导致编码循环写入 0 帧，现与普通贴图尺寸计算一致回退为 1 帧；动画贴图仍按实际帧数导出',
+			'代码清扫：移除已被 CubeBatcher 取代的旧 BoneBatcher 及其失效设置、旧 gif.js 库和未使用测试辅助函数；GIF 录制与导出不改变，继续使用 gifenc',
+			'修复多窗口场景关闭较旧窗口时窗口列表误删其他窗口的问题，剩余窗口的标签拖拽通知与后续窗口管理保持可用',
+		],
+	},
+	{
 		version: '5.3.59',
 		changes: [
 			'修复#207：世界空间物理镜像绘画在偏移枢轴、旋转或膨胀方块上偶尔落到重合的错误面——块级优选此前把绝对 from/to 当作局部角点且漏算 inflate/stretch，匹配失败后无序回退到第一个候选；现角点与真实渲染几何同口径，并在读取源点与法线前统一刷新世界矩阵',

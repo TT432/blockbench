@@ -270,16 +270,6 @@ declare global {
 
 	/** The cube batcher of the preview. */
 	const CubeBatcher: typeof CubeBatcherType
-	/** bone_batch.js 的全局合批器（JS 模块，此处仅声明 CubeBatcher 互斥压制所需的最小面） */
-	const BoneBatcher: {
-		/** Whether the batcher is enabled. */
-		enabled: boolean
-		/**
-		 * Enables or disables the batcher.
-		 * @param value Whether to enable the batcher.
-		 */
-		setEnabled(value: boolean): void
-	}
 }
 
 export { }
