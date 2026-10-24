@@ -195,6 +195,50 @@ export const TextureGenerator = {
 		});
 		StateMemory.init('texture_append_template_options', 'object', {});
 		let remembered = Object.assign({}, memory_defaults, StateMemory.texture_append_template_options || {});
+		const preview_size = 48;
+		let preview_texture;
+		let preview_canvas = Interface.createElement('canvas', {
+			class: 'append_template_texture_preview checkerboard',
+			width: preview_size,
+			height: preview_size,
+		});
+		let preview_context = preview_canvas.getContext('2d');
+		function drawTexturePreview() {
+			preview_context.clearRect(0, 0, preview_size, preview_size);
+			preview_canvas.title = preview_texture ? preview_texture.name : '';
+			if (!preview_texture || preview_texture.error || !preview_texture.img.complete) return;
+			let image = preview_texture.img;
+			let frame_count = preview_texture.frameCount || 1;
+			let frame_height = image.naturalHeight / frame_count;
+			if (!image.naturalWidth || !frame_height) return;
+			let frame = Math.clamp(preview_texture.currentFrame || 0, 0, frame_count - 1);
+			let scale = Math.min(preview_size / image.naturalWidth, preview_size / frame_height);
+			let width = Math.max(1, Math.round(image.naturalWidth * scale));
+			let height = Math.max(1, Math.round(frame_height * scale));
+			preview_context.imageSmoothingEnabled = false;
+			preview_context.drawImage(
+				image, 0, frame * frame_height, image.naturalWidth, frame_height,
+				(preview_size - width) / 2, (preview_size - height) / 2, width, height
+			);
+		}
+		function handlePreviewImageUpdate() {
+			drawTexturePreview();
+		}
+		function updateTexturePreview(texture_uuid) {
+			let next_texture = selectable_textures.find(texture => texture.uuid == texture_uuid);
+			if (preview_texture != next_texture) {
+				if (preview_texture) {
+					preview_texture.img.removeEventListener('load', handlePreviewImageUpdate);
+					preview_texture.img.removeEventListener('error', handlePreviewImageUpdate);
+				}
+				preview_texture = next_texture;
+				if (preview_texture) {
+					preview_texture.img.addEventListener('load', handlePreviewImageUpdate);
+					preview_texture.img.addEventListener('error', handlePreviewImageUpdate);
+				}
+			}
+			drawTexturePreview();
+		}
 		var dialog = new Dialog({
 			id: 'add_bitmap',
 			title: tl('action.append_to_template'),
@@ -210,6 +254,21 @@ export const TextureGenerator = {
 				max_edge_angle: {label: 'dialog.create_texture.max_edge_angle', description: 'dialog.create_texture.max_edge_angle.desc', type: 'number', value: remembered.max_edge_angle, condition: (form) => Mesh.selected.length},
 				max_island_angle: {label: 'dialog.create_texture.max_island_angle', description: 'dialog.create_texture.max_island_angle.desc', type: 'number', value: remembered.max_island_angle, condition: (form) => Mesh.selected.length},
 				padding:	{label: 'dialog.create_texture.padding', description: 'dialog.create_texture.padding.desc', type: 'checkbox', value: remembered.padding},
+			},
+			onBuild(object) {
+				let texture_bar = object.querySelector('.form_bar_texture');
+				if (texture_bar) texture_bar.append(preview_canvas);
+				updateTexturePreview(texture.uuid);
+			},
+			onFormChange(result) {
+				updateTexturePreview(result.texture);
+			},
+			onClose() {
+				if (preview_texture) {
+					preview_texture.img.removeEventListener('load', handlePreviewImageUpdate);
+					preview_texture.img.removeEventListener('error', handlePreviewImageUpdate);
+				}
+				preview_texture = null;
 			},
 			onConfirm(options) {
 				let target = Format.single_texture ? Texture.getDefault() : Texture.all.find(texture => texture.uuid == options.texture);

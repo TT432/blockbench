@@ -242,6 +242,9 @@ export abstract class OutlinerNode {
 		let node = document.getElementById(this.uuid);
 		let input_element = node?.querySelector('div.outliner_object > input.cube_name') as HTMLInputElement;
 		if (!input_element) return this;
+		// The runtime-only rename hook is implemented by outliner.js.
+		const outliner = Outliner as unknown as {startRename(node: OutlinerNode): void};
+		outliner.startRename(this);
 		input_element.removeAttribute('disabled');
 		input_element.classList.add('renaming');
 		input_element.select();

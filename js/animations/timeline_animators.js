@@ -428,7 +428,8 @@ export class BoneAnimator extends GeneralAnimator {
 		if (!arr) return this;
 		var bone = this.group.mesh;
 		if (this.animation.override && this.channels?.scale) {
-			bone.scale.x = bone.scale.y = bone.scale.z = 1;
+			if (bone.fix_scale) bone.scale.copy(bone.fix_scale);
+			else bone.scale.x = bone.scale.y = bone.scale.z = 1;
 		}
 		bone.scale.x *= (1 + (arr[0] - 1) * multiplier) || 0.00001;
 		bone.scale.y *= (1 + (arr[1] - 1) * multiplier) || 0.00001;

@@ -529,7 +529,8 @@ export const BARS = {
 				'slider_pos_x',
 				'slider_pos_y',
 				'slider_pos_z',
-				'position_slider_per_element'
+				'position_slider_per_element',
+				'position_slider_local_axis_lock'
 			]
 		})
 		Toolbars.element_size = new Toolbar({
@@ -576,6 +577,7 @@ export const BARS = {
 				'slider_rotation_y',
 				'slider_rotation_z',
 				'fixed_world_position',
+				'rotation_slider_local_axis_lock',
 			]
 		})
 		if (Blockbench.isMobile) {

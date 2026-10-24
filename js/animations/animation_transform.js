@@ -5,6 +5,29 @@ function displayDistance(number) {
 	Blockbench.setCursorTooltip(trimFloatNumber(number));
 }
 
+// Reordering across a gimbal boundary can produce an equivalent Euler triple 180° away.
+// Pick the equivalent branch nearest the pre-drag pose so per-axis keyframes stay continuous.
+function setEulerToNearestBranch(rotation, reference) {
+	let best_x, best_y, best_z;
+	let best_distance = Infinity;
+	for (let branch = 0; branch < 2; branch++) {
+		let x = rotation.x + branch * Math.PI;
+		let y = branch ? Math.PI - rotation.y : rotation.y;
+		let z = rotation.z + branch * Math.PI;
+		x += Math.PI * 2 * Math.round((reference.x - x) / (Math.PI * 2));
+		y += Math.PI * 2 * Math.round((reference.y - y) / (Math.PI * 2));
+		z += Math.PI * 2 * Math.round((reference.z - z) / (Math.PI * 2));
+		let distance = (reference.x - x) ** 2 + (reference.y - y) ** 2 + (reference.z - z) ** 2;
+		if (distance < best_distance) {
+			best_x = x;
+			best_y = y;
+			best_z = z;
+			best_distance = distance;
+		}
+	}
+	rotation.set(best_x, best_y, best_z, rotation.order);
+}
+
 let transform_keyframes = [];
 
 new TransformerModule('animation', {
@@ -97,13 +120,14 @@ new TransformerModule('animation', {
 
 		let {mesh} = Group.first_selected || ((Outliner.selected[0] && Outliner.selected[0].constructor.animator) ? Outliner.selected[0] : undefined);
 
-		let updateRotationKeyframeFromMesh = () => {
+		let updateRotationKeyframeFromMesh = (reference_rotation) => {
 			let old_rotation = mesh.pre_rotation ?? mesh.fix_rotation;
 			let rotation = mesh.rotation;
 			if (transform_keyframes[0].animator.quaternion_interpolation) {
 				let q = Reusable.quat1.setFromEuler(old_rotation);
 				mesh.quaternion.premultiply(q.invert());
 			} else {
+				if (reference_rotation) setEulerToNearestBranch(rotation, reference_rotation);
 				rotation.x -= old_rotation.x; rotation.y -= old_rotation.y; rotation.z -= old_rotation.z;
 			}
 			transform_keyframes[0].offset('x', Math.roundTo( Math.trimDeg( Math.radToDeg(rotation.x) - transform_keyframes[0].calc('x') ), 4));
@@ -137,12 +161,14 @@ new TransformerModule('animation', {
 			// 重排序把被拖轴排到欧拉序末尾（最局部），且 reorder 保持姿态不变，对所有情形安全。
 
 			let old_order = mesh.rotation.order;
+			// #227: reorder can jump to the flipped equivalent triple across ±90°.
+			let previous_rotation = Reusable.euler3.copy(mesh.rotation);
 			mesh.rotation.reorder(axis_number == 0 ? 'ZYX' : (axis_number == 1 ? 'ZXY' : 'XYZ'))
 			var obj_val = Math.trimDeg(Math.radToDeg(mesh.rotation[axis]) + difference);
 			mesh.rotation[axis] = Math.degToRad(obj_val);
 			mesh.rotation.reorder(old_order);
 
-			updateRotationKeyframeFromMesh();
+			updateRotationKeyframeFromMesh(previous_rotation);
 
 		} else if (tool_id === 'move_tool' && BarItems.transform_space.value === 'global') {
 

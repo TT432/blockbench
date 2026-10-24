@@ -1197,6 +1197,18 @@
 	}
 
 /*Specific Dialogs*/
+	dialog#add_bitmap .form_bar_texture > .bb-select {
+		flex-grow: 1;
+		min-width: 0;
+	}
+	dialog#add_bitmap canvas.append_template_texture_preview {
+		display: block;
+		width: 48px;
+		height: 48px;
+		flex: 0 0 48px;
+		margin-left: 8px;
+		image-rendering: pixelated;
+	}
 	dialog#model_stats .form_bar {
 		margin: 0;
 	}

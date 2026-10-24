@@ -129,6 +129,9 @@ BARS.defineActions(() => {
 		onCanvasClick(data) {
 			Vertexsnap.canvasClick(data)
 		},
+		onCanvasRightClick() {
+			if (Vertexsnap.cancel()) return false;
+		},
 		onSelect: function() {
 			Blockbench.addListener('update_selection', Vertexsnap.select)
 			Vertexsnap.select()

@@ -1,8 +1,9 @@
 /**
- * 智能对象（反馈 #205、#210–#213、#215）
+ * 智能对象（反馈 #205、#210–#213、#215、#224）
  *
  * 一个标签页仍对应一个 ModelProject，但智能对象标签只是主工程中某个根组的内容视图：
  * - 子页不包含根组，Outliner.root 就是根组的 children；根组变换只属于主工程。
+ * - 根实例位移/缩放只存在主工程；子页坐标以固定源原点局部化，Undo aspect 同步转换。
  * - 主工程与它的所有子页共享一个 SmartUndoSystem。切页同步只物化状态，不产生历史。
  * - 子页历史只附加可投影到主工程根组的结构 Outliner；原生 aspect 仍由 UndoSystem 回放。
  * - 元素 uuid 全程保留，重建子树时继续走 detachNode，不解绑主工程动画器。
@@ -17,7 +18,7 @@ type SmartTabState = {
 
 type OutlinerSaveItem = UUID | {uuid: UUID, isOpen?: boolean, children: OutlinerSaveItem[]};
 type PendingPush = {tab_uuid: UUID, fragment: SmartFragment};
-type SmartProjection = {root_uuid: UUID, outliner: OutlinerSaveItem[]};
+type SmartProjection = {root_uuid: UUID, outliner: OutlinerSaveItem[], origin?: ArrayVector3};
 type LegacySmartProjection = {root_uuid: UUID, fragment: SmartFragment};
 type SmartUndoSave = UndoSave & {
 	smart_owner_uuid?: UUID
@@ -100,6 +101,34 @@ function cloneOutliner(nodes: OutlinerSaveItem[]): OutlinerSaveItem[] {
 	return nodes.map(item => isSaveGroup(item)
 		? {uuid: item.uuid, isOpen: item.isOpen, children: cloneOutliner(item.children)}
 		: item);
+}
+function getSourceOrigin(root: Group): ArrayVector3 {
+	return root.smart_object_source_origin?.length == 3 ? root.smart_object_source_origin as ArrayVector3 : root.origin;
+}
+/** 子页坐标以智能根枢轴为局部原点；顶点本身已是元素局部坐标，不做平移。 */
+function translateSpatialCopy<T>(copy: T, offset: readonly number[]): T {
+	if (offset[0] == 0 && offset[1] == 0 && offset[2] == 0) return copy;
+	const projected = Object.assign({}, copy) as Record<string, unknown>;
+	for (const key of ['from', 'to', 'origin', 'position']) {
+		const value = projected[key];
+		if (value instanceof Array && value.length >= 3) {
+			projected[key] = [value[0] + offset[0], value[1] + offset[1], value[2] + offset[2]];
+		}
+	}
+	return projected as T;
+}
+function translateUndoSave(save: UndoSave, offset: readonly number[]) {
+	const target = save as UndoSave & {elements?: Record<UUID, Record<string, unknown>>, groups?: Group[]};
+	const elements = target.elements;
+	const groups = target.groups;
+	if (elements) {
+		target.elements = Object.fromEntries(Object.entries(elements).map(([uuid, copy]) => [uuid, translateSpatialCopy(copy, offset)]));
+	}
+	if (groups) target.groups = groups.map(copy => translateSpatialCopy(copy, offset)) as Group[];
+	return () => {
+		if (elements) target.elements = elements;
+		if (groups) target.groups = groups;
+	};
 }
 function nodeSignature(copy: unknown): string {
 	return JSON.stringify(copy, (key, value) => key == 'isOpen' ? undefined : value);
@@ -219,9 +248,14 @@ class SmartUndoSystem extends UndoSystem {
 			outliner_save.outliner = projected_outliner || undefined;
 			target._detach_node = detachProjectionNode;
 			target._project_texture_order = projectSmartTextureOrder;
+			const offset = projection.origin || [0, 0, 0];
+			const restore_target = translateUndoSave(target, offset);
+			const restore_reference = translateUndoSave(reference, offset);
 			try {
 				super.loadSave(target, reference, mode);
 			} finally {
+				restore_target();
+				restore_reference();
 				if (had_outliner) outliner_save.outliner = original_outliner;
 				else delete outliner_save.outliner;
 				delete target._detach_node;
@@ -296,7 +330,11 @@ export const SmartObject = {
 		const group_uuid = group.uuid;
 		Undo.initEdit({groups: [group]});
 		const current = Project.groups.find(item => item.uuid == group_uuid);
-		if (current) current.smart_object = true;
+		if (current) {
+			current.smart_object = true;
+			current.smart_object_source_origin.replace(current.origin);
+			current.preview_controller.updateTransform(current);
+		}
 		Undo.finishEdit('Create smart object');
 		Outliner.updateNodeDisplayRules();
 	},
@@ -317,6 +355,7 @@ export const SmartObject = {
 		const group_uuid = group.uuid;
 		const current_group = parent.groups.find(item => item.uuid == group_uuid);
 		if (!current_group) return;
+		if (current_group.smart_object_source_origin.length != 3) current_group.smart_object_source_origin.replace(current_group.origin);
 
 		const shared_undo = ensureSharedUndo(parent);
 		const existing = this.getTab(parent.uuid, group_uuid);
@@ -368,7 +407,10 @@ export const SmartObject = {
 		}
 		Undo.initEdit({groups: [current]});
 		const edited = parent.groups.find(item => item.uuid == group_uuid);
-		if (edited) edited.smart_object = false;
+		if (edited) {
+			edited.smart_object = false;
+			edited.preview_controller.updateTransform(edited);
+		}
 		Undo.finishEdit('Demote smart object');
 		this.invalidateGroup(parent.uuid, group_uuid);
 		Outliner.updateNodeDisplayRules();
@@ -392,16 +434,18 @@ export const SmartObject = {
 		if (!root_uuid) return null;
 		const tab_state = stateOf(project);
 		let content: OutlinerNode[];
+		let root: Group | undefined;
 		if (tab_state) {
 			if (tab_state.group_uuid != root_uuid) return null;
 			content = project.outliner;
 		} else {
-			const root = project.groups.find(group => group.uuid == root_uuid);
+			root = project.groups.find(group => group.uuid == root_uuid);
 			if (!root) return null;
 			content = root.children;
 		}
 
 		const meta = syncMeta();
+		const offset = root ? getSourceOrigin(root).map(value => -value) as ArrayVector3 : [0, 0, 0];
 		const elements: Record<string, unknown>[] = [];
 		const groups: Group[] = [];
 		const texture_uuids = new Set<UUID>();
@@ -409,11 +453,11 @@ export const SmartObject = {
 		const collectNodes = (nodes: OutlinerNode[]) => {
 			for (const node of nodes) {
 				if (isGroupNode(node)) {
-					groups.push(structuredClone(node.getSaveCopy(false)));
+					groups.push(translateSpatialCopy(structuredClone(node.getSaveCopy(false)), offset));
 					if (node.texture) texture_uuids.add(node.texture);
 					collectNodes(node.children);
 				} else {
-					const copy = structuredClone(node.getSaveCopy(meta)) as Record<string, unknown>;
+					const copy = translateSpatialCopy(structuredClone(node.getSaveCopy(meta)) as Record<string, unknown>, offset);
 					elements.push(copy);
 					const faces = copy.faces;
 					if (faces && typeof faces == 'object') {
@@ -463,6 +507,12 @@ export const SmartObject = {
 		}
 		current_fragment ||= this.buildFragment(project, fragment.root_uuid);
 		if (!current_fragment) return false;
+		const parent_offset = root ? getSourceOrigin(root).slice() as ArrayVector3 : [0, 0, 0];
+		const content_fragment = root ? Object.assign({}, fragment, {
+			elements: fragment.elements.map(copy => translateSpatialCopy(copy, parent_offset)),
+			groups: fragment.groups.map(copy => translateSpatialCopy(copy, parent_offset)),
+		}) : fragment;
+		// current_fragment 与 fragment 都是局部源坐标；签名在此空间比较，content_fragment 仅用于写回主工程。
 
 		const current_textures = new Map(current_fragment.textures.map(entry => [entry.uuid, entry]));
 		const current_element_signatures = new Map(current_fragment.elements.map(copy => [copy.uuid as UUID, nodeSignature(copy)] as const));
@@ -526,7 +576,7 @@ export const SmartObject = {
 		}
 
 		// 2. 元素：复刻原生 Undo 的就地恢复；仅新增或换型时重建。
-		for (const copy of fragment.elements) {
+		for (const copy of content_fragment.elements) {
 			const uuid = copy.uuid as UUID;
 			const current = current_element_signatures.has(uuid);
 			const signature = element_signatures.get(uuid);
@@ -556,7 +606,7 @@ export const SmartObject = {
 		}
 
 		// 3. 后代组：与原生 Undo 一样就地合并，避免整棵骨骼树重新初始化和重烘焙。
-		for (const copy of fragment.groups) {
+		for (const copy of content_fragment.groups) {
 			const uuid = copy.uuid as UUID;
 			const current = current_group_signatures.has(uuid);
 			if (current && current_group_signatures.get(uuid) == group_signatures.get(uuid)) continue;
@@ -855,9 +905,12 @@ Blockbench.on('create_undo_save', ({save}) => {
 	target.smart_owner_uuid = Project.uuid;
 	const state = stateOf(Project);
 	if (!state || !(Project.undo instanceof SmartUndoSystem)) return;
+	const parent = ModelProject.all.find(project => project.uuid == state.parent_uuid);
+	const root = parent?.groups.find(group => group.uuid == state.group_uuid);
 	target.smart_projection = {
 		root_uuid: state.group_uuid,
 		outliner: saveOutliner(Project.outliner),
+		origin: (root ? getSourceOrigin(root).slice() : [0, 0, 0]) as ArrayVector3,
 	} satisfies SmartProjection;
 });
 // smart_object 先于 bbmodel codec 初始化；首次 load_project 时 codec 已存在，且仍早于 parsed。
@@ -874,6 +927,9 @@ Blockbench.on('init_selection_change', ({save}) => {
 // 注册：组属性、图标、右键菜单项、动作
 // =========================================================================
 new Property(Group, 'boolean', 'smart_object');
+new Property(Group, 'vector', 'smart_object_position');
+new Property(Group, 'array', 'smart_object_source_origin');
+new Property(Group, 'vector', 'smart_object_scale', {default: [1, 1, 1]});
 
 Object.defineProperty(Group.prototype, 'icon', {
 	configurable: true,

@@ -147,7 +147,8 @@ export const Animator = {
 				if (mesh.fix_position) mesh.position.copy(mesh.fix_position);
 			}
 			if (node.constructor.animator.prototype.channels && node.constructor.animator.prototype.channels.scale) {
-				mesh.scale.x = mesh.scale.y = mesh.scale.z = 1;
+				if (mesh.fix_scale) mesh.scale.copy(mesh.fix_scale);
+				else mesh.scale.x = mesh.scale.y = mesh.scale.z = 1;
 			}
 		})
 		for (let mesh of Mesh.all) {
@@ -223,7 +224,8 @@ export const Animator = {
 				if (node instanceof NullObject) {
 					if (!ba.muted.position) ba.displayPosition(ba.interpolate('position'), multiplier);
 				} else {
-					mesh.scale.x = mesh.scale.y = mesh.scale.z = 1;
+					if (mesh.fix_scale) mesh.scale.copy(mesh.fix_scale);
+					else mesh.scale.x = mesh.scale.y = mesh.scale.z = 1;
 					ba.displayFrame(multiplier);
 				}
 			})

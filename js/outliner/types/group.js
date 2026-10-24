@@ -787,9 +787,17 @@ new NodePreviewController(Group, {
 			}
 		}
 
-		bone.scale.x = bone.scale.y = bone.scale.z = 1;
+		if (group.smart_object) {
+			bone.position.x += group.smart_object_position[0];
+			bone.position.y += group.smart_object_position[1];
+			bone.position.z += group.smart_object_position[2];
+			bone.scale.fromArray(group.smart_object_scale);
+		} else {
+			bone.scale.x = bone.scale.y = bone.scale.z = 1;
+		}
 		bone.fix_position = bone.position.clone();
 		bone.fix_rotation = bone.rotation.clone();
+		bone.fix_scale = bone.scale.clone();
 	}
 })
 
@@ -864,14 +872,16 @@ BARS.defineActions(function() {
 			}
 			if (wrap_nodes) {
 				base_group.sortInBefore(add_group || wrap_nodes[0], wrap_nodes.length >= 2 ? 1 : 0);
+				base_group.init();
 				wrap_nodes.forEach((s) => {
-					s.addTo(base_group)
+					s.addTo(base_group);
+					s.preview_controller.updateTransform(s);
 				})
 			} else {
-				base_group.addTo(add_group)
+				base_group.addTo(add_group).init();
 			}
 
-			base_group.init().select()
+			base_group.select()
 			Undo.finishEdit('Add group', {outliner: true, groups: [base_group], selection: true});
 			Vue.nextTick(function() {
 				updateSelection()

@@ -1878,6 +1878,13 @@ export const Painter = {
 
 		for (let element of [...Cube.all, ...Mesh.all]) {
 			if (!element.mesh) continue;
+			let visible = true;
+			for (let node = element.mesh; node; node = node.parent) {
+				if (node.visible == false) {
+					visible = false;
+					break;
+				}
+			}
 			element.mesh.getWorldQuaternion(quaternion);
 			if (element instanceof Cube) {
 				for (let fkey in element.faces) {
@@ -1912,6 +1919,7 @@ export const Painter = {
 						point_on_uv[1] = Math.round(point_on_uv[1]);
 					}
 					candidates.push({
+						visible,
 						element,
 						target: {
 							element,
@@ -1968,6 +1976,7 @@ export const Painter = {
 						point_on_uv[1] = Math.round(point_on_uv[1]);
 					}
 					candidates.push({
+						visible,
 						element,
 						target: {
 							element,
@@ -1981,11 +1990,13 @@ export const Painter = {
 			}
 		}
 		if (!candidates.length) return;
-		if (candidates.length == 1) return candidates[0].target;
-		if (!settings.community_mirror_paint_block_matching.value) return candidates[0].target;
+		let visible_candidates = candidates.filter(candidate => candidate.visible);
+		let preferred_candidates = visible_candidates.length ? visible_candidates : candidates;
+		if (preferred_candidates.length == 1) return preferred_candidates[0].target;
+		if (!settings.community_mirror_paint_block_matching.value) return preferred_candidates[0].target;
 
 		// #80：多个面在物理空间重合时（如 0.1 厚度片挡住目标块的面），
-		// 优先选择「源块的物理镜像块」上的面——用世界空间角点集合判断是否互为镜像，
+		// 优先选择「源块的物理镜像块」上的面——比较世界空间角点集合的镜像距离，
 		// 使镜像绘制精确落在点击面所属块的对称块上，而不是碰巧重合的其他块。
 		let getWorldCorners = (element) => {
 			let points = [];
@@ -2006,27 +2017,39 @@ export const Painter = {
 			}
 			return points.map(p => element.mesh.localToWorld(p));
 		};
-		let cornersMatchMirrored = (corners_a, corners_b) => {
-			if (!corners_a || !corners_b || corners_a.length != corners_b.length) return false;
-			let tol = 0.05;
-			let used = new Set();
-			for (let pa of corners_a) {
-				let mirrored = pa.clone();
+		let source_corners = getWorldCorners(source_element);
+		if (source_corners) {
+			let mirrored_corners = source_corners.map(point => {
+				let mirrored = point.clone();
 				mirror_vector.forEach((enabled, axis) => {
 					if (enabled) mirrored.setComponent(axis, 2 * grid_center - mirrored.getComponent(axis));
 				});
-				let found = corners_b.findIndex((pb, i) => !used.has(i) && pb.distanceTo(mirrored) <= tol);
-				if (found == -1) return false;
-				used.add(found);
+				return mirrored;
+			});
+			let candidate_corners = new Map();
+			let preferred;
+			let preferred_distance = Infinity;
+			for (let candidate of preferred_candidates) {
+				let corners = candidate_corners.get(candidate.element);
+				if (corners === undefined) {
+					corners = getWorldCorners(candidate.element);
+					candidate_corners.set(candidate.element, corners);
+				}
+				if (!corners || corners.length != mirrored_corners.length) continue;
+				let distance = 0;
+				for (let mirrored of mirrored_corners) {
+					let nearest = Infinity;
+					for (let point of corners) nearest = Math.min(nearest, mirrored.distanceToSquared(point));
+					distance += nearest;
+				}
+				if (distance < preferred_distance) {
+					preferred = candidate;
+					preferred_distance = distance;
+				}
 			}
-			return true;
-		};
-		let source_corners = getWorldCorners(source_element);
-		if (source_corners) {
-			let preferred = candidates.find(c => cornersMatchMirrored(source_corners, getWorldCorners(c.element)));
 			if (preferred) return preferred.target;
 		}
-		return candidates[0].target;
+		return preferred_candidates[0].target;
 	},
 	updateNslideValues() {
 		BarItems.slider_brush_size.update()
