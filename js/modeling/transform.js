@@ -19,7 +19,7 @@ export function getSelectionCenter(all = false) {
 	elements.forEach(element => {
 		if (element instanceof Group && !Format.bone_rig) return;
 		if (element.getWorldCenter) {
-			var pos = element.getWorldCenter();
+			var pos = getWorldCenterUsingMatrix(element);
 			min[0] = Math.min(pos.x, min[0]);	max[0] = Math.max(pos.x, max[0]);
 			min[1] = Math.min(pos.y, min[1]);	max[1] = Math.max(pos.y, max[1]);
 			min[2] = Math.min(pos.z, min[2]);	max[2] = Math.max(pos.z, max[2]);
@@ -31,6 +31,16 @@ export function getSelectionCenter(all = false) {
 		center.V3_add(8, 0, 8)
 	}
 	return center;
+}
+function getWorldCenterUsingMatrix(element) {
+	if (element.from && element.to && element.origin && element.mesh) {
+		return element.mesh.localToWorld(new THREE.Vector3(
+			(element.from[0] + element.to[0]) / 2 - element.origin[0],
+			(element.from[1] + element.to[1]) / 2 - element.origin[1],
+			(element.from[2] + element.to[2]) / 2 - element.origin[2]
+		));
+	}
+	return element.getWorldCenter();
 }
 // Spline Point Selection
 export function selectSplinePoints(spline, handle, axis) {
@@ -103,7 +113,8 @@ export function moveElementsRelative(difference, index, event) { //Multiple
 	}
 	var _has_groups = Format.bone_rig && Group.first_selected && Toolbox.selected.transformerMode == 'translate';
 
-	Undo.initEdit({elements: getSelectedMovingElements(), outliner: _has_groups})
+	const smart_group = getSmartInstanceTransformGroup();
+	Undo.initEdit({elements: smart_group ? [] : getSelectedMovingElements(), outliner: _has_groups, groups: smart_group ? [smart_group] : undefined})
 	var axes = []
 	// < >
 	// PageUpDown
@@ -531,15 +542,71 @@ export function mirrorSelectedInPlace(axis) {
 }
 
 //Center
+/** Convert a world-space displacement to the data space of a node's parent, including nested scale. */
+function getWorldDeltaInParentSpace(node, world_delta, own_geometry = false) {
+	let transform = own_geometry ? node.mesh : node.mesh?.parent;
+	if (!transform) return world_delta.clone();
+	transform.updateWorldMatrix(true, false);
+	let inverse = new THREE.Matrix4().copy(transform.matrixWorld).invert();
+	let e = inverse.elements;
+	// A displacement has w = 0: apply only the inverse linear transform, not its translation.
+	return new THREE.Vector3(
+		e[0] * world_delta.x + e[4] * world_delta.y + e[8] * world_delta.z,
+		e[1] * world_delta.x + e[5] * world_delta.y + e[9] * world_delta.z,
+		e[2] * world_delta.x + e[6] * world_delta.y + e[10] * world_delta.z
+	);
+}
+function getLocalAxisLockReference() {
+	if (Group.first_selected) return Group.first_selected;
+	return Outliner.selected.find(el => el instanceof Cube);
+}
+function getLocalAxisInWorld(node, axis) {
+	node.mesh.updateWorldMatrix(true, false);
+	return new THREE.Vector3().setFromMatrixColumn(node.mesh.matrixWorld, axis).normalize();
+}
+/** Apply one world-space delta to top-level selections; descendants follow their parent matrix. */
+function moveSelectionInWorldAxis(difference, world_axis) {
+	let world_delta = world_axis.clone().multiplyScalar(difference);
+	let selected_groups = Group.multi_selected.slice();
+	let groups = selected_groups.filter(group => !group.parent?.selected);
+	let elements = Outliner.selected.filter(element => !selected_groups.some(group => element.isChildOf(group, 128)));
+	for (let group of groups) {
+		let local_delta = getWorldDeltaInParentSpace(group, world_delta);
+		group.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
+	}
+	for (let obj of elements) {
+		let local_delta = getWorldDeltaInParentSpace(obj, world_delta);
+		if (obj.from) {
+			obj.from.V3_add(local_delta.x, local_delta.y, local_delta.z);
+			if (obj.to) obj.to.V3_add(local_delta.x, local_delta.y, local_delta.z);
+		} else if (obj.position) {
+			obj.position.V3_add(local_delta.x, local_delta.y, local_delta.z);
+		}
+		if (obj.getTypeBehavior('rotatable') && !obj.position && obj instanceof TextureMesh == false) {
+			obj.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
+		}
+		if (obj instanceof Cube && obj.autouv == 2) obj.mapAutoUV();
+	}
+	Canvas.updateView({
+		elements,
+		groups,
+		element_aspects: {transform: true},
+		group_aspects: {transform: true},
+		selection: true,
+	});
+}
 export function centerElements(axis, update) {
 	if (!Outliner.selected.length) return;
 	let center = getSelectionCenter()[axis];
 	var difference = (Format.centered_grid ? 0 : 8) - center
+	let world_delta = new THREE.Vector3();
+	world_delta.setComponent(axis, difference);
 
 	Outliner.selected.forEach(function(obj) {
-		if (obj.getTypeBehavior('movable')) obj.origin[axis] += difference;
-		if (obj.from) obj.from[axis] = obj.from[axis] + difference;
-		if (obj.to) obj.to[axis] = obj.to[axis] + difference;
+		let local_delta = getWorldDeltaInParentSpace(obj, world_delta);
+		if (obj.getTypeBehavior('movable')) obj.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
+		if (obj.from) obj.from.V3_add(local_delta.x, local_delta.y, local_delta.z);
+		if (obj.to) obj.to.V3_add(local_delta.x, local_delta.y, local_delta.z);
 		if (obj instanceof Cube && Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
 			Format.cube_size_limiter.move(obj);
 		}
@@ -547,7 +614,8 @@ export function centerElements(axis, update) {
 	Group.all.forEach(group => {
 		if (!group.selected) return;
 		if (!Format.bone_rig && Outliner.selected.length) return;
-		group.origin[axis] += difference;
+		let local_delta = getWorldDeltaInParentSpace(group, world_delta);
+		group.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
 	})
 	Canvas.updateView({
 		elements: Outliner.selected,
@@ -559,24 +627,66 @@ export function centerElements(axis, update) {
 }
 
 //Move
+/** 仅单独直接选中一个智能根时，整组变换写入实例层；其它选择保持原生烘焙行为。 */
+export function getSmartInstanceTransformGroup() {
+	const group = Group.first_selected;
+	if (!group?.smart_object || Group.multi_selected.length != 1) return;
+	return (Outliner.selected.length == 0 || group.matchesSelection()) ? group : undefined;
+}
+export function scaleSmartInstance(group, factors, origin) {
+	const old_scale = group.temp_data.old_smart_scale || group.smart_object_scale;
+	const old_position = group.temp_data.old_smart_position || group.smart_object_position;
+	for (let i = 0; i < 3; i++) {
+		const factor = factors[i];
+		group.smart_object_scale[i] = old_scale[i] * factor;
+		if (origin) {
+			group.smart_object_position[i] = old_position[i] * factor + (origin[i] - group.origin[i]) * (1 - factor);
+		}
+	}
+	group.preview_controller.updateTransform(group);
+}
+
+//Move
 export function moveElementsInSpace(difference, axis, space = getEditTransformSpace()) {
 	let groups;
-	if (Format.bone_rig && Group.first_selected && (Group.multi_selected.length > 1 || Group.first_selected.matchesSelection())) {
-		groups = Group.multi_selected;
-	}
 	var group_m;
 	let quaternion = new THREE.Quaternion();
 	let vector = new THREE.Vector3();
+	let world_axis = axis instanceof THREE.Vector3;
+	const smart_group = getSmartInstanceTransformGroup();
+	if (smart_group) {
+		if (world_axis) {
+			vector.copy(axis).multiplyScalar(difference);
+		} else {
+			vector.set(0, 0, 0)[getAxisLetter(axis)] = difference;
+		}
+		if (space === 0 || world_axis) {
+			vector.copy(getWorldDeltaInParentSpace(smart_group, vector));
+		} else if (space === 2) {
+			vector.applyQuaternion(smart_group.mesh.quaternion);
+		}
+		smart_group.smart_object_position.V3_add(vector.x, vector.y, vector.z);
+		smart_group.preview_controller.updateTransform(smart_group);
+		return;
+	}
+	if (Format.bone_rig && Group.first_selected && (Group.multi_selected.length > 1 || Group.first_selected.matchesSelection())) {
+		groups = Group.multi_selected;
+	}
 
 	if (groups) {
 		for (let group of groups) {
 			if (space === 0) {
-				group_m = vector.set(0, 0, 0);
-				group_m[getAxisLetter(axis)] = difference;
+				if (world_axis) {
+					let world_delta = axis.clone().multiplyScalar(difference);
+					group_m = getWorldDeltaInParentSpace(group, world_delta);
+				} else {
+					group_m = vector.set(0, 0, 0);
+					group_m[getAxisLetter(axis)] = difference;
 
-				let rotation = new THREE.Quaternion();
-				groups[0].mesh.parent.getWorldQuaternion(rotation);
-				group_m.applyQuaternion(rotation.invert());
+					let rotation = new THREE.Quaternion();
+					groups[0].mesh.parent.getWorldQuaternion(rotation);
+					group_m.applyQuaternion(rotation.invert());
+				}
 
 				group.forEachChild(g => {
 					g.origin.V3_add(group_m.x, group_m.y, group_m.z);
@@ -632,9 +742,14 @@ export function moveElementsInSpace(difference, axis, space = getEditTransformSp
 				difference_vec.V3_set(m.x, m.y, m.z);
 
 			} else {
-				let m = vector.set(0, 0, 0);
-				m[getAxisLetter(axis)] = difference;
-				m.applyQuaternion(el.mesh.getWorldQuaternion(quaternion).invert());
+				let m;
+				if (world_axis) {
+					m = getWorldDeltaInParentSpace(el, axis.clone().multiplyScalar(difference), true);
+				} else {
+					m = vector.set(0, 0, 0);
+					m[getAxisLetter(axis)] = difference;
+					m.applyQuaternion(el.mesh.getWorldQuaternion(quaternion).invert());
+				}
 				difference_vec.V3_set(m.x, m.y, m.z);
 			}
 
@@ -696,8 +811,11 @@ export function moveElementsInSpace(difference, axis, space = getEditTransformSp
 				if (el.getTypeBehavior('rotatable') && !el.position) el.origin[axis] += difference;
 			} else {
 				let move_origin = !!groups;
-				if (group_m) {
+				if (group_m && !world_axis) {
 					var m = group_m
+				} else if (world_axis) {
+					var m = getWorldDeltaInParentSpace(el, axis.clone().multiplyScalar(difference));
+					move_origin = true;
 				} else {
 					var m = vector.set(0, 0, 0);
 					m[getAxisLetter(axis)] = difference;
@@ -781,6 +899,11 @@ function changeNodeLocalPosition(obj, vector) {
 	}
 
 	let position_arr = vector.toArray();
+	if (obj.smart_object) {
+		obj.smart_object_position.V3_set(position_arr.slice().V3_subtract(obj.origin));
+		obj.preview_controller.updateTransform(obj);
+		return;
+	}
 	
 	// Offset children
 	if ('forEachChild' in obj && obj.getTypeBehavior('use_absolute_position')) {
@@ -1027,7 +1150,7 @@ export function getRotationUndoAspects() {
 	}
 	return {elements, groups};
 }
-export function rotateOnAxis(modify, axis, slider) {
+export function rotateOnAxis(modify, axis, slider, lock_local_axis = false) {
 	var things = getRotationObjects();
 	if (!things) return;
 	if (things instanceof Array == false) things = [things];
@@ -1057,6 +1180,18 @@ export function rotateOnAxis(modify, axis, slider) {
 				//Gotta stop the numslider here
 			}
 			i++;
+		}
+	}
+	if (lock_local_axis && BarItems.rotation_space.value == 'local') {
+		let reference = getLocalAxisLockReference();
+		if (reference?.mesh) {
+			let old_value = reference.rotation[axis];
+			let angle = modify(old_value) - old_value;
+			axis = getLocalAxisInWorld(reference, axis);
+			modify = () => angle;
+			slider = false;
+		} else {
+			lock_local_axis = false;
 		}
 	}
 	var axis_letter = getAxisLetter(axis)
@@ -1090,7 +1225,7 @@ export function rotateOnAxis(modify, axis, slider) {
 
 		let mesh_cond = obj instanceof Mesh && Project.mesh_selection[obj.uuid] && Project.mesh_selection[obj.uuid].vertices.length;
 		let spline_cond = obj instanceof SplineMesh && Project.spline_selection[obj.uuid] && Project.spline_selection[obj.uuid].vertices.length;
-		if (!Group.first_selected && (mesh_cond || spline_cond)) {
+		if (!lock_local_axis && !Group.first_selected && (mesh_cond || spline_cond)) {
 
 			// Mesh or spline
 			let normal = axis == 0 ? THREE.NormalX : (axis == 1 ? THREE.NormalY : THREE.NormalZ)
@@ -1311,6 +1446,25 @@ BARS.defineActions(function() {
 	})
 
 	function moveOnAxis(modify, axis) {
+		let axis_lock_reference = toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local' && getLocalAxisLockReference();
+		if (axis_lock_reference?.mesh) {
+			let old_value = getPos(axis);
+			let new_value = modify(old_value);
+			if (getSmartInstanceTransformGroup()) {
+				moveElementsInSpace(new_value - old_value, getLocalAxisInWorld(axis_lock_reference, axis), 0);
+			} else {
+				moveSelectionInWorldAxis(new_value - old_value, getLocalAxisInWorld(axis_lock_reference, axis));
+			}
+			updateSelection();
+			return;
+		}
+		if (getSmartInstanceTransformGroup()) {
+			let old_value = getPos(axis);
+			let new_value = modify(old_value);
+			moveElementsInSpace(new_value - old_value, axis, getParentTransformSpace());
+			updateSelection();
+			return;
+		}
 		if (toggle_pos_per_element.value == false) {
 			let old_value = getPos(axis);
 			let new_value = modify(old_value);
@@ -1371,6 +1525,12 @@ BARS.defineActions(function() {
 		TickUpdates.selection = true;
 	}
 	function getPos(axis) {
+		const smart_group = getSmartInstanceTransformGroup();
+		if (smart_group) {
+			let value = smart_group.origin[axis] + smart_group.smart_object_position[axis];
+			if (settings.local_position_values.value && smart_group.parent instanceof Group) value -= smart_group.parent.origin[axis];
+			return value;
+		}
 		if (toggle_pos_per_element.value == false && Group.first_selected) {
 			return Group.first_selected.origin[axis];
 		}
@@ -1397,14 +1557,29 @@ BARS.defineActions(function() {
 		}
 		return value;
 	}
+	function getPositionSliderUndoGroups() {
+		const smart_group = getSmartInstanceTransformGroup();
+		if (smart_group) return [smart_group];
+		if (toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local' && Format.bone_rig && Group.first_selected &&
+			(Group.multi_selected.length > 1 || Group.first_selected.matchesSelection())
+		) {
+			let groups = [];
+			for (let group of Group.multi_selected) {
+				group.forEachChild(child => groups.safePush(child), Group, true);
+			}
+			return groups;
+		}
+		return toggle_pos_per_element.value ? [] : Group.all.filter(g => g.selected);
+	}
 	const slider_pos_common_options = {
 		category: 'transform',
 		condition: () => (Outliner.selected.length && Modes.edit),
 		getInterval: getSpatialInterval,
 		onBefore: function() {
+			const smart_group = getSmartInstanceTransformGroup();
 			Undo.initEdit({
-				elements: Outliner.selected,
-				groups: toggle_pos_per_element.value ? [] : Group.all.filter(g => g.selected)
+				elements: smart_group ? [] : Outliner.selected,
+				groups: getPositionSliderUndoGroups()
 			})
 		},
 		onAfter: function() {
@@ -1466,8 +1641,21 @@ BARS.defineActions(function() {
 		}
 	})
 
+	let toggle_pos_axis_lock = new Toggle('position_slider_local_axis_lock', {
+		icon: 'lock',
+		default: false,
+		category: 'transform',
+		condition: slider_pos_common_options.condition,
+	})
+
 
 	function resizeOnAxis(modify, axis) {
+		const smart_group = getSmartInstanceTransformGroup();
+		if (smart_group) {
+			smart_group.smart_object_scale[axis] = modify(smart_group.smart_object_scale[axis]);
+			smart_group.preview_controller.updateTransform(smart_group);
+			return;
+		}
 		Outliner.selected.forEach(function(obj, i) {
 			if (obj.getTypeBehavior('resizable')) {
 				let bidirectional = obj instanceof Mesh;
@@ -1492,9 +1680,11 @@ BARS.defineActions(function() {
 		description: tl('action.slider_size.desc', ['X']),
 		color: 'x',
 		category: 'transform',
-		condition: () => (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')) && Modes.edit),
+		condition: () => ((getSmartInstanceTransformGroup() || (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')))) && Modes.edit),
 		getInterval: getSpatialInterval,
 		get: function() {
+			const smart_group = getSmartInstanceTransformGroup();
+			if (smart_group) return smart_group.smart_object_scale[0];
 			if (Outliner.selected[0].getTypeBehavior('scalable')) {
 				return Outliner.selected[0].scale[0]
 			} else if (Outliner.selected[0].size instanceof Array) {
@@ -1507,7 +1697,8 @@ BARS.defineActions(function() {
 			resizeOnAxis(modify, 0)
 		},
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected.filter(el => el.getTypeBehavior('resizable'))});
+			const smart_group = getSmartInstanceTransformGroup();
+			Undo.initEdit({elements: smart_group ? [] : Outliner.selected.filter(el => el.getTypeBehavior('resizable')), groups: smart_group ? [smart_group] : undefined});
 		},
 		onAfter: function() {
 			Undo.finishEdit('Change element size')
@@ -1519,9 +1710,11 @@ BARS.defineActions(function() {
 		description: tl('action.slider_size.desc', ['Y']),
 		color: 'y',
 		category: 'transform',
-		condition: () => (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')) && Modes.edit),
+		condition: () => ((getSmartInstanceTransformGroup() || (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')))) && Modes.edit),
 		getInterval: getSpatialInterval,
 		get: function() {
+			const smart_group = getSmartInstanceTransformGroup();
+			if (smart_group) return smart_group.smart_object_scale[1];
 			if (Outliner.selected[0].getTypeBehavior('scalable')) {
 				return Outliner.selected[0].scale[1]
 			} else if (Outliner.selected[0].size instanceof Array) {
@@ -1534,7 +1727,8 @@ BARS.defineActions(function() {
 			resizeOnAxis(modify, 1)
 		},
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected.filter(el => el.getTypeBehavior('resizable'))});
+			const smart_group = getSmartInstanceTransformGroup();
+			Undo.initEdit({elements: smart_group ? [] : Outliner.selected.filter(el => el.getTypeBehavior('resizable')), groups: smart_group ? [smart_group] : undefined});
 		},
 		onAfter: function() {
 			Undo.finishEdit('Change element size')
@@ -1546,9 +1740,11 @@ BARS.defineActions(function() {
 		description: tl('action.slider_size.desc', ['Z']),
 		color: 'z',
 		category: 'transform',
-		condition: () => (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')) && !(Outliner.selected[0] instanceof Billboard) && Modes.edit),
+		condition: () => ((getSmartInstanceTransformGroup() || (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')) && !(Outliner.selected[0] instanceof Billboard))) && Modes.edit),
 		getInterval: getSpatialInterval,
 		get: function() {
+			const smart_group = getSmartInstanceTransformGroup();
+			if (smart_group) return smart_group.smart_object_scale[2];
 			if (Outliner.selected[0].getTypeBehavior('scalable')) {
 				return Outliner.selected[0].scale[2]
 			} else if (Outliner.selected[0].size instanceof Array) {
@@ -1561,7 +1757,8 @@ BARS.defineActions(function() {
 			resizeOnAxis(modify, 2)
 		},
 		onBefore: function() {
-			Undo.initEdit({elements: Outliner.selected.filter(el => el.getTypeBehavior('resizable'))});
+			const smart_group = getSmartInstanceTransformGroup();
+			Undo.initEdit({elements: smart_group ? [] : Outliner.selected.filter(el => el.getTypeBehavior('resizable')), groups: smart_group ? [smart_group] : undefined});
 		},
 		onAfter: function() {
 			Undo.finishEdit('Change element size')
@@ -1745,7 +1942,7 @@ BARS.defineActions(function() {
 			if (ref) return ref.rotation[0];
 		},
 		change: function(modify) {
-			rotateOnAxis(modify, 0, true)
+			rotateOnAxis(modify, 0, true, toggle_rotation_axis_lock.value)
 			Canvas.updatePositions()
 		},
 		onBefore: function() {
@@ -1774,7 +1971,7 @@ BARS.defineActions(function() {
 			if (ref) return ref.rotation[1];
 		},
 		change: function(modify) {
-			rotateOnAxis(modify, 1, true)
+			rotateOnAxis(modify, 1, true, toggle_rotation_axis_lock.value)
 			Canvas.updatePositions()
 		},
 		onBefore: function() {
@@ -1803,7 +2000,7 @@ BARS.defineActions(function() {
 			if (ref) return ref.rotation[2];
 		},
 		change: function(modify) {
-			rotateOnAxis(modify, 2, true)
+			rotateOnAxis(modify, 2, true, toggle_rotation_axis_lock.value)
 			Canvas.updatePositions()
 		},
 		onBefore: function() {
@@ -1818,6 +2015,13 @@ BARS.defineActions(function() {
 	})
 	let slider_vector_rotation = [BarItems.slider_rotation_x, BarItems.slider_rotation_y, BarItems.slider_rotation_z];
 	slider_vector_rotation.forEach(slider => slider.slider_vector = slider_vector_rotation);
+
+	let toggle_rotation_axis_lock = new Toggle('rotation_slider_local_axis_lock', {
+		icon: 'lock',
+		default: false,
+		category: 'transform',
+		condition: () => ((Modes.edit || Modes.pose) && getRotationObjects()),
+	})
 
 	// 编号68：固定世界位置——打开后旋转组时，内部块/组的世界位置保持不变（旋转值相应吸收逆旋转）
 	new Toggle('fixed_world_position', {

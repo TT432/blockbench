@@ -1,6 +1,8 @@
 /**
  * Module to scale the selected elements uniformly
  */
+import {getSmartInstanceTransformGroup, scaleSmartInstance} from './transform';
+
 export namespace ModelScaler {
 	let overflow: (null | OutlinerElement[]) = null;
 	type BeforeData = {
@@ -74,8 +76,9 @@ export namespace ModelScaler {
 			(BarItems.select_all as Action).click();
 		}
 		let scale_groups: Group[] = getScaleGroups();
+		const smart_group = getSmartInstanceTransformGroup();
 
-		Undo.initEdit({elements: Outliner.selected, outliner: Format.bone_rig, groups: scale_groups});
+		Undo.initEdit({elements: smart_group ? [] : Outliner.selected, outliner: smart_group ? false : Format.bone_rig, groups: scale_groups});
 
 		Outliner.selected.forEach((obj) => {
 			const before: BeforeData = {
@@ -98,12 +101,14 @@ export namespace ModelScaler {
 		})
 		scale_groups.forEach((g: Group) => {
 			g.temp_data.old_origin = g.origin.slice();
+			g.temp_data.old_smart_scale = g.smart_object_scale?.slice();
+			g.temp_data.old_smart_position = g.smart_object_position?.slice();
 		});
 		
 		dialog.show();
 
 		let v = Format.centered_grid ? 0 : 8;
-		let origin = Group.first_selected ? Group.first_selected.origin : [v, 0, v];
+		let origin = smart_group ? smart_group.origin.map((value, i) => value + smart_group.smart_object_position[i]) : Group.first_selected ? Group.first_selected.origin : [v, 0, v];
 		dialog.setFormValues({
 			origin,
 			scale: 1
@@ -113,6 +118,8 @@ export namespace ModelScaler {
 	}
 
 	export function getScaleGroups(): Group[] {
+		const smart_group = getSmartInstanceTransformGroup();
+		if (smart_group) return [smart_group];
 		if (!Format.bone_rig) return [];
 		if (Group.first_selected) {
 			return Group.all.filter(g => g.selected);
@@ -122,6 +129,16 @@ export namespace ModelScaler {
 		return [];
 	}
 	export function scaleElements(elements: OutlinerElement[], groups: Group[], size: number, origin: ArrayVector3, axis?: Record<'x'|'y'|'z', boolean>) {
+		const smart_group = getSmartInstanceTransformGroup();
+		if (smart_group && groups.includes(smart_group)) {
+			scaleSmartInstance(smart_group, [
+				!axis || axis.x ? size : 1,
+				!axis || axis.y ? size : 1,
+				!axis || axis.z ? size : 1,
+			], origin);
+			updateSelection();
+			return;
+		}
 		let overflow = [];
 		elements.forEach(function(obj) {
 			if (obj instanceof Cube) obj.autouv = 0;
@@ -241,6 +258,13 @@ export namespace ModelScaler {
 			}
 		})
 		ModelScaler.getScaleGroups().forEach((g) => {
+			const smart_group = getSmartInstanceTransformGroup();
+			if (smart_group && smart_group.temp_data.old_smart_scale) {
+				smart_group.smart_object_scale.V3_set(smart_group.temp_data.old_smart_scale);
+				smart_group.smart_object_position.V3_set(smart_group.temp_data.old_smart_position);
+				delete smart_group.temp_data.old_smart_scale;
+				delete smart_group.temp_data.old_smart_position;
+			}
 			g.origin[0] = g.temp_data.old_origin[0]
 			g.origin[1] = g.temp_data.old_origin[1]
 			g.origin[2] = g.temp_data.old_origin[2]

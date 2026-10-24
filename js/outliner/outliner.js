@@ -117,6 +117,16 @@ export const Outliner = {
 		},
 	},
 
+	search_filter_snapshot: null,
+	startRename(node) {
+		let options = Outliner.vue?._data.options;
+		if (!options) return;
+		let search_term = options.search_term.toLowerCase();
+		Outliner.search_filter_snapshot = search_term ? new Set(
+			Outliner.nodes.filter(node => node.matchesFilter(search_term)).map(node => node.uuid)
+		) : null;
+		options.renaming_node_uuid = node.uuid;
+	},
 	isNodeDisplayed(node) {
 		for (let rule of Outliner.node_display_rules) {
 			let result = rule.test(node);
@@ -137,7 +147,11 @@ export const Outliner = {
 		{
 			id: 'search',
 			test(node) {
-				if (Outliner.vue._data.options.search_term == '') return true;
+				let options = Outliner.vue._data.options;
+				if (options.search_term == '') return true;
+				if (options.renaming_node_uuid) {
+					return Outliner.search_filter_snapshot?.has(node.uuid) == true;
+				}
 				return node.matchesFilter(Outliner.vue.search_term_lowercase);
 			}
 		},
@@ -266,6 +280,41 @@ Object.defineProperty(window, 'selected', {
 });
 
 
+/** 非骨骼格式没有组层级；智能根用独立容器承载实例 TRS，避免改写后代源坐标。 */
+function getParentSmartInstance(node) {
+	let parent = node.parent;
+	while (parent instanceof Group) {
+		if (parent.smart_object) return parent;
+		parent = parent.parent;
+	}
+}
+function syncSmartInstanceContainer(root) {
+	let container = root._smart_instance_container;
+	if (!container) {
+		container = root._smart_instance_container = new THREE.Object3D();
+		container.name = root.uuid + '_smart_instance';
+		container.isSmartObjectInstance = true;
+	}
+	const parent = getParentSmartInstance(root);
+	const parent_container = parent && syncSmartInstanceContainer(parent);
+	(parent_container || Project.model_3d).add(container);
+	// 容器不带根 rotation：非骨骼组旋转早已按原生语义烘焙进内容，不能再次应用。
+	container.position.set(
+		root.origin[0] + root.smart_object_position[0] - (parent ? parent.origin[0] : 0),
+		root.origin[1] + root.smart_object_position[1] - (parent ? parent.origin[1] : 0),
+		root.origin[2] + root.smart_object_position[2] - (parent ? parent.origin[2] : 0)
+	);
+	container.scale.fromArray(root.smart_object_scale);
+	return container;
+}
+function removeSmartInstanceContainer(root) {
+	const container = root._smart_instance_container;
+	if (!container) return false;
+	if (container.parent) container.parent.remove(container);
+	delete root._smart_instance_container;
+	return true;
+}
+
 export class NodePreviewController extends EventSystem {
 	constructor(type, data = {}) {
 		super();
@@ -294,6 +343,7 @@ export class NodePreviewController extends EventSystem {
 		this.dispatchEvent('setup', {element});
 	}
 	remove(element) {
+		removeSmartInstanceContainer(element);
 		let {mesh} = element;
 		if (mesh?.parent) mesh.parent.remove(mesh);
 		if (mesh?.geometry) mesh.geometry.dispose();
@@ -348,8 +398,27 @@ export class NodePreviewController extends EventSystem {
 			} else if (mesh.parent !== Project.model_3d) {
 				Project.model_3d.add(mesh)
 			}
-		} else if (mesh.parent !== Project.model_3d) {
-			Project.model_3d.add(mesh)
+		} else {
+			const instance = getParentSmartInstance(element);
+			if (instance) {
+				syncSmartInstanceContainer(instance).add(mesh);
+				mesh.position.x -= instance.origin[0];
+				mesh.position.y -= instance.origin[1];
+				mesh.position.z -= instance.origin[2];
+			} else if (mesh.parent !== Project.model_3d) {
+				Project.model_3d.add(mesh)
+			}
+		}
+		if (element.type == 'group') {
+			if (!Format.bone_rig && element.smart_object) {
+				const created = !element._smart_instance_container;
+				syncSmartInstanceContainer(element);
+				if (created) {
+					element.forEachChild(child => child.preview_controller?.updateTransform(child));
+				}
+			} else if (removeSmartInstanceContainer(element)) {
+				element.forEachChild(child => child.preview_controller?.updateTransform(child));
+			}
 		}
 
 		mesh.updateMatrixWorld();
@@ -742,6 +811,10 @@ export function stopRenameOutliner(save) {
 			document.selection.empty()
 		}
 		Blockbench.removeFlag('renaming')
+		if (Outliner.vue?._data.options) {
+			Outliner.vue._data.options.renaming_node_uuid = '';
+		}
+		Outliner.search_filter_snapshot = null;
 	}
 }
 export function toggleElementProperty(key) {
@@ -1394,6 +1467,7 @@ Interface.definePanels(function() {
 
 				<dynamic-icon :icon="node.icon.replace('fa ', '').replace(/ /g, '.')" :color="(outliner_colors.value && node.color >= 0) ? markerColors[node.color % markerColors.length].pastel : ''" v-on:dblclick.stop="doubleClickIcon(node)"></dynamic-icon>
 				<input type="text" class="cube_name tab_target" :class="{locked: node.locked}" v-model="node.name" disabled>` +
+				`<span v-if="node.smart_object" class="outliner_smart_object_badge">【智能对象】</span>` +
 
 
 				`<dynamic-icon v-for="(btn, key) in node.buttons" :key="key"
@@ -1439,6 +1513,7 @@ Interface.definePanels(function() {
 			getOutlinerNodeClasses(node) {
 				let classes = [];
 				if (node.type === 'group') classes.push('group');
+				if (node.smart_object) classes.push('smart_object');
 				// #87：selected class 由 Outliner.syncNodeDomState 命令式维护（批量选中时 1825+ 节点逐个触发 Vue 重渲染是大模型卡顿主因）
 				Blockbench.dispatchEvent('get_outliner_node_classes', {node, classes});
 				return classes;
@@ -1580,6 +1655,7 @@ Interface.definePanels(function() {
 					show_advanced_toggles: StateMemory.advanced_outliner_toggles,
 					update_conditions: 1,
 					search_term: '',
+					renaming_node_uuid: '',
 				}
 			}},
 			methods: {

@@ -598,6 +598,9 @@
 	.outliner_object.selected {
 		background-color: var(--color-selected);
 	}
+	div.outliner_object.smart_object {
+		background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 18%, transparent), transparent 88%);
+	}
 	.outliner_object:hover {
 		color: var(--color-light);
 	}
@@ -734,6 +737,16 @@
 		color: inherit;
 		-webkit-text-fill-color: unset;
 		opacity: 1; /* required on iOS */
+	}
+	.outliner_smart_object_badge {
+		flex: 0 0 auto;
+		align-self: center;
+		margin: 0 4px 0 2px;
+		color: var(--color-accent);
+		font-size: 11px;
+		line-height: 16px;
+		white-space: nowrap;
+		pointer-events: none;
 	}
 	input.cube_name.renaming {
 		pointer-events: auto;

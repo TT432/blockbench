@@ -1,6 +1,25 @@
 import { TransformerModule } from "./transform_modules";
-import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, getRotationUndoAspects, moveElementsInSpace } from "../transform";
+import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, getRotationUndoAspects, moveElementsInSpace, getSmartInstanceTransformGroup, scaleSmartInstance } from "../transform";
 
+function getSmartScaleBasis(group) {
+	let min = [Infinity, Infinity, Infinity];
+	let max = [-Infinity, -Infinity, -Infinity];
+	function include(point) {
+		for (let i = 0; i < 3; i++) {
+			min[i] = Math.min(min[i], point[i]);
+			max[i] = Math.max(max[i], point[i]);
+		}
+	}
+	group.forEachChild(node => {
+		if (node.from instanceof Array && node.to instanceof Array) {
+			include(node.from);
+			include(node.to);
+		} else if (node.vertices && node.origin) {
+			for (let key in node.vertices) include(node.vertices[key].map((value, i) => value + node.origin[i]));
+		}
+	});
+	return min.map((value, i) => Number.isFinite(value) && max[i] > value ? max[i] - value : 1);
+}
 function displayDistance(number) {
 	Blockbench.setCursorTooltip(trimFloatNumber(number));
 }
@@ -224,6 +243,12 @@ new TransformerModule('edit', {
 	},
 	onStart(context) {
 		let tool_id = Toolbox.selected.id;
+		const smart_group = getSmartInstanceTransformGroup();
+		if (tool_id === 'resize_tool' && smart_group) {
+			smart_group.temp_data.old_smart_scale = smart_group.smart_object_scale.slice();
+			smart_group.temp_data.old_smart_position = smart_group.smart_object_position.slice();
+			smart_group.temp_data.smart_scale_basis = getSmartScaleBasis(smart_group);
+		}
 		if (tool_id === 'resize_tool' || tool_id === 'stretch_tool') {
 			Outliner.selected.forEach(function(obj) {
 				if (obj instanceof Mesh || obj instanceof SplineMesh) {
@@ -272,12 +297,14 @@ new TransformerModule('edit', {
 		} else {
 			let transfer_undo_nodes = getGroupTransferOriginUndoNodes(Group.all.filter(g => g.selected));
 			transfer_undo_nodes.elements.safePush(...getSelectedMovingElements());
-			Undo.initEdit({elements: transfer_undo_nodes.elements, groups: transfer_undo_nodes.groups});
+			const instance_only = smart_group && (tool_id === 'resize_tool' || tool_id === 'move_tool');
+			Undo.initEdit({elements: instance_only ? [] : transfer_undo_nodes.elements, groups: instance_only ? [smart_group] : transfer_undo_nodes.groups});
 		}
 	},
 	onMove(context) {
 		let {axis, axis_number, value, second_axis, second_axis_number} = context;
 		let tool_id = Toolbox.selected.id;
+		const smart_group = getSmartInstanceTransformGroup();
 		var difference = value - (this.previous_value||0)
 		
 		if (tool_id === 'move_tool') {
@@ -300,6 +327,26 @@ new TransformerModule('edit', {
 			}
 
 		} else if (tool_id === 'resize_tool') {
+			if (smart_group) {
+				let factors = [1, 1, 1];
+				let bidirectional = ((event.altKey || Pressing.overrides.alt) && BarItems.swap_tools.keybind.key != 18) !== Mesh.hasSelected();
+				function setFactor(index, bidirectional) {
+					let direction = !second_axis && context.direction == -1 ? -1 : 1;
+					let basis = smart_group.temp_data.smart_scale_basis[index] || 1;
+					factors[index] = Math.max(0, 1 + value * direction * (bidirectional ? 2 : 1) / basis);
+				}
+				if (axis == 'e') {
+					setFactor(0, true); setFactor(1, true); setFactor(2, true);
+				} else if (!second_axis) {
+					setFactor(axis_number, bidirectional);
+				} else {
+					setFactor(axis_number, true); setFactor(second_axis_number, true);
+				}
+				scaleSmartInstance(smart_group, factors);
+				displayDistance(value * context.direction);
+				updateSelection();
+				return;
+			}
 
 			Outliner.selected.forEach(function(obj, i) {
 				if (obj.getTypeBehavior('resizable')) {
@@ -411,6 +458,12 @@ new TransformerModule('edit', {
 	onEnd(context) {
 		let tool_id = Toolbox.selected.id;
 		if (tool_id === 'resize_tool' || tool_id === 'stretch_tool') {
+			const smart_group = getSmartInstanceTransformGroup();
+			if (smart_group) {
+				delete smart_group.temp_data.old_smart_scale;
+				delete smart_group.temp_data.old_smart_position;
+				delete smart_group.temp_data.smart_scale_basis;
+			}
 			//Scale and stretch
 			Outliner.selected.forEach(function(obj) {
 				delete obj.temp_data.old_size;
@@ -442,6 +495,12 @@ new TransformerModule('edit', {
 	},
 	onCancel(context) {
 		Undo.cancelEdit(true);
+		const smart_group = getSmartInstanceTransformGroup();
+		if (smart_group) {
+			delete smart_group.temp_data.old_smart_scale;
+			delete smart_group.temp_data.old_smart_position;
+			delete smart_group.temp_data.smart_scale_basis;
+		}
 	}
 });
 

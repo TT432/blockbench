@@ -138,6 +138,30 @@ export const Vertexsnap = {
 			$('#preview').css('cursor', (Vertexsnap.step1 ? 'copy' : 'alias'))
 		}
 	},
+	cancel() {
+		if (Vertexsnap.step1) return false;
+		Vertexsnap.step1 = true;
+		delete Vertexsnap.vertex_pos;
+		delete Vertexsnap.vertex_index;
+		delete Vertexsnap.move_pivot;
+		delete Vertexsnap.elements;
+		delete Vertexsnap.groups;
+		delete Vertexsnap.selected_vertices;
+		let previous_mesh_selection = Vertexsnap.previous_mesh_selection;
+		delete Vertexsnap.previous_mesh_selection;
+		if (previous_mesh_selection) {
+			for (let uuid in Project.mesh_selection) {
+				if (!previous_mesh_selection[uuid]) delete Project.mesh_selection[uuid];
+			}
+			for (let uuid in previous_mesh_selection) {
+				Project.mesh_selection[uuid] = previous_mesh_selection[uuid];
+			}
+		}
+		updateSelection();
+		Blockbench.setStatusBarText();
+		Blockbench.showQuickMessage(tl('message.vertex_snap.cancel_selection', [], 'Cancel selected vertex'));
+		return true;
+	},
 	canvasClick(data) {
 		if (!data) return;
 		if (data.type !== 'vertex' && ['locator', 'null_object'].includes(data.element?.type) == false) return;
@@ -149,6 +173,7 @@ export const Vertexsnap = {
 			Vertexsnap.move_pivot = data.vertex instanceof Array ? data.vertex.allEqual(0) : data.vertex == undefined;
 			Vertexsnap.elements = Outliner.selected.slice();
 			Vertexsnap.groups = Group.multi_selected.slice();
+			Vertexsnap.previous_mesh_selection = JSON.parse(JSON.stringify(Project.mesh_selection));
 			if (data.element instanceof Mesh && BarItems.selection_mode.value == 'vertex') {
 				let vertices = data.element.getSelectedVertices(true);
 				vertices.safePush(data.vertex);

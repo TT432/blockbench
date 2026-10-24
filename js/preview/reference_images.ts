@@ -34,6 +34,8 @@ interface ReferenceImageOptions {
 	modes?: string[]
 }
 
+let copied_reference_image: ReferenceImageOptions | null = null;
+
 export class ReferenceImage {
 	name: string = '';
 	layer: ReferenceImageLayer = 'background';
@@ -1449,6 +1451,14 @@ ReferenceImage.prototype.menu = new Menu([
 	},
 	new MenuSeparator('manage'),
 	{
+		id: 'copy',
+		name: 'action.copy',
+		icon: 'fa-copy',
+		click(reference: ReferenceImage) {
+			copied_reference_image = reference.getSaveCopy();
+		}
+	},
+	{
 		name: 'menu.texture.refresh',
 		icon: 'refresh',
 		condition: (reference) => (isApp && reference.source && PathModule.isAbsolute(reference.source)),
@@ -1698,6 +1708,16 @@ BARS.defineActions(function() {
 			}
 		}
 	});
+	new Action('paste_reference_image', {
+		name: 'action.paste',
+		icon: 'fa-paste',
+		category: 'view',
+		condition: () => copied_reference_image != null,
+		click() {
+			if (!copied_reference_image) return;
+			new ReferenceImage(copied_reference_image).addAsReference(true).select();
+		}
+	});
 	new Action('toggle_all_reference_images', {
 		icon: 'hide_image',
 		category: 'view',
@@ -1825,6 +1845,7 @@ Interface.definePanels(function() {
 		children: [
 			'add_reference_image',
 			'reference_image_from_clipboard',
+			'paste_reference_image',
 			'reference_image_list',
 			'toggle_all_reference_images',
 		]
@@ -1843,6 +1864,7 @@ declare global {
 		edit_reference_images: Action
 		add_reference_image: Action
 		reference_image_from_clipboard: Action
+		paste_reference_image: Action
 		toggle_all_reference_images: Action
 		reference_image_list: Action
 	}
