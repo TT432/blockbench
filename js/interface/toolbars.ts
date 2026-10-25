@@ -629,6 +629,7 @@ export const BARS = {
 			no_wrap: true,
 			children: [
 				'vertex_snap_mode',
+				'vertex_snap_intersections',
 				'selection_mode',
 				'spline_selection_mode',
 				'spline_handle_mode',

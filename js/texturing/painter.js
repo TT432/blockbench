@@ -1,7 +1,9 @@
 import { PointerTarget } from "../interface/pointer_target";
+import { preventContextMenu } from "../interface/menu";
 import { clipboard, nativeImage } from "../native_apis";
 import { RenderTargetSnapshot } from "../preview/render_target";
 import { Dynamic2DMap } from "../util/dynamic_2d_map";
+import { dragHelper } from "../util/drag_helper";
 import { getFaceKeyFromIndex } from "../util/util";
 
 StateMemory.init('brush_presets', 'array')
@@ -23,36 +25,50 @@ function cubeFaceLocalToUV(face, vector) {
 	let py = vector.y + cube.origin[1];
 	let pz = vector.z + cube.origin[2];
 	let lerp_x, lerp_y, plane_offset;
+	// extent 是该 lerp 方向对应的模型单位长度，用来把归一化容差换算回模型单位（#207）
+	let extent_x, extent_y;
 	switch (face.direction) {
 		case 'east':
 			plane_offset = px - to[0];
 			lerp_y = Math.getLerp(to[1], from[1], py);
 			lerp_x = Math.getLerp(to[2], from[2], pz);
+			extent_y = Math.abs(to[1] - from[1]);
+			extent_x = Math.abs(to[2] - from[2]);
 			break;
 		case 'west':
 			plane_offset = px - from[0];
 			lerp_y = Math.getLerp(to[1], from[1], py);
 			lerp_x = Math.getLerp(from[2], to[2], pz);
+			extent_y = Math.abs(to[1] - from[1]);
+			extent_x = Math.abs(to[2] - from[2]);
 			break;
 		case 'up':
 			plane_offset = py - to[1];
 			lerp_y = Math.getLerp(from[2], to[2], pz);
 			lerp_x = Math.getLerp(from[0], to[0], px);
+			extent_y = Math.abs(to[2] - from[2]);
+			extent_x = Math.abs(to[0] - from[0]);
 			break;
 		case 'down':
 			plane_offset = py - from[1];
 			lerp_y = Math.getLerp(to[2], from[2], pz);
 			lerp_x = Math.getLerp(from[0], to[0], px);
+			extent_y = Math.abs(to[2] - from[2]);
+			extent_x = Math.abs(to[0] - from[0]);
 			break;
 		case 'south':
 			plane_offset = pz - to[2];
 			lerp_y = Math.getLerp(to[1], from[1], py);
 			lerp_x = Math.getLerp(from[0], to[0], px);
+			extent_y = Math.abs(to[1] - from[1]);
+			extent_x = Math.abs(to[0] - from[0]);
 			break;
 		case 'north':
 			plane_offset = pz - from[2];
 			lerp_y = Math.getLerp(to[1], from[1], py);
 			lerp_x = Math.getLerp(to[0], from[0], px);
+			extent_y = Math.abs(to[1] - from[1]);
+			extent_x = Math.abs(to[0] - from[0]);
 			break;
 		default:
 			return null;
@@ -60,10 +76,12 @@ function cubeFaceLocalToUV(face, vector) {
 	// 撤销面 UV 旋转（UVToLocal 正向每 90°: [lx, ly] = [1-ly, lx]，逆向为 [ly, 1-lx]）
 	for (let i = 0; i < face.rotation; i += 90) {
 		[lerp_x, lerp_y] = [lerp_y, 1 - lerp_x];
+		[extent_x, extent_y] = [extent_y, extent_x];
 	}
 	return {
 		plane_offset,
 		lerp: [lerp_x, lerp_y],
+		extent: [extent_x, extent_y],
 		uv: [
 			Math.lerp(face.uv[0], face.uv[2], lerp_x),
 			Math.lerp(face.uv[1], face.uv[3], lerp_y)
@@ -677,6 +695,44 @@ export const Painter = {
 			dimensions[index] = Math.round(size / (Math.abs(aspect_ratio)+1));
 		}
 		return dimensions;
+	},
+	// #230：Alt + 右键拖动调整笔刷直径（PS 风格）。默认关闭，开关 = 设置「Alt + 右键拖动笔刷直径」。
+	// 只影响笔刷直径视图（tool_settings.brush_size），不写工程数据，因此不进 Undo。
+	brush_size_drag: false,
+	isBrushSizeDragEvent(event) {
+		if (!settings.community_brush_size_rmb_drag.value) return false;
+		if (!Modes.paint || event.button !== 2 || !(event.altKey || Pressing.alt)) return false;
+		let slider = BarItems.slider_brush_size;
+		if (!slider || typeof slider.get !== 'function') return false;
+		return !!Condition(slider.condition);
+	},
+	startBrushSizeDrag(event) {
+		if (!Painter.isBrushSizeDragEvent(event)) return false;
+		if (!PointerTarget.requestTarget(PointerTarget.types.global_drag_slider)) return false;
+		let slider = BarItems.slider_brush_size;
+		let steps = 0;
+		Painter.brush_size_drag = true;
+		if (typeof event.preventDefault === 'function') event.preventDefault();
+		Blockbench.setStatusBarText(`${tl('action.slider_brush_size')}: ${slider.get()}`);
+		dragHelper(event, {
+			start_distance: 2,
+			onMove(context) {
+				// 竖直拖动调值：每 4px 一个直径步进，向上变大
+				let next_steps = Math.round(-context.delta.y / 4);
+				if (next_steps === steps) return;
+				let difference = next_steps - steps;
+				steps = next_steps;
+				slider.change(value => Math.max(slider.settings?.min ?? 1, Math.min(slider.settings?.max ?? 1024, value + difference)), context.event);
+				slider.update();
+				Blockbench.setStatusBarText(`${tl('action.slider_brush_size')}: ${slider.get()}`);
+			},
+			onEnd() {
+				Painter.brush_size_drag = false;
+				preventContextMenu();
+				Blockbench.setStatusBarText();
+			}
+		});
+		return true;
 	},
 	useFilltool(texture, ctx, x, y, area) {
 		let color = tinycolor(ColorPanel.get()).toRgb();
@@ -1532,8 +1588,11 @@ export const Painter = {
 					let start_targets = Painter.getMirrorPaintTargets(texture, Painter.startPixel[0], Painter.startPixel[1], uvTag);
 					let old_element = Painter.current.element;
 					let old_face = Painter.current.face;
-					targets.forEach((target, i) => {
-						let start_target = start_targets[i];
+					targets.forEach((target) => {
+						// #207：起点与当前点的镜像目标按「元素 + 面」配对，不按数组下标。
+						// 镜像向量的候选集合会随位置变化（临界过滤），按下标配对会把起点算在另一个块上。
+						let start_target = start_targets.find(start => start.element === target.element && start.face === target.face);
+						if (!start_target) return;
 						Painter.current.element = target.element;
 						Painter.current.face = target.face;
 						drawShape(start_target.x, start_target.y, target.x, target.y, target.uv_tag)
@@ -1623,8 +1682,9 @@ export const Painter = {
 					let start_targets = Painter.getMirrorPaintTargets(texture, Painter.startPixel[0], Painter.startPixel[1], uvTag);
 					let old_element = Painter.current.element;
 					let old_face = Painter.current.face;
-					targets.forEach((target, i) => {
-						let start_target = start_targets[i];
+					targets.forEach((target) => {
+						let start_target = start_targets.find(start => start.element === target.element && start.face === target.face);
+						if (!start_target) return;
 						Painter.current.element = target.element;
 						drawGradient(start_target.x, start_target.y, target.x, target.y, target.uv_tag)
 					})
@@ -1900,8 +1960,14 @@ export const Painter = {
 					let mapping = cubeFaceLocalToUV(face, local);
 					if (!mapping) continue;
 					if (Math.abs(mapping.plane_offset) > ep) continue;
-					if (mapping.lerp[0] < -ep_lerp || mapping.lerp[0] > 1 + ep_lerp ||
-						mapping.lerp[1] < -ep_lerp || mapping.lerp[1] > 1 + ep_lerp) continue;
+					if (!isFinite(mapping.lerp[0]) || !isFinite(mapping.lerp[1])) continue;
+					// #207：面内容差取「归一化 3%」与「模型单位 ep」的较大者。
+					// 只用归一化容差时，0.01 的侧向偏差在小面（边长 < 1/3 单位）上就超过 3%，真镜像面被丢弃，
+					// 于是落点退回文档顺序更靠前的别的块（测试反馈里表现为画到头颅 cube 上）。
+					let tolerance_x = Math.max(ep_lerp, ep / Math.max(mapping.extent[0], 1e-6));
+					let tolerance_y = Math.max(ep_lerp, ep / Math.max(mapping.extent[1], 1e-6));
+					if (mapping.lerp[0] < -tolerance_x || mapping.lerp[0] > 1 + tolerance_x ||
+						mapping.lerp[1] < -tolerance_y || mapping.lerp[1] > 1 + tolerance_y) continue;
 
 					let point_on_uv = [
 						mapping.uv[0] * getUVFactorX(element),
@@ -2010,11 +2076,20 @@ export const Painter = {
 					for (let cy of [from[1], to[1]])
 						for (let cz of [from[2], to[2]])
 							points.push(new THREE.Vector3(cx - element.origin[0], cy - element.origin[1], cz - element.origin[2]));
+			} else if (element instanceof Mesh) {
+				// #207：统一用包围盒 8 角点——此前按顶点数组取角点，顶点数不等或 >200 时整块被跳过，
+				// 跳过不参与评分，导致「唯一可比较的候选」不论偏差多远都获胜（无序回退）。
+				let geometry = element.mesh.geometry;
+				if (!geometry.boundingBox) geometry.computeBoundingBox();
+				let box = geometry.boundingBox;
+				for (let cx of [box.min.x, box.max.x])
+					for (let cy of [box.min.y, box.max.y])
+						for (let cz of [box.min.z, box.max.z])
+							points.push(new THREE.Vector3(cx, cy, cz));
 			} else {
-				let keys = Object.keys(element.vertices);
-				if (keys.length > 200) return null;	// 顶点过多时放弃块级优选，退回物理位置匹配
-				for (let vkey of keys) points.push(new THREE.Vector3().fromArray(element.vertices[vkey]));
+				return null;
 			}
+			element.mesh.updateWorldMatrix(true, false);
 			return points.map(p => element.mesh.localToWorld(p));
 		};
 		let source_corners = getWorldCorners(source_element);

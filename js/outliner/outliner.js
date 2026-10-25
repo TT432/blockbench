@@ -1263,7 +1263,7 @@ BARS.defineActions(function() {
 			});
 			if (canAddOutlinerSelectionTo('root')) {
 				menu_list.splice(0, 0, {
-					name: 'Root',
+					name: 'menu.move_to_group.root',
 					icon: 'list_alt',
 					click(context, event) {
 						moveOutlinerSelectionAmend(element, undefined, event);

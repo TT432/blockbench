@@ -618,7 +618,7 @@ new Property(ModelProject, 'string', 'model_identifier', {
 });
 new Property(ModelProject, 'string', 'modded_entity_entity_class', {
 	label: 'dialog.project.modded_entity_entity_class',
-	placeholder: 'Entity',
+	placeholder: 'dialog.project.modded_entity_entity_class.placeholder',
 	condition: {formats: ['modded_entity']},
 });
 new Property(ModelProject, 'string', 'modded_entity_version', {
@@ -1485,7 +1485,7 @@ BARS.defineActions(function() {
 					label: property.label,
 					description: property.description,
 					value: Project[property.name],
-					placeholder: property.placeholder,
+					placeholder: property.placeholder ? tl(property.placeholder) : undefined,
 					type: property.type
 				}
 				if (property.type == 'boolean') entry.type = 'checkbox';
@@ -1524,7 +1524,7 @@ BARS.defineActions(function() {
 				readonly: use_uv_size_editor,
 				extra_actions: use_uv_size_editor ? [{
 					icon: 'edit',
-					name: 'Change',
+					name: tl('generic.change'),
 					click: (event) => {
 						Dialog.open.confirm(event);
 						editUVSizeDialog({project: true});

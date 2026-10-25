@@ -1441,12 +1441,12 @@ DisplayMode.updateDisplaySkin = updateDisplaySkin;
 
 DisplayMode.debugBase = function() {
 	new Dialog('display_base_debug', {
-		title: 'Debug Display Base',
+		title: 'dialog.display_base_debug.title',
 		darken: false,
 		form: {
-			translation: {type: 'vector', dimensions: 3, step: 0.1, value: [0, 0, 0], label: 'Translation'},
-			rotation: {type: 'vector', dimensions: 3, step: 0.5, value: [0, 0, 0], label: 'Rotation'},
-			scale: {type: 'vector', dimensions: 3, step: 0.05, value: [1, 1, 1], label: 'Scale'},
+			translation: {type: 'vector', dimensions: 3, step: 0.1, value: [0, 0, 0], label: 'display.translation'},
+			rotation: {type: 'vector', dimensions: 3, step: 0.5, value: [0, 0, 0], label: 'display.rotation'},
+			scale: {type: 'vector', dimensions: 3, step: 0.05, value: [1, 1, 1], label: 'display.scale'},
 		},
 		onFormChange(result) {
 			DisplayMode.setBase(...result.translation, ...result.rotation, ...result.scale)

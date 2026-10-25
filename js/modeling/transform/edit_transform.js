@@ -1,5 +1,5 @@
 import { TransformerModule } from "./transform_modules";
-import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, getRotationUndoAspects, moveElementsInSpace, getSmartInstanceTransformGroup, scaleSmartInstance } from "../transform";
+import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, getRotationUndoAspects, moveElementsInSpace, getSmartInstanceTransformGroup, scaleSmartInstance, getAxisLockReference, getLocalAxisInWorld, moveSelectionInWorldAxis } from "../transform";
 
 function getSmartScaleBasis(group) {
 	let min = [Infinity, Infinity, Infinity];
@@ -167,6 +167,9 @@ new TransformerModule('edit', {
 		}
 
 		let space = getEditTransformSpace();
+		// #220：自身轴锁定开启时，gizmo 三轴取首个所选元素的自身轴（而不是多选时退化的全局轴）。
+		// 只影响 gizmo 的朝向；实际位移/旋转的轴向由 onMove 里的锁分支决定，不改变不可见路径的空间判定。
+		const axis_lock_reference = getAxisLockReference(Toolbox.selected.id);
 		//Rotation
 		if (space >= 2 || Toolbox.selected.id == 'resize_tool' || Toolbox.selected.id == 'stretch_tool') {
 			Transformer.rotation_ref = rotation_object.mesh;
@@ -189,6 +192,9 @@ new TransformerModule('edit', {
 
 		} else {
 			delete Transformer.rotation_ref;
+		}
+		if (axis_lock_reference) {
+			Transformer.rotation_ref = axis_lock_reference.mesh;
 		}
 		return true;
 	},
@@ -309,6 +315,19 @@ new TransformerModule('edit', {
 		
 		if (tool_id === 'move_tool') {
 			var overlapping = false
+			// #220：锁定自身轴时，gizmo 的 X/Y/Z 拖动统一沿首个所选元素的世界轴向移动（多选不再各走各的轴）
+			let move_lock_reference = getAxisLockReference('move_tool');
+			if (move_lock_reference && axis_number !== undefined) {
+				let world_axis = getLocalAxisInWorld(move_lock_reference, axis_number);
+				displayDistance(value);
+				if (getSmartInstanceTransformGroup()) {
+					moveElementsInSpace(difference, world_axis, 0);
+				} else {
+					moveSelectionInWorldAxis(difference, world_axis);
+				}
+				updateSelection();
+				return;
+			}
 			if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
 				Cube.selected.forEach(function(obj) {
 					let from = obj.from.slice();
@@ -395,7 +414,7 @@ new TransformerModule('edit', {
 			if (axis_number == undefined) {
 				axis_number = context.rotate_normal;
 			}
-			rotateOnAxis(n => (n + difference), axis_number)
+			rotateOnAxis(n => (n + difference), axis_number, false, typeof axis_number === 'number' && !!getAxisLockReference('rotate_tool'))
 			Canvas.updatePositions(true)
 			Transformer.updateSelection()
 			displayDistance(angle - this.initial_value);

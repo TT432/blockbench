@@ -1012,35 +1012,35 @@ BARS.defineActions(function() {
 						showPresetMenu(event) {
 							new Menu([
 								{
-									name: 'Item Slot',
+									name: 'dialog.edit_bedrock_binding.preset.item_slot',
 									icon: 'build',
 									click: () => {
 										this.binding = 'q.item_slot_to_bone_name(c.item_slot)';
 									}
 								},
 								{
-									name: 'Right Hand',
+									name: 'dialog.edit_bedrock_binding.preset.right_hand',
 									icon: 'build',
 									click: () => {
 										this.binding = '\'rightitem\'';
 									}
 								},
 								{
-									name: 'Left Hand',
+									name: 'dialog.edit_bedrock_binding.preset.left_hand',
 									icon: 'build',
 									click: () => {
 										this.binding = '\'leftitem\'';
 									}
 								},
 								{
-									name: 'Body',
+									name: 'dialog.edit_bedrock_binding.preset.body',
 									icon: 'build',
 									click: () => {
 										this.binding = '\'body\'';
 									}
 								},
 								{
-									name: 'Head',
+									name: 'dialog.edit_bedrock_binding.preset.head',
 									icon: 'build',
 									click: () => {
 										this.binding = '\'head\'';

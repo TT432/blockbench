@@ -303,7 +303,7 @@ new ValidatorCheck('molang_syntax', {
 				let button
 				if (instance instanceof Animation) {
 					button = {
-						name: 'Edit Animation',
+						name: tl('message.validator.edit_animation'),
 						icon: 'movie',
 						click() {
 							Dialog.open.close()
@@ -312,7 +312,7 @@ new ValidatorCheck('molang_syntax', {
 					}
 				} else {
 					button = {
-						name: 'Reveal Keyframe',
+						name: tl('message.validator.reveal_keyframe'),
 						icon: 'icon-keyframe',
 						click() {
 							Dialog.open.close()

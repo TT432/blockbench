@@ -1101,7 +1101,7 @@ BARS.defineActions(function() {
 		{name: 'menu.palette.load.default', icon: 'bubble_chart', id: 'default', click: () => {
 			loadPalette(palettes.default);
 		}},
-		{name: 'Endesga 64', description: 'Pixel art palette created by lospec.com/endesga', icon: 'bubble_chart', id: 'endesga64', click: () => {
+		{name: 'Endesga 64', description: 'menu.palette.load.endesga64.desc', icon: 'bubble_chart', id: 'endesga64', click: () => {
 			loadPalette(palettes.endesga64);
 		}},
 		{name: 'Material', icon: 'bubble_chart', id: 'material', click: () => {

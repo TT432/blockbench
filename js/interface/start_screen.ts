@@ -615,7 +615,7 @@ onVueSetup(async function() {
 if (isApp && location.href.endsWith('/blockbench/index.html')) {
 	ExperimentalSettings.add(
 		'always_show_update_screen',
-		{type: 'checkbox', label: 'Always Show Update Screen', value: false}
+		{type: 'checkbox', label: 'settings.always_show_update_screen', value: false}
 	);
 	if (ExperimentalSettings.get('always_show_update_screen')) {
 		$.getJSON('./content/news.json').then(data => {
@@ -653,8 +653,8 @@ documentReady.then(() => {
 				text_color: '#ffffff',
 				graphic: {type: 'icon', icon: 'fab.fa-bluesky'},
 				text: [
-					{type: 'h3', text: 'Blockbench on Bluesky'},
-					{text: 'Follow Blockbench on Bluesky for the latest news & cool models from the community! [@blockbench.net](https://bsky.app/profile/blockbench.net)'}
+					{type: 'h3', text: 'start_screen.bluesky.title'},
+					{text: 'start_screen.bluesky.text'}
 				],
 				last: true
 			})
@@ -667,8 +667,8 @@ documentReady.then(() => {
 			text_color: '#ffffff',
 			graphic: {type: 'icon', icon: 'fab.fa-bluesky'},
 			text: [
-				{type: 'h3', text: 'Blockbench on Bluesky'},
-				{text: 'Follow Blockbench on Bluesky for the latest news & cool models from the community! [@blockbench.net](https://bsky.app/profile/blockbench.net)'}
+				{type: 'h3', text: 'start_screen.bluesky.title'},
+				{text: 'start_screen.bluesky.text'}
 			],
 			last: true
 		})
@@ -680,8 +680,8 @@ documentReady.then(() => {
 			text_color: '#ffffff',
 			graphic: {type: 'icon', icon: 'fab.fa-discord'},
 			text: [
-				{type: 'h2', text: 'Discord Server'},
-				{text: 'You need help with modeling or you want to chat about Blockbench? Join the official [Blockbench Discord](https://discord.gg/WVHg5kH)!'}
+				{type: 'h2', text: 'start_screen.discord.title'},
+				{text: 'start_screen.discord.text'}
 			],
 			last: true
 		})

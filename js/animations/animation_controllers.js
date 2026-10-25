@@ -843,7 +843,7 @@ new Property(AnimationControllerState, 'boolean', 'blend_via_shortest_path');
 AnimationControllerState.prototype.menu = new Menu([
 	{
 		id: 'set_as_initial_state',
-		name: 'Initial State',
+		name: 'animation_controllers.state.initial_state',
 		icon: (state) => (state.uuid == AnimationController.selected?.initial_state ? 'far.fa-dot-circle' : 'far.fa-circle'),
 		click(state) {
 			if (!AnimationController.selected) return;
@@ -1419,13 +1419,13 @@ export class AnimationController extends AnimationItem {
 
 AnimationController.presets = [
 	{
-		name: 'Default',
+		name: 'animation_controllers.preset.default',
 		states: {
 			default: {}
 		}
 	},
 	{
-		name: 'Simple Action',
+		name: 'animation_controllers.preset.simple_action',
 		states: {
 			default: {
 				transitions: [{active: 'query.foo'}]
@@ -1436,7 +1436,7 @@ AnimationController.presets = [
 		}
 	},
 	{
-		name: 'Walking',
+		name: 'animation_controllers.preset.walking',
 		states: {
 			idle: {
 				transitions: [
@@ -1453,7 +1453,7 @@ AnimationController.presets = [
 		}
 	},
 	{
-		name: 'Open & Close',
+		name: 'animation_controllers.preset.open_close',
 		initial_state: 'default',
 		states: {
 			default: {
@@ -2643,7 +2643,7 @@ Interface.definePanels(() => {
 						<h4>${tl('animation_controllers.select_preset')}</h4>
 						<ul>
 							<li v-for="preset in presets" :key="preset.name" @click="loadPreset(preset)">
-								{{ preset.name }}
+								{{ tl(preset.name) }}
 							</li>
 						</ul>
 					</div>

@@ -80,7 +80,7 @@ export function initializeDesktopApp() {
 
 	if (location.href.endsWith('/blockbench/index.html')) {
 		let action = new Action('dev_mode_reload', {
-			name: 'Reload',
+			name: 'generic.reload',
 			icon: 'refresh',
 			color: 'var(--color-update)',
 			click() {

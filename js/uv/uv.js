@@ -3411,6 +3411,9 @@ Interface.definePanels(function() {
 				onPointerDown(event) {
 					if (this.touches_count) return;
 
+					// #230：Alt + 右键拖动调整笔刷直径（设置开关默认关闭）
+					if (Painter.startBrushSizeDrag(event)) return false;
+
 					setActivePanel('uv');
 					if (Menu.open) Menu.open.hide();
 					if (ReferenceImageMode.active) ReferenceImageMode.deactivate();

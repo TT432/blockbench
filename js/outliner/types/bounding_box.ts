@@ -354,9 +354,9 @@ new Property(BoundingBox, 'boolean', 'locked');
 new Property(BoundingBox, 'array', 'function', {
 	inputs: {
 		element_panel: {
-			input: {type: 'multi_select', label: 'Function', options: {
-				collision: 'Collision',
-				hitbox: 'Hitbox',
+			input: {type: 'multi_select', label: 'bounding_box.function', options: {
+				collision: 'dialog.bedrock_bounding_box.type.collision_box',
+				hitbox: 'dialog.bedrock_bounding_box.type.hitbox',
 			}}
 		}
 	}
