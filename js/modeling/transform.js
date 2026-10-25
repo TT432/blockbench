@@ -5,6 +5,17 @@ import { rotateEulerBy90 } from "../util/math_util";
 
 //Actions
 export function getSelectionCenter(all = false) {
+	// 反馈#234：智能根的实例 TRS 落在骨骼（bone_rig）或独立实例容器（其他格式）上，
+	// 后代元素的 matrixWorld 只有渲染循环才刷新；拖动过程中按后代包围盒算中心会停在上一帧，
+	// 表现为「位移轴临时错位」。整棵智能子树被选中时直接取实例枢轴（原点 + 实例位移）。
+	if (Group.selected.length == 1 && !all) {
+		let group = Group.first_selected;
+		if (group.smart_object && (Outliner.selected.length == 0 || group.matchesSelection())) {
+			let reference = group._smart_instance_container || group.mesh;
+			reference.updateWorldMatrix(true, false);
+			return THREE.fastWorldPosition(reference, new THREE.Vector3()).toArray();
+		}
+	}
 	if (Group.selected.length == 1 && Outliner.selected.length == 0 && !all) {
 		let vec = THREE.fastWorldPosition(Group.first_selected.mesh, new THREE.Vector3());
 		return vec.toArray();
@@ -659,6 +670,8 @@ export function scaleSmartInstance(group, factors, origin) {
 		}
 	}
 	group.preview_controller.updateTransform(group);
+	// 反馈#234：同一帧内 gizmo/选择中心会立即读世界矩阵，实例层自己刷新，不等渲染循环
+	(group._smart_instance_container || group.mesh).updateWorldMatrix(true, false);
 }
 
 //Move
@@ -682,6 +695,8 @@ export function moveElementsInSpace(difference, axis, space = getEditTransformSp
 		}
 		smart_group.smart_object_position.V3_add(vector.x, vector.y, vector.z);
 		smart_group.preview_controller.updateTransform(smart_group);
+		// 反馈#234：拖动过程中 gizmo/选择中心立刻读世界矩阵，必须在本帧内刷新实例层
+		(smart_group._smart_instance_container || smart_group.mesh).updateWorldMatrix(true, false);
 		return;
 	}
 	if (Format.bone_rig && Group.first_selected && (Group.multi_selected.length > 1 || Group.first_selected.matchesSelection())) {
@@ -1460,15 +1475,33 @@ BARS.defineActions(function() {
 		category: 'edit'
 	})
 
+	/**
+	 * 反馈#231：自身轴锁定拖动位置滑块时，滑块读数在「读数节点的父空间」里（`getPos`），
+	 * 而位移沿自身轴的世界方向。父级带旋转/缩放时（套组），沿自身轴移动 d 只让读数变化
+	 * d*cosθ；直接把读数差当位移会让读数追不上拖动，反向拖动时出现大幅回弹。
+	 * 这里把读数差换算成沿轴的实际距离。
+	 */
+	function getAxisLockDistance(delta, axis, axis_lock_reference) {
+		if (!delta) return delta;
+		// 与 getPos 的读数节点保持同源（有选中组时读组 origin，否则读首个所选元素）
+		let node = Group.first_selected || Outliner.selected[0];
+		if (!node?.mesh) return delta;
+		let local_axis = getWorldDeltaInParentSpace(node, getLocalAxisInWorld(axis_lock_reference, axis));
+		let component = local_axis[getAxisLetter(axis)];
+		// 轴向几乎垂直于读数轴（例如父级转了 90°）时没有可靠换算，保持旧行为
+		if (!isFinite(component) || Math.abs(component) < 1e-4) return delta;
+		return delta / component;
+	}
 	function moveOnAxis(modify, axis) {
 		let axis_lock_reference = toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local' && getLocalAxisLockReference();
 		if (axis_lock_reference?.mesh) {
 			let old_value = getPos(axis);
 			let new_value = modify(old_value);
+			let distance = getAxisLockDistance(new_value - old_value, axis, axis_lock_reference);
 			if (getSmartInstanceTransformGroup()) {
-				moveElementsInSpace(new_value - old_value, getLocalAxisInWorld(axis_lock_reference, axis), 0);
+				moveElementsInSpace(distance, getLocalAxisInWorld(axis_lock_reference, axis), 0);
 			} else {
-				moveSelectionInWorldAxis(new_value - old_value, getLocalAxisInWorld(axis_lock_reference, axis));
+				moveSelectionInWorldAxis(distance, getLocalAxisInWorld(axis_lock_reference, axis));
 			}
 			updateSelection();
 			return;
@@ -1546,7 +1579,10 @@ BARS.defineActions(function() {
 			if (settings.local_position_values.value && smart_group.parent instanceof Group) value -= smart_group.parent.origin[axis];
 			return value;
 		}
-		if (toggle_pos_per_element.value == false && Group.first_selected) {
+		// 反馈#231：自身轴锁定（套组场景）下移动的是所选组本身（`moveSelectionInWorldAxis` 移动组 origin），
+		// 读数必须同源，否则滑块停在子元素的局部坐标上、拖动时数值回弹。
+		const axis_lock_reads_group = toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local';
+		if ((toggle_pos_per_element.value == false || axis_lock_reads_group) && Group.first_selected) {
 			return Group.first_selected.origin[axis];
 		}
 		let element = Outliner.selected[0];

@@ -653,6 +653,8 @@ window.addEventListener('focus', event => {
  */
 function selectAltTool(event) {
 	if (!isSwapToolsEnabled(event) || !Toolbox.selected.alt_tool || Toolbox.original || open_interface) return false;
+	// #230：Alt + 右键拖动笔刷直径期间已把工具切回画笔，此时不能再被 Alt 切走
+	if (PointerTarget.active == PointerTarget.types.global_drag_slider) return false;
 	var orig = Toolbox.selected;
 	var alt = BarItems[Toolbox.selected.alt_tool];
 	if (alt && Condition(alt) && (Modes.paint || BarItems.swap_tools.keybind.key == 18)) {

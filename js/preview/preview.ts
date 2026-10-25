@@ -458,9 +458,17 @@ export class Preview {
 
 		this.raycaster = new THREE.Raycaster();
 		this.mouse = new THREE.Vector2();
+		// #230：Alt + 右键拖动调整笔刷直径（设置开关默认关闭）。
+		// 3D 视口的 pointerdown 目标是 CSS3D 叠加层（.preview_css_renderer_canvas 是 node 的子元素、
+		// 盖在 canvas 上方），因此不能挂在 canvas 上；同时要在 OrbitControls（node/canvas 的
+		// pointerdown，先于本文件注册）之前处理，否则右键已被导航目标接管。故挂在 node 的捕获阶段。
+		addEventListeners(this.node, 'pointerdown', (event: PointerEvent) => {
+			if (Painter.startBrushSizeDrag(event)) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
+		}, { capture: true, passive: false });
 		addEventListeners(this.canvas, 'pointerdown', (event: PointerEvent) => {
-			// #230：Alt + 右键拖动调整笔刷直径（设置开关默认关闭）
-			if (Painter.startBrushSizeDrag(event)) return;
 			this.click(event)
 		}, { passive: false });
 		addEventListeners(this.canvas, 'mousemove touchmove', (event: MouseEvent) => {

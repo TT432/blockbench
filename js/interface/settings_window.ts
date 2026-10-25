@@ -5,6 +5,7 @@ import { Plugins } from "../plugin_loader";
 import { compileJSON } from "../util/json";
 import { Dialog } from "./dialog";
 import { MenuItem } from "./menu";
+import { ScrollMemory } from "./scroll_memory";
 import { Setting, SettingsProfile } from "./settings";
 
 function rankSearchMatch(text: string, word: string, field_rank: number): number {
@@ -110,11 +111,14 @@ onVueSetup(function() {
 	}
 
 	interface SettingsDialogVueData {
-		structure: any,
+		structure: typeof Settings.structure,
 		profile: null | SettingsProfile,
 		all_profiles: SettingsProfile[],
 		open_category: string,
-		search_term: string
+		search_term: string,
+		scroll_memory: ScrollMemory,
+		$refs: Record<string, HTMLElement | undefined>,
+		$nextTick(callback: () => void): void
 	}
 	Settings.dialog = new Dialog({
 		id: 'settings',
@@ -135,8 +139,12 @@ onVueSetup(function() {
 				'export_settings',
 			],
 			onPageSwitch(page) {
-				Settings.dialog.content_vue.open_category = page;
-				Settings.dialog.content_vue.search_term = '';
+				// 反馈#235：切换分页前把当前分页的滚动位置记下来，切完再恢复目标分页的位置
+				let content = Settings.dialog.content_vue;
+				content.scroll_memory.save();
+				content.open_category = page;
+				content.search_term = '';
+				content.$nextTick(() => content.scroll_memory.restore());
 			}
 		},
 		onOpen() {
@@ -144,6 +152,9 @@ onVueSetup(function() {
 			// 于是激活配置的覆盖值在运行时生效、界面却按 master_value 显示，
 			// 用户看到开关是关的（或切换后行为不变），怎么调都“关不掉”。
 			this.content_vue.profile = SettingsProfile.all.find(profile => profile.isActive()) ?? null;
+
+			// 反馈#235：重新打开对话框时回到上次离开的位置
+			this.content_vue.scroll_memory.restore();
 		},
 		component: {
 			data() {return {
@@ -153,6 +164,24 @@ onVueSetup(function() {
 				open_category: 'general',
 				search_term: ''
 			} as SettingsDialogVueData},
+			created(this: SettingsDialogVueData) {
+				// 反馈#235：按「设置页 + 当前分页」记忆滚动位置，只存在内存里
+				this.scroll_memory = new ScrollMemory({
+					getKey: () => `settings/${this.open_category}`,
+					getContainer: () => this.$refs.settings_list ?? null,
+					getLabel: () => tl('dialog.settings.scroll_to_top'),
+					isFiltered: () => !!this.search_term,
+				});
+			},
+			mounted(this: SettingsDialogVueData) {
+				this.scroll_memory.attach(this.$refs.scroll_area ?? null);
+			},
+			watch: {
+				search_term(this: SettingsDialogVueData) {
+					// 反馈#235：搜索会重建列表，不能用旧位置强行恢复（未搜索时恢复该分页的位置）
+					this.$nextTick(() => this.scroll_memory.restore());
+				}
+			},
 			methods: {
 				saveSettings(this: SettingsDialogVueData) {
 					// 反馈#146：输入控件的 click 处理器早于 v-model 的 change 更新 ui_value，
@@ -209,7 +238,6 @@ onVueSetup(function() {
 							this.profile.openDialog();
 						}}
 					)
-					// @ts-expect-error
 					new Menu('settings_profiles', items).open(this.$refs.profile_menu)
 				},
 				profileButtonPress(this: SettingsDialogVueData) {
@@ -307,7 +335,8 @@ onVueSetup(function() {
 
 					<search-bar id="settings_search_bar" v-model="search_term"></search-bar>
 
-					<ul class="settings_list" id="settingslist">
+					<div class="scroll_top_area" ref="scroll_area">
+					<ul class="settings_list" id="settingslist" ref="settings_list">
 
 						<li v-for="(setting, key) in list" v-if="Condition(setting.condition)"
 							v-on="setting.click ? {click: setting.click} : {}"
@@ -364,6 +393,7 @@ onVueSetup(function() {
 							</template>
 						</li>
 					</ul>
+					</div>
 				</div>`
 		},
 		onButton() {

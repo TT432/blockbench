@@ -1078,6 +1078,7 @@
 	"dialog.settings.reset_to_default": "Reset to Default",
 	"dialog.settings.create_profile": "Create Profile...",
 	"dialog.settings.clear_profile_value": "Clear profile value",
+	"dialog.settings.scroll_to_top": "Scroll to top",
 
 	"keybindings.reset": "Reset",
 	"keybindings.clear": "Unset",

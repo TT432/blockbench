@@ -1,4 +1,5 @@
 import { isMac, updateKeybindConflicts } from './keyboard';
+import { ScrollMemory } from './scroll_memory';
 import { BARS } from './toolbars';
 
 
@@ -125,8 +126,11 @@ onVueSetup(function() {
 				'export_keymap',
 			],
 			onPageSwitch(page) {
+				// 反馈#235：切换分页前记下当前位置，切完再恢复目标分页的位置
+				Keybinds.dialog.content_vue.scroll_memory.save();
 				Keybinds.dialog.content_vue.open_category = page;
 				Keybinds.dialog.content_vue.search_term = '';
+				Keybinds.dialog.content_vue.$nextTick(() => Keybinds.dialog.content_vue.scroll_memory.restore());
 			}
 		},
 		component: {
@@ -146,6 +150,24 @@ onVueSetup(function() {
 					unless_alt: tl('modifier_actions.unless', tl(isMac ? 'keys.option' : 'keys.alt')),
 				} 
 			}},
+			created() {
+				// 反馈#235：按「快捷键页 + 当前分页」记忆滚动位置，只存在内存里
+				this.scroll_memory = new ScrollMemory({
+					getKey: () => `keybinds/${this.open_category}`,
+					getContainer: () => this.$refs.keybind_list ?? null,
+					getLabel: () => tl('dialog.settings.scroll_to_top'),
+					isFiltered: () => !!this.search_term,
+				});
+			},
+			mounted() {
+				this.scroll_memory.attach(this.$refs.scroll_area ?? null);
+			},
+			watch: {
+				search_term() {
+					// 反馈#235：搜索会重建列表，不能用旧位置强行恢复（未搜索时恢复该分页的位置）
+					this.$nextTick(() => this.scroll_memory.restore());
+				}
+			},
 			methods: {
 				record(item: KeybindItem | Action, sub_id?: string) {
 					if (sub_id && "sub_keybinds" in item) {
@@ -255,7 +277,8 @@ onVueSetup(function() {
 
 					<search-bar id="settings_search_bar" v-model="search_term"></search-bar>
 
-					<ul id="keybindlist">
+					<div class="scroll_top_area" ref="scroll_area">
+					<ul id="keybindlist" ref="keybind_list">
 						<li v-for="action in list">
 							<div class="keybind_line">
 								<div :title="action.description"><span>{{action.name}}</span><span class="keybind_guide_line" /></div>
@@ -288,6 +311,7 @@ onVueSetup(function() {
 							</ul>
 						</li>
 					</ul>
+					</div>
 				</div>`
 		},
 		onButton() {
@@ -295,6 +319,8 @@ onVueSetup(function() {
 		},
 		onOpen() {
 			updateKeybindConflicts();
+			// 反馈#235：重新打开对话框时回到上次离开的位置
+			Keybinds.dialog.content_vue.scroll_memory.restore();
 		}
 	})
 })
