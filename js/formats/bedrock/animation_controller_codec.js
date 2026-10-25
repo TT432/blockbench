@@ -1,5 +1,6 @@
 import { fs } from '../../native_apis';
 import { AnimationCodec } from './../../animations/animation_codec'
+import { buildBedrockExportNames, setLastExportNames, reportExportNames } from './export_names'
 
 
 export const animation_codec = new AnimationCodec('bedrock_animation_controller', {
@@ -72,14 +73,16 @@ export const animation_codec = new AnimationCodec('bedrock_animation_controller'
 	},
 
 	// MARK: Export
-	compileAnimation(a) {
-		return a.compileForBedrock();
+	compileAnimation(a, export_names) {
+		return a.compileForBedrock(export_names);
 	},
 	compileFile(anim_controllers) {
+		let export_names = buildBedrockExportNames();
+		setLastExportNames(export_names);
 		let controllers = {}
 		anim_controllers.forEach(function(a) {
-			let ani_tag = a.compileForBedrock();
-			controllers[a.name] = ani_tag;
+			let ani_tag = a.compileForBedrock(export_names);
+			controllers[export_names.controller(a)] = ani_tag;
 		})
 		return {
 			format_version: '1.19.0',
@@ -137,14 +140,16 @@ export const animation_codec = new AnimationCodec('bedrock_animation_controller'
 						a.saved = true;
 					}
 				})
+				reportExportNames();
 			})
 		}
 	},
 	deleteAnimationFromFile(controller) {
 		let content = fs.readFileSync(controller.path, 'utf-8');
 		let json = autoParseJSON(content, false);
-		if (json && json.animation_controllers && json.animation_controllers[controller.name]) {
-			delete json.animation_controllers[controller.name];
+		let exported_name = buildBedrockExportNames().controller(controller);
+		if (json && json.animation_controllers && json.animation_controllers[exported_name]) {
+			delete json.animation_controllers[exported_name];
 			Blockbench.writeFile(controller.path, {content: compileJSON(json)});
 			Undo.history.last().before.animation_controllers[controller.uuid].saved = false
 		}

@@ -5,6 +5,7 @@ import { Filesystem } from '../file_system';
 import { Easings } from '../lib/easing';
 import { markerColors } from '../marker_colors';
 import { effectLookupRef } from './effect_path';
+import { buildBedrockExportNames, setLastExportNames, reportExportNames } from '../formats/bedrock/export_names';
 
 export class AnimationControllerState {
 	constructor(controller, data = 0) {
@@ -189,13 +190,15 @@ export class AnimationControllerState {
 		copy.position = this.position ? {x: this.position.x, y: this.position.y} : null;
 		return copy;
 	}
-	compileForBedrock() {
+	compileForBedrock(export_names) {
+		export_names = export_names ?? buildBedrockExportNames();
 		let object = {};
 		if (this.animations.length) {
 			object.animations = this.animations.map(animation => {
+				let exported_key = export_names.animationShortByLink(animation);
 				return animation.blend_value.trim()
-					? new oneLiner({[animation.key]: expandCustomMolang(animation.blend_value.trim())})
-					: animation.key;
+					? new oneLiner({[exported_key]: expandCustomMolang(animation.blend_value.trim())})
+					: exported_key;
 			})
 		}
 		['on_entry', 'on_exit'].forEach(type => {
@@ -211,7 +214,7 @@ export class AnimationControllerState {
 			object.particle_effects = this.particles.map(particle => {
 				return {
 					effect: particle.effect || '',
-					locator: particle.locator || undefined,
+					locator: particle.locator ? export_names.locatorName(particle.locator) : undefined,
 					bind_to_actor: particle.bind_to_actor ? undefined : false,
 					pre_effect_script: particle.pre_effect_script ? expandCustomMolang(particle.pre_effect_script) : undefined
 				}
@@ -963,7 +966,9 @@ export class AnimationController extends AnimationItem {
 		})
 		return copy;
 	}
-	compileForBedrock() {
+	compileForBedrock(export_names) {
+		export_names = export_names ?? buildBedrockExportNames();
+		setLastExportNames(export_names);
 		let object = {};
 		if (!this.states.length) return object;
 
@@ -972,7 +977,7 @@ export class AnimationController extends AnimationItem {
 
 		object.states = {};
 		this.states.forEach(state => {
-			object.states[state.name] = state.compileForBedrock();
+			object.states[state.name] = state.compileForBedrock(export_names);
 		})
 
 		Blockbench.dispatchEvent('compile_bedrock_animation_controller', {animation_controller: this, json: object});
@@ -995,10 +1000,13 @@ export class AnimationController extends AnimationItem {
 			})
 			return;
 		}
+		let export_names = buildBedrockExportNames();
+		setLastExportNames(export_names);
+		let exported_name = export_names.controller(this);
 		let content = {
 			format_version: '1.19.0',
 			animation_controllers: {
-				[this.name]: this.compileForBedrock()
+				[exported_name]: this.compileForBedrock(export_names)
 			}
 		}
 		if (isApp && this.path) {
@@ -1030,10 +1038,10 @@ export class AnimationController extends AnimationItem {
 					}
 				}
 				if (data) {
-					let animation = content.animation_controllers[this.name];
+					let animation = content.animation_controllers[exported_name];
 					content = data;
-					if (this.saved_name && this.saved_name !== this.name) delete content.animation_controllers[this.saved_name];
-					content.animation_controllers[this.name] = animation;
+					if (this.saved_name && this.saved_name !== exported_name) delete content.animation_controllers[this.saved_name];
+					content.animation_controllers[exported_name] = animation;
 
 					// Improve JSON formatting
 					for (let key in data.animation_controllers) {
@@ -1057,7 +1065,7 @@ export class AnimationController extends AnimationItem {
 
 					// Sort
 					let file_keys = Object.keys(content.animation_controllers);
-					let anim_keys = Animation.all.filter(anim => anim.path == this.path).map(anim => anim.name);
+					let anim_keys = Animation.all.filter(anim => anim.path == this.path).map(anim => export_names.animation(anim));
 					let changes = false;
 					let index = 0;
 
@@ -1086,8 +1094,9 @@ export class AnimationController extends AnimationItem {
 			// Write
 			Blockbench.writeFile(this.path, {content: compileJSON(content)}, (real_path) => {
 				this.saved = true;
-				this.saved_name = this.name;
+				this.saved_name = exported_name;
 				this.path = real_path;
+				reportExportNames();
 			});
 
 		} else {
@@ -1102,6 +1111,8 @@ export class AnimationController extends AnimationItem {
 			}, (real_path) => {
 				this.path == real_path;
 				this.saved = true;
+				this.saved_name = exported_name;
+				reportExportNames();
 			})
 		}
 		return this;

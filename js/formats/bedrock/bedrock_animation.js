@@ -1,4 +1,5 @@
 import { fs } from "../../native_apis"
+import { buildBedrockExportNames, setLastExportNames, reportExportNames, mapKeyframeLocators } from "./export_names"
 
 export const animation_codec = new AnimationCodec('bedrock', {
 
@@ -435,7 +436,9 @@ export const animation_codec = new AnimationCodec('bedrock', {
 		})
 	},
 	// MARK: Export
-	compileAnimation(animation) {
+	compileAnimation(animation, export_names) {
+		export_names = export_names ?? buildBedrockExportNames();
+		setLastExportNames(export_names);
 		let ani_tag = {};
 
 		if (animation.loop == 'hold') {
@@ -459,11 +462,11 @@ export const animation_codec = new AnimationCodec('bedrock', {
 
 				animator.sound.sort((kf1, kf2) => (kf1.time - kf2.time)).forEach(kf => {
 					if (!ani_tag.sound_effects) ani_tag.sound_effects = {};
-					ani_tag.sound_effects[kf.getTimecodeString()] = kf.compileBedrockKeyframe();
+					ani_tag.sound_effects[kf.getTimecodeString()] = mapKeyframeLocators(kf.compileBedrockKeyframe(), export_names);
 				})
 				animator.particle.sort((kf1, kf2) => (kf1.time - kf2.time)).forEach(kf => {
 					if (!ani_tag.particle_effects) ani_tag.particle_effects = {};
-					ani_tag.particle_effects[kf.getTimecodeString()] = kf.compileBedrockKeyframe();
+					ani_tag.particle_effects[kf.getTimecodeString()] = mapKeyframeLocators(kf.compileBedrockKeyframe(), export_names);
 				})
 				animator.timeline.sort((kf1, kf2) => (kf1.time - kf2.time)).forEach(kf => {
 					if (!ani_tag.timeline) ani_tag.timeline = {};
@@ -473,7 +476,7 @@ export const animation_codec = new AnimationCodec('bedrock', {
 			} else if (animator.type == 'bone') {
 
 				var group = animator.getGroup(); 
-				var bone_tag = ani_tag.bones[group ? group.name : animator.name] = {};
+				var bone_tag = ani_tag.bones[group ? export_names.bone(group) : export_names.boneName(animator.name, animator.uuid)] = {};
 				if (animator.rotation_global) {
 					bone_tag.relative_to = {rotation: 'entity'};
 					bone_tag.rotation = [0, 0, 0.01];
@@ -551,7 +554,8 @@ export const animation_codec = new AnimationCodec('bedrock', {
 		let sample_rate = settings.animation_sample_rate.value;
 		for (let uuid in ik_samples) {
 			let group = OutlinerNode.uuids[uuid];
-			var bone_tag = ani_tag.bones[group ? group.name : animator.name] = {};
+			let ik_animator = animation.animators[uuid];
+			var bone_tag = ani_tag.bones[group ? export_names.bone(group) : export_names.boneName(ik_animator?.name ?? uuid, uuid)] = {};
 			bone_tag.rotation = {};
 			ik_samples[uuid].forEach((rotation, i) => {
 				let timecode = trimFloatNumber(Timeline.snapTime(i / sample_rate, animation)).toString();
@@ -571,9 +575,11 @@ export const animation_codec = new AnimationCodec('bedrock', {
 	},
 	compileFile(animations) {
 		var compiled_animations = {}
+		let export_names = buildBedrockExportNames();
+		setLastExportNames(export_names);
 		animations.forEach((a) => {
-			let ani_tag = this.compileAnimation(a);
-			compiled_animations[a.name] = ani_tag;
+			let ani_tag = this.compileAnimation(a, export_names);
+			compiled_animations[export_names.animation(a)] = ani_tag;
 		})
 		return {
 			format_version: '1.8.0',
@@ -596,10 +602,13 @@ export const animation_codec = new AnimationCodec('bedrock', {
 			})
 			return;
 		}
+		let export_names = buildBedrockExportNames();
+		setLastExportNames(export_names);
+		let exported_name = export_names.animation(animation);
 		let content = {
 			format_version: '1.8.0',
 			animations: {
-				[animation.name]: this.compileAnimation(animation)
+				[exported_name]: this.compileAnimation(animation, export_names)
 			}
 		}
 		if (isApp && animation.path) {
@@ -631,14 +640,14 @@ export const animation_codec = new AnimationCodec('bedrock', {
 					}
 				}
 				if (data) {
-					let animation_json = content.animations[animation.name];
+					let animation_json = content.animations[exported_name];
 					content = data;
-					if (animation.saved_name && animation.saved_name !== animation.name) delete content.animations[animation.saved_name];
-					content.animations[animation.name] = animation_json;
+					if (animation.saved_name && animation.saved_name !== exported_name) delete content.animations[animation.saved_name];
+					content.animations[exported_name] = animation_json;
 
 					// Sort
 					let file_keys = Object.keys(content.animations);
-					let anim_keys = Animation.all.filter(anim => anim.path == animation.path).map(anim => anim.name);
+					let anim_keys = Animation.all.filter(anim => anim.path == animation.path).map(anim => export_names.animation(anim));
 					let changes = false;
 					let index = 0;
 
@@ -667,8 +676,9 @@ export const animation_codec = new AnimationCodec('bedrock', {
 			// Write
 			Blockbench.writeFile(animation.path, {content: compileJSON(content)}, (real_path) => {
 				animation.saved = true;
-				animation.saved_name = animation.name;
+				animation.saved_name = exported_name;
 				animation.path = real_path;
+				reportExportNames();
 			});
 
 		} else {
@@ -683,6 +693,8 @@ export const animation_codec = new AnimationCodec('bedrock', {
 			}, (real_path) => {
 				animation.path == real_path;
 				animation.saved = true;
+				animation.saved_name = exported_name;
+				reportExportNames();
 			})
 		}
 	},
@@ -733,21 +745,21 @@ export const animation_codec = new AnimationCodec('bedrock', {
 					a.path = new_path;
 					a.saved = true;
 				})
+				reportExportNames();
 			})
 		}
 	},
 	deleteAnimationFromFile(animation) {
 		let content = fs.readFileSync(animation.path, 'utf-8');
 		let json = autoParseJSON(content, false);
-		if (json && json.animations && json.animations[animation.name]) {
-			delete json.animations[animation.name];
+		let exported_name = buildBedrockExportNames().animation(animation);
+		if (json && json.animations && json.animations[exported_name]) {
+			delete json.animations[exported_name];
 			Blockbench.writeFile(animation.path, {content: compileJSON(json)});
 			Undo.history.last().before.animations[animation.uuid].saved = false
 		}
 	}
 })
 
-Blockbench.on('edit_animation_properties', ({animation}) => {
-	if (AnimationCodec.getCodec() != animation_codec || !Format.animation_files) return;
-	animation.name = animation.name.trim().replace(/\s+/g, '_');
-});
+// 注意：编辑动画属性时不再改写内部名称（trim / 空白转下划线）。
+// 内部名称允许任意字符，不合规的名称在导出时由 export_names.js 映射为合规名称。
