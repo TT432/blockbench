@@ -4,6 +4,7 @@ import { currentwindow, dialog, fs } from "../../native_apis";
 import VersionUtil from '../../util/version_util'
 import {animation_codec} from "./bedrock_animation"
 import "./animation_controller_codec"
+import { buildBedrockExportNames, setLastExportNames, reportExportNames, mapBindingLiterals } from "./export_names";
 import { loadBedrockCollisionFromJSON } from "./bedrock_voxel_shape";
 
 if (isApp) {
@@ -974,7 +975,7 @@ window.calculateVisibleBox = calculateVisibleBox;
 		}
 		return template;
 	}
-	function compileGroup(g) {
+	function compileGroup(g, export_names) {
 		if (g.type !== 'group') return;
 		if (g.export == false) {
 			function hasChildrenToExport(node) {
@@ -992,9 +993,9 @@ window.calculateVisibleBox = calculateVisibleBox;
 		if (g.children.length && g.children.allAre(c => c instanceof BoundingBox)) return;
 		//Bone
 		var bone = {}
-		bone.name = g.name
+		bone.name = export_names.bone(g)
 		if (g.parent.type === 'group') {
-			bone.parent = g.parent.name
+			bone.parent = export_names.bone(g.parent)
 		}
 		bone.pivot = g.origin.slice()
 		bone.pivot[0] *= -1
@@ -1004,7 +1005,7 @@ window.calculateVisibleBox = calculateVisibleBox;
 			bone.rotation[1] *= -1;
 		}
 		if (g.bedrock_binding) {
-			bone.binding = g.bedrock_binding
+			bone.binding = mapBindingLiterals(g.bedrock_binding, export_names)
 		}
 		if (g.reset) {
 			bone.reset = true
@@ -1028,7 +1029,7 @@ window.calculateVisibleBox = calculateVisibleBox;
 					cubes.push(template);
 
 				} else if (obj instanceof Locator || obj instanceof NullObject) {
-					let key = obj.name;
+					let key = export_names.locator(obj);
 					if (obj instanceof NullObject) key = '_null_' + key;
 					let offset = obj.position.slice();
 					offset[0] *= -1;
@@ -1324,6 +1325,10 @@ var codec = new Codec('bedrock', {
 	compile(options) {
 		if (options === undefined) options = {}
 
+		// 导出名称映射：内部任意名称在导出时规范化（见 export_names.js）
+		const export_names = buildBedrockExportNames();
+		setLastExportNames(export_names);
+
 		var entitymodel = {}
 		var main_tag = {
 			format_version: getFormatVersion(),
@@ -1357,7 +1362,7 @@ var codec = new Codec('bedrock', {
 			groups.splice(0, 0, group);
 		}
 		groups.forEach((group) => {
-			let bone = compileGroup(group);
+			let bone = compileGroup(group, export_names);
 			if (bone) bones.push(bone)
 		})
 
@@ -1395,6 +1400,14 @@ var codec = new Codec('bedrock', {
 		} else {
 			return autoStringify(main_tag)
 		}
+	},
+	afterSave(path) {
+		Codec.prototype.afterSave.call(this, path);
+		reportExportNames();
+	},
+	afterDownload(path) {
+		Codec.prototype.afterDownload.call(this, path);
+		reportExportNames();
 	},
 	overwrite(content, path, cb) {
 		var data, index;
