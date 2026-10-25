@@ -332,6 +332,11 @@ export const SmartObject = {
 		const current = Project.groups.find(item => item.uuid == group_uuid);
 		if (current) {
 			current.smart_object = true;
+			// 反馈#233：重新创建智能对象不继承上一次实例层的位移/缩放。这些字段随工程保存，
+			// 退化只是取消 smart_object 标记、字段仍然留着；不重置的话再次创建会把组移动到
+			// 上一次实例变换后的位置和大小。
+			current.smart_object_position.V3_set(0, 0, 0);
+			current.smart_object_scale.V3_set(1, 1, 1);
 			current.smart_object_source_origin.replace(current.origin);
 			current.preview_controller.updateTransform(current);
 		}
@@ -409,6 +414,9 @@ export const SmartObject = {
 		const edited = parent.groups.find(item => item.uuid == group_uuid);
 		if (edited) {
 			edited.smart_object = false;
+			// 反馈#233：退化时清空实例层，避免旧位移/缩放留在工程文件里被下一次创建沿用
+			edited.smart_object_position.V3_set(0, 0, 0);
+			edited.smart_object_scale.V3_set(1, 1, 1);
 			edited.preview_controller.updateTransform(edited);
 		}
 		Undo.finishEdit('Demote smart object');

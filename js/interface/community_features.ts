@@ -3,6 +3,7 @@
 // 入口指引、功能说明、与原版 Blockbench 的差异、以及设置里的开关位置。
 // 内容数据维护在同目录的 community_features_data.ts。
 import { Interface } from "./interface";
+import { ScrollMemory } from "./scroll_memory";
 import { COMMUNITY_FEATURES, COMMUNITY_FEATURE_AREAS, CommunityFeature, CommunityFeatureArea } from "./community_features_data";
 
 const MANUAL_CSS = `
@@ -29,6 +30,11 @@ const MANUAL_CSS = `
 	overflow-y: auto;
 	margin-top: 8px;
 	padding-right: 2px;
+	min-height: 0;
+}
+.cf_tree_wrapper {
+	flex: 1;
+	display: flex;
 	min-height: 0;
 }
 .cf_overview,
@@ -85,6 +91,12 @@ const MANUAL_CSS = `
 .cf_empty {
 	margin: 16px 8px;
 	color: var(--color-subtle_text);
+}
+.cf_content_wrapper {
+	flex: 1;
+	display: flex;
+	min-width: 0;
+	min-height: 0;
 }
 .cf_content {
 	flex: 1;
@@ -212,15 +224,52 @@ BARS.defineActions(() => {
 							return features.length;
 						},
 					},
+					created() {
+						// 反馈#235：按「当前选择」记忆详情列的滚动位置，只存在内存里
+						this.scroll_memory = new ScrollMemory({
+							getKey: () => `community_features/${this.selection.kind}/${this.selection.area}/${this.selection.id}`,
+							getContainer: () => this.$refs.content ?? null,
+							getLabel: () => tl('dialog.settings.scroll_to_top'),
+							isFiltered: () => !!this.query.trim(),
+						});
+						// 反馈#235：左侧功能树（83 条的长列表）单独记忆；它不随选择重建，只需恢复
+						this.tree_memory = new ScrollMemory({
+							getKey: () => 'community_features/tree',
+							getContainer: () => this.$refs.tree ?? null,
+							getLabel: () => tl('dialog.settings.scroll_to_top'),
+							isFiltered: () => !!this.query.trim(),
+						});
+					},
+					mounted() {
+						this.scroll_memory.attach(this.$refs.scroll_area ?? null);
+						this.scroll_memory.restore();
+						this.tree_memory.attach(this.$refs.sidebar ?? null);
+						this.tree_memory.restore();
+					},
+					watch: {
+						query() {
+							// 反馈#235：过滤会重建详情内容与功能树，此时回到顶部，不用陈旧位置
+							this.$nextTick(() => {
+								this.scroll_memory.restore();
+								this.tree_memory.restore();
+							});
+						}
+					},
 					methods: {
+						applySelection(selection: {kind: string, area: string, id: string}) {
+							// 反馈#235：切走前记下当前选择的滚动位置，切完恢复目标选择的位置
+							this.scroll_memory.save();
+							this.selection = selection;
+							this.$nextTick(() => this.scroll_memory.restore());
+						},
 						selectOverview() {
-							this.selection = {kind: 'overview', area: '', id: ''};
+							this.applySelection({kind: 'overview', area: '', id: ''});
 						},
 						selectArea(area: CommunityFeatureArea) {
-							this.selection = {kind: 'area', area, id: ''};
+							this.applySelection({kind: 'area', area, id: ''});
 						},
 						selectFeature(feature: CommunityFeature) {
-							this.selection = {kind: 'feature', area: feature.area, id: feature.id};
+							this.applySelection({kind: 'feature', area: feature.area, id: feature.id});
 						},
 					},
 					template: `
@@ -229,7 +278,8 @@ BARS.defineActions(() => {
 								<div class="cf_search">
 									<input type="text" class="dark_bordered" placeholder="${ tl('community_features.search') }" v-model="query">
 								</div>
-								<div class="cf_tree">
+								<div class="cf_tree_wrapper" ref="sidebar">
+								<div class="cf_tree" ref="tree">
 									<div class="cf_overview" :class="{selected: selection.kind == 'overview'}" @click="selectOverview()">
 										${ tl('community_features.overview') }
 									</div>
@@ -247,8 +297,10 @@ BARS.defineActions(() => {
 									</template>
 									<div class="cf_empty" v-if="!groups.length">${ tl('community_features.no_match') }</div>
 								</div>
+								</div>
 							</div>
-							<div class="cf_content">
+							<div class="cf_content_wrapper" ref="scroll_area">
+							<div class="cf_content" ref="content">
 								<div class="cf_detail" v-if="selection.kind == 'overview'">
 									<h2>${ tl('community_features.overview') }</h2>
 									<div class="cf_badges">
@@ -287,6 +339,7 @@ BARS.defineActions(() => {
 									<p v-if="!current_feature.toggle" class="cf_muted">${ tl('community_features.toggle.none.desc') }</p>
 									<p v-else class="cf_entry">{{ current_feature.toggle }}</p>
 								</div>
+							</div>
 							</div>
 						</div>
 					`

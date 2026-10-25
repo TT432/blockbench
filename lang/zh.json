@@ -2652,6 +2652,7 @@
 	"dialog.skin.texture_file": "纹理文件",
 	"dialog.convert_skin.adjust_texture": "调整纹理",
 	"dialog.settings.clear_profile_value": "清除配置值",
+	"dialog.settings.scroll_to_top": "回到顶部",
 	"layout.section.customize": "自定义",
 	"layout.theme.configure": "配置",
 	"layout.color.elevated": "悬浮",
