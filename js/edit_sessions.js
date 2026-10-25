@@ -356,11 +356,11 @@ EditSession.matchToken = function(token) {
 
 ExperimentalSettings.add(
 	'max_chat_message_length',
-	{type: 'number', label: 'Max chat message length', min: 1, value: 512, step: 1, force_step: true}
+	{type: 'number', label: 'settings.max_chat_message_length', min: 1, value: 512, step: 1, force_step: true}
 );
 ExperimentalSettings.add(
 	'session_server',
-	{type: 'string', label: 'Edit Session server', value: 'blckbn.ch'}
+	{type: 'string', label: 'settings.session_server', value: 'blckbn.ch'}
 );
 EditSession.defaults = {
 	max_chat_length: ExperimentalSettings.get('max_chat_message_length'),

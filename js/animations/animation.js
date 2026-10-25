@@ -518,12 +518,12 @@ export class Animation extends AnimationItem {
 					condition: Animation.properties.path.condition
 				},
 				scope: {
-					label: 'Scope',
+					label: 'reference_image.scope',
 					type: 'select',
 					value: this.scope,
 					get options() {
 						let opts = {
-							0: {name: 'None'},
+							0: {name: 'generic.none'},
 						};
 						for (let collection of Collection.all) {
 							if (!collection.scope) continue;
@@ -1105,7 +1105,7 @@ new ValidatorCheck('unused_animators', {
 		if (animators.length) {
 			let buttons = [
 				{
-					name: 'Retarget Animators',
+					name: tl('message.validator.retarget_animators'),
 					icon: 'rebase',
 					click() {
 						Validator.dialog.close()
@@ -1113,7 +1113,7 @@ new ValidatorCheck('unused_animators', {
 					},
 				},
 				{
-					name: 'Reveal in Timeline',
+					name: tl('message.validator.reveal_in_timeline'),
 					icon: 'fa-sort-amount-up',
 					click() {
 						for (let animator of animators) {

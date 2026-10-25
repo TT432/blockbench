@@ -84,7 +84,7 @@
 			</div>
 			<div class="bar" v-if="isBedrockStyle() && slot.slot_id == 'gui'" @click="toggleFitToFrame()">
 				<input type="checkbox" :checked="slot.fit_to_frame == true">
-				<label style="padding-top: 3px;">Fit to Frame</label>
+				<label style="padding-top: 3px;">{{ tl('display.fit_to_frame') }}</label>
 			</div>
 			
 			<template v-if="reference_model == 'player'">

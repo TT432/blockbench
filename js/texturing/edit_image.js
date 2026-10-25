@@ -450,7 +450,7 @@ BARS.defineActions(function() {
 							if (point == points[0] || point == points.last()) return;
 							new Menu([{
 								id: 'remove',
-								name: 'Remove',
+								name: 'generic.remove',
 								icon: 'clear',
 								click: () => {
 									let {points} = this.graphs[this.graph];

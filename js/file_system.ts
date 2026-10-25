@@ -129,9 +129,9 @@ export namespace Filesystem {
 				})
 				new Dialog({
 					id: 'import_type',
-					title: 'File Type',
+					title: 'dialog.import_type.title',
 					form: {
-						extension: {label: 'File Type', type: 'select', options: ext_options}
+						extension: {label: 'dialog.import_type.title', type: 'select', options: ext_options}
 					},
 					onConfirm(formResult) {
 						element.setAttribute('accept', '.'+formResult.extension);

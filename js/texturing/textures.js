@@ -1422,7 +1422,7 @@ export class Texture {
 				readonly: true,
 				extra_actions: [{
 					icon: 'edit',
-					name: 'Change',
+					name: tl('generic.change'),
 					click: (event) => {
 						Dialog.open.close();
 						editUVSizeDialog({texture: this});

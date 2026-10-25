@@ -558,14 +558,29 @@ function getWorldDeltaInParentSpace(node, world_delta, own_geometry = false) {
 }
 function getLocalAxisLockReference() {
 	if (Group.first_selected) return Group.first_selected;
-	return Outliner.selected.find(el => el instanceof Cube);
+	// #220：不再只认方块——单个网格/样条网格也可以作为自身轴锁定的参考
+	return Outliner.selected.find(el => el.mesh);
 }
-function getLocalAxisInWorld(node, axis) {
+export function getLocalAxisInWorld(node, axis) {
 	node.mesh.updateWorldMatrix(true, false);
 	return new THREE.Vector3().setFromMatrixColumn(node.mesh.matrixWorld, axis).normalize();
 }
+/** #220：位置/旋转的自身轴锁定开关（按工具取；其它工具没有锁定）。 */
+export function getAxisLockToggle(tool_id) {
+	if (tool_id === 'move_tool') return BarItems.position_slider_local_axis_lock;
+	if (tool_id === 'rotate_tool') return BarItems.rotation_slider_local_axis_lock;
+}
+/** #220：锁定生效时的参考元素（首个所选方块或组）；开关关闭或不在自身空间时为 undefined。 */
+export function getAxisLockReference(tool_id = Toolbox.selected?.id) {
+	let toggle = getAxisLockToggle(tool_id);
+	if (!toggle || !toggle.value) return;
+	let space = tool_id === 'rotate_tool' ? BarItems.rotation_space?.value : BarItems.transform_space?.value;
+	if (space !== 'local') return;
+	let reference = getLocalAxisLockReference();
+	return reference?.mesh ? reference : undefined;
+}
 /** Apply one world-space delta to top-level selections; descendants follow their parent matrix. */
-function moveSelectionInWorldAxis(difference, world_axis) {
+export function moveSelectionInWorldAxis(difference, world_axis) {
 	let world_delta = world_axis.clone().multiplyScalar(difference);
 	let selected_groups = Group.multi_selected.slice();
 	let groups = selected_groups.filter(group => !group.parent?.selected);

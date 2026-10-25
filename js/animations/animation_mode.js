@@ -890,7 +890,7 @@ Blockbench.on('close_project', () => {
 
 Animator.animation_presets = {
 	float: {
-		name: 'Float',
+		name: 'animation_preset.float',
 		rotation: {
 			"0.0": [
 				"math.sin(query.anim_time * 120) * 6",
@@ -907,7 +907,7 @@ Animator.animation_presets = {
 		}
 	},
 	flap: {
-		name: 'Flap',
+		name: 'animation_preset.flap',
 		rotation: {
 			"0.0": [
 				"0",
@@ -917,7 +917,7 @@ Animator.animation_presets = {
 		},
 	},
 	swing: {
-		name: 'Swing',
+		name: 'animation_preset.swing',
 		rotation: {
 			"0.0": [
 				"math.sin(query.anim_time * 360) * 25",
@@ -927,7 +927,7 @@ Animator.animation_presets = {
 		},
 	},
 	strike: {
-		name: 'Strike',
+		name: 'animation_preset.strike',
 		"rotation": {
 			"0.0": [-120, 0, 0],
 			"0.0417": [-115, 0, 0],
@@ -939,7 +939,7 @@ Animator.animation_presets = {
 		}
 	},
 	scale_in: {
-		name: 'Scale in',
+		name: 'animation_preset.scale_in',
 		"scale": {
 			"0.0": [0, 0, 0],
 			"0.0417": [0.06, 0.06, 0.06],
@@ -950,7 +950,7 @@ Animator.animation_presets = {
 		}
 	},
 	scale_out: {
-		name: 'Scale out',
+		name: 'animation_preset.scale_out',
 		"scale": {
 			"0.0": [1, 1, 1],
 			"0.0417": [0.94, 0.94, 0.94],
@@ -961,7 +961,7 @@ Animator.animation_presets = {
 		}
 	},
 	drop_down: {
-		name: 'Drop down',
+		name: 'animation_preset.drop_down',
 		"rotation": {
 			"0.125": [0, 0, -2],
 			"0.1667": [0, 0, -0.5],
@@ -985,7 +985,7 @@ Animator.animation_presets = {
 		}
 	},
 	impact: {
-		name: 'Impact',
+		name: 'animation_preset.impact',
 		length: 0.5417,
 		"rotation": {
 			"0.0": {
@@ -1016,7 +1016,7 @@ Animator.animation_presets = {
 		}
 	},
 	shiver: {
-		name: 'Shiver',
+		name: 'animation_preset.shiver',
 		rotation: {
 			"0.0": [
 				"0",
@@ -1026,13 +1026,13 @@ Animator.animation_presets = {
 		}
 	},
 	sway: {
-		name: 'Sway',
+		name: 'animation_preset.sway',
 		"rotation": {
 			"0.0": ["math.sin(query.anim_time * 60) * 3", 0, "math.sin(query.anim_time * 120) * 5"]
 		}
 	},
 	shake: {
-		name: 'Shake',
+		name: 'animation_preset.shake',
 		rotation: {
 			"0.0": [0, 0, 0],
 			"0.125": [0, 0, "math.sin(query.anim_time * 2160) * 20"],
@@ -1041,7 +1041,7 @@ Animator.animation_presets = {
 		}
 	},
 	jump: {
-		name: 'Jump',
+		name: 'animation_preset.jump',
 		length: 1.0833,
 		"rotation": {
 			"0.0": {
@@ -1101,7 +1101,7 @@ Animator.animation_presets = {
 		},
 	},
 	swell: {
-		name: 'Swell',
+		name: 'animation_preset.swell',
 		length: 1.0417,
 		"rotation": {
 			"0": [0, 0, 0],
@@ -1120,7 +1120,7 @@ Animator.animation_presets = {
 		}
 	},
 	circle: {
-		name: 'Circle',
+		name: 'animation_preset.circle',
 		"position": {
 			"0.0": [
 				"math.cos(query.anim_time * 90) * 32",
@@ -1137,7 +1137,7 @@ Animator.animation_presets = {
 		}
 	},
 	open_door: {
-		name: 'Open  Door',
+		name: 'animation_preset.open_door',
 		"rotation": {
 			"0.0": [0, 0, 0],
 			"0.0417": [0, -7.24, 0],
@@ -1152,7 +1152,7 @@ Animator.animation_presets = {
 		}
 	},
 	close_door: {
-		name: 'Close  Door',
+		name: 'animation_preset.close_door',
 		"rotation": {
 			"0.0": [0, -96, 0],
 			"0.0417": [0, -90.365, 0],
@@ -1165,7 +1165,7 @@ Animator.animation_presets = {
 		}
 	},
 	look_at_target: {
-		name: 'Look At Target',
+		name: 'animation_preset.look_at_target',
 		"rotation": {
 			"0.0": [
 				"query.target_x_rotation",
@@ -1175,7 +1175,7 @@ Animator.animation_presets = {
 		}
 	},
 	rotate_to_camera: {
-		name: 'Rotate To Camera',
+		name: 'animation_preset.rotate_to_camera',
 		"rotation": {
 			"0.0": [
 				"query.rotation_to_camera(0)",
@@ -1185,7 +1185,7 @@ Animator.animation_presets = {
 		}
 	},
 	flicker: {
-		name: 'Flicker',
+		name: 'animation_preset.flicker',
 		"scale": {
 			"0.0417": {"pre": [1, 1, 1], "post": [0, 0, 0]},
 			"0.1667": {"pre": [0, 0, 0], "post": [1, 1, 1]},
@@ -1200,7 +1200,7 @@ Animator.animation_presets = {
 		}
 	},
 	hide: {
-		name: 'Invisible',
+		name: 'animation_preset.hide',
 		scale: {
 			"0.0": [0, 0, 0]
 		},

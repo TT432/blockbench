@@ -1216,7 +1216,7 @@ BARS.defineActions(function() {
 				steps.push(step);
 			})
 			steps.push({
-				name: 'Original',
+				name: 'dialog.edit_history.original',
 				time: '',
 				index: 0,
 				type: 'original',
@@ -1249,7 +1249,7 @@ BARS.defineActions(function() {
 							<ul>
 								<li v-for="step in steps" :class="{current: step.current, selected: step.index == selected}" @click="select(step.index)" @dblclick="confirm()">
 									<dynamic-icon :icon="icons[step.type]" />
-									<label>{{ step.name }}</label>
+									<label>{{ tl(step.name) }}</label>
 									<div class="edit_history_time">{{ step.time }}</div>
 								</li>
 							</ul>

@@ -910,12 +910,11 @@ export class ReferenceImage {
 				return 'custom';
 			}
 			let dialog = new ConfigDialog('reference_image_plane_rotation', {
-				// TODO: localization
-				title: 'Rotation',
+				title: 'reference_image.rotation',
 				width: 360,
 				form: {
 					side: {
-						label: 'Side',
+						label: 'reference_image.side',
 						type: 'select',
 						value: getRotationSide(self.plane_rotation),
 						options: {
@@ -925,11 +924,11 @@ export class ReferenceImage {
 							west: 'direction.west',
 							bottom: 'direction.bottom',
 							top: 'direction.top',
-							custom: 'Custom',
+							custom: 'reference_image.side.custom',
 						}
 					},
 					vector: {
-						label: 'Rotation',
+						label: 'reference_image.rotation',
 						type: 'vector',
 						dimensions: 3,
 						step: 2.5,

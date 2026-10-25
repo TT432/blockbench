@@ -1180,11 +1180,11 @@ if (isApp) {
 
 ExperimentalSettings.add(
 	'plugin_load_timeout',
-	{type: 'number', label: 'Plugin load timeout', min: 0.5, value: 10}
+	{type: 'number', label: 'settings.plugin_load_timeout', min: 0.5, value: 10}
 );
 ExperimentalSettings.add(
 	'plugin_await_loading_timeout',
-	{type: 'number', label: 'Max plugin await-loading', description: 'Maximum time to wait for plugins to load before opening a project', min: 0.4, value: 2, step: 0.1}
+	{type: 'number', label: 'settings.plugin_await_loading_timeout', description: 'settings.plugin_await_loading_timeout.desc', min: 0.4, value: 2, step: 0.1}
 )
 const {promise: plugin_loading_promise, resolve: resolve_plugin_loading} = Promise.withResolvers<void>();
 Plugins.loading_promise = plugin_loading_promise;
@@ -1556,7 +1556,7 @@ BARS.defineActions(function() {
 					if (new_plugins.length) {
 						new_plugins.sort((a, b) => a.creation_date - b.creation_date);
 						let new_row = {
-							title: 'New',
+							title: 'dialog.plugins.new',
 							plugins: new_plugins.slice(0, 12)
 						}
 						rows.splice(0, 0, new_row);
@@ -1572,7 +1572,7 @@ BARS.defineActions(function() {
 						if (updated_plugins.length) {
 							updated_plugins.sort((a, b) => a.creation_date - b.creation_date);
 							let new_row = {
-								title: 'Recently Updated',
+								title: 'dialog.plugins.recently_updated',
 								plugins: updated_plugins.slice(0, 12)
 							}
 							rows.splice(new_plugins.length ? 1 : 0, 0, new_row);
@@ -1784,7 +1784,7 @@ BARS.defineActions(function() {
 					if (codecs.length) {
 						types.push({
 							id: 'codecs',
-							name: 'Codec',
+							name: 'dialog.plugins.codec',
 							features: codecs.map(codec => {
 								return {
 									id: codec.id,
@@ -1821,7 +1821,7 @@ BARS.defineActions(function() {
 					if (other_actions.length) {
 						types.push({
 							id: 'actions',
-							name: 'Action',
+							name: 'dialog.plugins.action',
 							features: other_actions.map(action => {
 								return {
 									id: action.id,
@@ -1880,7 +1880,7 @@ BARS.defineActions(function() {
 					if (validator_checks.length) {
 						types.push({
 							id: 'validator_checks',
-							name: 'Validator Check',
+							name: 'dialog.plugins.validator_check',
 							features: validator_checks.map(validator_check => {
 								return {
 									id: validator_check.id,
@@ -2163,7 +2163,7 @@ BARS.defineActions(function() {
 
 						<ul v-if="page_tab == 'features'" class="features_list plugin_browser_tabbed_page">
 							<li v-for="type in getPluginFeatures(selected_plugin)" :key="type.id">
-								<h4>{{ type.name }}</h4>
+								<h4>{{ tl(type.name) }}</h4>
 								<ul>
 									<li v-for="feature in type.features" :key="feature.id" class="plugin_feature_entry" :class="{clickable: feature.click}" @click="feature.click && feature.click($event)">
 										<dynamic-icon v-if="feature.icon" :icon="feature.icon" />
@@ -2184,7 +2184,7 @@ BARS.defineActions(function() {
 						<p>Want to write your own plugin? Check out the <a href="https://www.blockbench.net/wiki/docs/plugin" target="_blank">Plugin Documentation</a>.</p>
 
 						<div v-for="row in suggested_rows" class="plugins_suggested_row">
-							<h3>{{row.title}}</h3>
+							<h3>{{ tl(row.title) }}</h3>
 							<ul>
 								<li v-for="plugin in row.plugins" @click="selectPlugin(plugin)" class="elevated">
 									<div class="plugin_icon_area">

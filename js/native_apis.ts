@@ -60,15 +60,15 @@ const REQUESTABLE_APIS = [
 	'shell',
 ];
 const API_DESCRIPTIONS = {
-	fs: 'access and change files on your computer',
-	process: 'access to the process running Blockbench',
-	child_process: 'launch external programs',
-	net: 'full network access',
-	os: 'see information about your computer',
-	https: 'create servers and talk to other servers',
-	dialog: 'open native dialogs',
-	clipboard: 'read and write to the clipboard',
-	shell: 'open files, folders, and links, and move objects to trash',
+	fs: 'dialog.plugin_permission.api.fs',
+	process: 'dialog.plugin_permission.api.process',
+	child_process: 'dialog.plugin_permission.api.child_process',
+	net: 'dialog.plugin_permission.api.net',
+	os: 'dialog.plugin_permission.api.os',
+	https: 'dialog.plugin_permission.api.https',
+	dialog: 'dialog.plugin_permission.api.dialog',
+	clipboard: 'dialog.plugin_permission.api.clipboard',
+	shell: 'dialog.plugin_permission.api.shell',
 };
 type PluginPermissions = {
 	allowed: Record<string, boolean|any>
@@ -123,25 +123,30 @@ function getModule(module_name: string, plugin_id: string, plugin: PluginOrDevTo
 			return;
 		}
 
-		let api_description = API_DESCRIPTIONS[no_namespace_name] ?? `the module "${no_namespace_name}"`;
+		let api_description = API_DESCRIPTIONS[no_namespace_name] ?
+			tl(API_DESCRIPTIONS[no_namespace_name]) :
+			tl('dialog.plugin_permission.api.module', [no_namespace_name]);
 		let option_text = '';
 		if (no_namespace_name == 'fs' && options2.scope) {
-			api_description = 'a folder';
-			option_text = '\nLocation: "' + options2.scope.replace(/\n/g, '') + '"';
+			api_description = tl('dialog.plugin_permission.api.folder');
+			option_text = '\n' + tl('dialog.plugin_permission.location', [options2.scope.replace(/\n/g, '')]);
 		}
 
 		let result = dialog.showMessageBoxSync(currentwindow, {
-			title: 'Plugin Permission',
-			message: `Permission to ${api_description} requested`,
-			detail: `The plugin "${plugin.name}" (${plugin_id}) requires permission to ${api_description}.${option_text}${options.optional === false ? `\n\nThis permission is not optional and is required for the plugin to function.` : ""}${options.message ? `\n\n"${options.message}"` : ''}`,
+			title: tl('dialog.plugin_permission.title'),
+			message: tl('dialog.plugin_permission.message', [api_description]),
+			detail: tl('dialog.plugin_permission.detail', [plugin.name, plugin_id, api_description])
+				+ option_text
+				+ (options.optional === false ? '\n\n' + tl('dialog.plugin_permission.required') : '')
+				+ (options.message ? `\n\n"${options.message}"` : ''),
 			type: 'question',
 			noLink: true,
 			cancelId: 3,
 			buttons: [
-				'Allow once',
-				'Always allow for this plugin',
-				'Uninstall plugin',
-				options.optional === false ? 'Disable plugin' : 'Deny'
+				tl('dialog.plugin_permission.allow_once'),
+				tl('dialog.plugin_permission.always_allow'),
+				tl('dialog.plugin_permission.uninstall'),
+				options.optional === false ? tl('dialog.plugin_permission.disable') : tl('dialog.plugin_permission.deny')
 			]
 		});
 		enum Result {

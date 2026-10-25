@@ -222,13 +222,13 @@ export class PreviewScene {
 			none: tl('generic.none')
 		},
 		generic: {
-			_label: 'Generic'
+			_label: 'preview_scene.category.generic'
 		},
 		realistic: {
-			_label: 'Realistic'
+			_label: 'preview_scene.category.realistic'
 		},
 		minecraft: {
-			_label: 'Minecraft'
+			_label: 'preview_scene.category.minecraft'
 		},
 	};
 
@@ -979,11 +979,11 @@ export const MinecraftEULA = {
 		return await new Promise((resolve) => {
 			Blockbench.showMessageBox({
 				width: 540,
-				title: 'Minecraft EULA',
-				message: 'This feature includes Minecraft assets. In order to use it, you need to agree to the [Minecraft End User License Agreement (EULA)](https://www.minecraft.net/en-us/eula).',
+				title: 'preview_scene.eula.title',
+				message: 'preview_scene.eula.message',
 				icon: 'icon-format_bedrock',
 				checkboxes: {
-					accepted: {text: 'I have read the End User License Agreement and I agree to its terms', value: false}
+					accepted: {text: 'preview_scene.eula.checkbox', value: false}
 				},
 				buttons: ['dialog.ok', 'dialog.cancel']
 			}, (button, result) => {

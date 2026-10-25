@@ -459,6 +459,8 @@ export class Preview {
 		this.raycaster = new THREE.Raycaster();
 		this.mouse = new THREE.Vector2();
 		addEventListeners(this.canvas, 'pointerdown', (event: PointerEvent) => {
+			// #230：Alt + 右键拖动调整笔刷直径（设置开关默认关闭）
+			if (Painter.startBrushSizeDrag(event)) return;
 			this.click(event)
 		}, { passive: false });
 		addEventListeners(this.canvas, 'mousemove touchmove', (event: MouseEvent) => {

@@ -204,7 +204,7 @@ new ValidatorCheck('cube_size_limit', {
 					message: `The cube "${cube.name}" is outside the allowed size restrictions. It may not work correctly on the target platform.`,
 					buttons: [
 						{
-							name: 'Select Cube',
+							name: tl('message.validator.select_cube'),
 							icon: 'fa-cube',
 							click() {
 								Validator.dialog.hide();
@@ -229,7 +229,7 @@ new ValidatorCheck('box_uv', {
 			if (invalid_size_axes.length) {
 				let buttons = [
 					{
-						name: 'Select Cube',
+						name: tl('message.validator.select_cube'),
 						icon: 'fa-cube',
 						click() {
 							Validator.dialog.hide();
@@ -239,7 +239,7 @@ new ValidatorCheck('box_uv', {
 				];
 				if (Format.optional_box_uv) {
 					buttons.push({
-						name: 'Switch to Per-face UV',
+						name: tl('message.validator.switch_to_per_face_uv'),
 						icon: 'toggle_on',
 						click() {
 							Validator.dialog.hide();
@@ -272,7 +272,7 @@ new ValidatorCheck('texture_names', {
 					message: `Texture "${used_path}" contains the following invalid characters: "${characters.join('')}". Valid characters are: a-z0-9._/\\-. Uppercase letters and spaces are invalid.`,
 					buttons: [
 						{
-							name: 'Select Texture',
+							name: tl('message.validator.select_texture'),
 							icon: 'mouse',
 							click() {
 								Validator.dialog.hide();
@@ -292,7 +292,7 @@ new ValidatorCheck('catmullrom_keyframes', {
 	run() {
 		function getButtons(kf) {
 			return [{
-				name: 'Reveal Keyframe',
+				name: tl('message.validator.reveal_keyframe'),
 				icon: 'icon-keyframe',
 				click() {
 					Dialog.open.close();
@@ -371,7 +371,7 @@ new ValidatorCheck('zero_wide_uv_faces', {
 			if (cube.box_uv && Format.id == 'optifine_entity') continue;
 			let affected_faces = [];
 			let select_cube_button = {
-				name: 'Select Cube',
+				name: tl('message.validator.select_cube'),
 				icon: 'fa-cube',
 				click() {
 					Validator.dialog.hide();

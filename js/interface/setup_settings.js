@@ -155,7 +155,7 @@ function setupSettings() {
 		Preview.all.forEach(viewport => viewport.controls.zoomSpeed = value / 100 * 1.5)
 	}});
 	new Setting('editor_2d_zoom_speed',		{category: 'controls', value: 100, min: 10, max: 1000, type: 'number'});
-	new Setting('gamepad_controls',			{category: 'controls', value: false, name: 'Gamepad Controls', description: 'Use a gamepad or 3D mouse to navigate the viewport'});
+	new Setting('gamepad_controls',			{category: 'controls', value: false});
 	new Setting('double_click_switch_tools',{category: 'controls', value: true});
 	new Setting('canvas_unselect',  		{category: 'controls', value: false});
 	new Setting('double_click_select_reference',{category: 'controls', value: true});
@@ -402,6 +402,16 @@ function setupSettings() {
 	new Setting('community_paint_uv_display_cap', {category: 'community', value: true, group: 'community_group_paint', onChange() {
 		if (typeof UVEditor !== 'undefined' && UVEditor.vue) UVEditor.vue.$forceUpdate();
 	}});
+
+	// 反馈#228：顶点捕捉时是否把「与其它块的相交点」也作为捕捉候选（默认关闭，保持上游行为）。
+	// 开启后仅在顶点捕捉工具激活时生效，见 vertex_snap.js addIntersectionVertices()。
+	new Setting('community_vertex_snap_intersections', {category: 'community', value: false, onChange() {
+		if (typeof Toolbox !== 'undefined' && Toolbox.selected?.id === 'vertex_snap_tool' && typeof Vertexsnap !== 'undefined') Vertexsnap.select();
+	}});
+
+	// 反馈#230：绘画模式按住 Alt 拖动右键调整笔刷直径（PS 风格），默认关闭。
+	// 生效入口见 painter.js startBrushSizeDrag()，由 3D 视口与 UV 编辑器的 pointerdown 调用。
+	new Setting('community_brush_size_rmb_drag', {category: 'community', value: false, group: 'community_group_paint'});
 
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
 	// 反馈#193/#200：工具栏六个「旋转 X/Y/Z 轴 90°」按钮以什么为枢轴。

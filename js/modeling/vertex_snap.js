@@ -42,6 +42,7 @@ export const Vertexsnap = {
 				}
 			}
 			vectors.push([0, 0, 0]);
+			Vertexsnap.addIntersectionVertices(element, vectors);
 			
 			let points = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial().copy(Canvas.meshVertexMaterial));
 			points.element_uuid = element.uuid;
@@ -66,6 +67,107 @@ export const Vertexsnap = {
 		mesh.vertex_points.renderOrder = 900;
 		
 		Vertexsnap.elements_with_vertex_gizmos.push(element)
+	},
+	/**
+	 * 反馈#228：把当前元素与其它可见、未锁定元素的相交点追加为捕捉候选。
+	 * 追加的坐标是 element.mesh 的局部坐标（与 mesh.geometry 顶点同一坐标系），
+	 * 因此与已有角点共用同一个 vectors 数组、同一个 position 属性顺序。
+	 *
+	 * 复杂度：每个元素取包围盒 12 条世界边 × 其它元素数，每条边一次 Raycaster 检测；
+	 * 先用世界 AABB 相交做快速排除。单元素最多追加 256 个交点，元素总数超过 512 时整体跳过：
+	 * 这种规模的模型上逐边射线检测会让悬停/选中明显卡顿，而顶点捕捉本身也已不实用。
+	 */
+	addIntersectionVertices(element, vectors) {
+		if (typeof settings === 'undefined' || !settings.community_vertex_snap_intersections?.value) return;
+		if (typeof Toolbox !== 'undefined' && Toolbox.selected?.id !== 'vertex_snap_tool') return;
+		if (typeof Outliner === 'undefined' || Outliner.elements.length > 512) return;
+
+		let mesh = element.mesh;
+		let geometry = mesh?.geometry;
+		if (!geometry || !geometry.attributes.position) return;
+		if (!geometry.boundingBox) geometry.computeBoundingBox();
+		let box = geometry.boundingBox;
+		if (!box || box.isEmpty()) return;
+
+		// 8 个局部角点，索引按 x/y/z 三个二进制位排列，方便枚举 12 条棱
+		let corners = [];
+		for (let i = 0; i < 8; i++) {
+			corners.push(new THREE.Vector3(
+				(i & 1) ? box.max.x : box.min.x,
+				(i & 2) ? box.max.y : box.min.y,
+				(i & 4) ? box.max.z : box.min.z,
+			));
+		}
+		mesh.updateMatrixWorld();
+		let world_corners = corners.map(corner => corner.applyMatrix4(mesh.matrixWorld));
+		let world_box = new THREE.Box3().setFromPoints(world_corners);
+		let edges = [];
+		for (let i = 0; i < 8; i++) {
+			if (!(i & 1)) edges.push([i, i | 1]);
+			if (!(i & 2)) edges.push([i, i | 2]);
+			if (!(i & 4)) edges.push([i, i | 4]);
+		}
+
+		let raycaster = new THREE.Raycaster();
+		// 合批 cube 在 layer 7，默认 layers 只命中 layer 0
+		raycaster.layers.enableAll();
+		let ray_direction = new THREE.Vector3();
+		let hit_local = new THREE.Vector3();
+		let other_box = new THREE.Box3();
+		// 位置差小于 1e-4 视为同一个点
+		let duplicate_epsilon_sq = 1e-8;
+		let max_added = 256;
+		let added = 0;
+
+		for (let other of Outliner.elements) {
+			if (added >= max_added) break;
+			if (other === element || other.visibility === false || other.locked === true) continue;
+			let other_mesh = other.mesh;
+			let other_geometry = other_mesh?.geometry;
+			if (!other_geometry?.attributes.position) continue;
+
+			// 世界包围盒快速排除
+			if (!other_geometry.boundingBox) other_geometry.computeBoundingBox();
+			if (!other_geometry.boundingBox || other_geometry.boundingBox.isEmpty()) continue;
+			other_mesh.updateMatrixWorld();
+			other_box.copy(other_geometry.boundingBox).applyMatrix4(other_mesh.matrixWorld);
+			if (!world_box.intersectsBox(other_box)) continue;
+
+			for (let edge of edges) {
+				if (added >= max_added) break;
+				let start = world_corners[edge[0]];
+				let end = world_corners[edge[1]];
+				ray_direction.subVectors(end, start);
+				let edge_length = ray_direction.length();
+				if (edge_length < 1e-6) continue;
+				ray_direction.divideScalar(edge_length);
+
+				raycaster.set(start, ray_direction);
+				raycaster.near = 0;
+				raycaster.far = edge_length;
+
+				for (let intersection of raycaster.intersectObject(other_mesh, false)) {
+					if (added >= max_added) break;
+					hit_local.copy(intersection.point);
+					mesh.worldToLocal(hit_local);
+
+					let duplicate = false;
+					for (let vector of vectors) {
+						let dx = vector[0] - hit_local.x;
+						let dy = vector[1] - hit_local.y;
+						let dz = vector[2] - hit_local.z;
+						if (dx*dx + dy*dy + dz*dz < duplicate_epsilon_sq) {
+							duplicate = true;
+							break;
+						}
+					}
+					if (duplicate) continue;
+
+					vectors.push(hit_local.toArray());
+					added++;
+				}
+			}
+		}
 	},
 	clearVertexGizmos() {
 		Project.model_3d.remove(Vertexsnap.line);
@@ -211,6 +313,41 @@ export const Vertexsnap = {
 			if (options.ignore_axis?.z) vector.z = 0;
 		}
 
+		function moveElements(global_delta) {
+			Vertexsnap.elements.forEach(function(obj) {
+				var local_offset = new THREE.Vector3().copy(global_delta)
+
+				if (obj instanceof Mesh && Vertexsnap.selected_vertices && Vertexsnap.selected_vertices[obj.uuid]) {
+					let vertices = Vertexsnap.selected_vertices[obj.uuid].vertices;
+					var q = obj.mesh.getWorldQuaternion(Reusable.quat1).invert();
+					local_offset.applyQuaternion(q);
+					ignoreVectorAxes(local_offset);
+					let local_offset_array = local_offset.toArray();
+					vertices.forEach(vkey => {
+						if (obj.vertices[vkey]) obj.vertices[vkey].V3_add(local_offset_array);
+					})
+
+				} else {
+					if (Format.bone_rig && obj.parent instanceof Group) {
+						var q = obj.mesh.parent.getWorldQuaternion(Reusable.quat1).invert();
+						local_offset.applyQuaternion(q);
+					}
+					if (obj instanceof Cube && Format.rotate_cubes) {
+						obj.origin.V3_add(local_offset);
+					}
+					ignoreVectorAxes(local_offset);
+					if (obj.moveVector) {
+						var in_box = obj.moveVector(local_offset.toArray());
+						if (!in_box && Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
+							Blockbench.showMessageBox({translateKey: 'canvas_limit_error'})
+						}
+					} else if (obj.position) {
+						obj.position.V3_add(local_offset.toArray());
+					}
+				}
+			})
+		}
+
 		if (Vertexsnap.move_pivot) {
 			let world_pos = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
 			let pivot_targets = Vertexsnap.groups.length ? Vertexsnap.groups : Vertexsnap.elements;
@@ -251,59 +388,35 @@ export const Vertexsnap = {
 					case 7: m=[ 0,0,1 ]; break;
 				}
 
-				Vertexsnap.elements.forEach(function(obj) {
-					if (obj instanceof Cube == false) return;
-					var q = obj.mesh.getWorldQuaternion(new THREE.Quaternion()).invert()
-					var local_offset = new THREE.Vector3().copy(global_delta).applyQuaternion(q)
-					ignoreVectorAxes(local_offset);
-
-					for (let i=0; i<3; i++) {
-						if (m[i] === 1) {
-							obj.to[i] = obj.to[i] + local_offset.getComponent(i);
-						} else {
-							obj.from[i] = obj.from[i] + local_offset.getComponent(i);
-						}
-					}
-					if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
-						Format.cube_size_limiter.clamp(obj)
-					}
-					if (obj.box_uv && obj.visibility) {
-						obj.preview_controller.updateUV(obj)
-					}
-				})
-			} else if (mode === 'move') {
-				Vertexsnap.elements.forEach(function(obj) {
-					var local_offset = new THREE.Vector3().copy(global_delta)
-
-					if (obj instanceof Mesh && Vertexsnap.selected_vertices && Vertexsnap.selected_vertices[obj.uuid]) {
-						let vertices = Vertexsnap.selected_vertices[obj.uuid].vertices;
-						var q = obj.mesh.getWorldQuaternion(Reusable.quat1).invert();
-						local_offset.applyQuaternion(q);
+				if (m) {
+					Vertexsnap.elements.forEach(function(obj) {
+						if (obj instanceof Cube == false) return;
+						var q = obj.mesh.getWorldQuaternion(new THREE.Quaternion()).invert()
+						var local_offset = new THREE.Vector3().copy(global_delta).applyQuaternion(q)
 						ignoreVectorAxes(local_offset);
-						let local_offset_array = local_offset.toArray();
-						vertices.forEach(vkey => {
-							if (obj.vertices[vkey]) obj.vertices[vkey].V3_add(local_offset_array);
-						})
 
-					} else {
-						if (Format.bone_rig && obj.parent instanceof Group) {
-							var q = obj.mesh.parent.getWorldQuaternion(Reusable.quat1).invert();
-							local_offset.applyQuaternion(q);
-						}
-						if (obj instanceof Cube && Format.rotate_cubes) {
-							obj.origin.V3_add(local_offset);
-						}
-						ignoreVectorAxes(local_offset);
-						if (obj.moveVector) {
-							var in_box = obj.moveVector(local_offset.toArray());
-							if (!in_box && Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
-								Blockbench.showMessageBox({translateKey: 'canvas_limit_error'})
+						for (let i=0; i<3; i++) {
+							if (m[i] === 1) {
+								obj.to[i] = obj.to[i] + local_offset.getComponent(i);
+							} else {
+								obj.from[i] = obj.from[i] + local_offset.getComponent(i);
 							}
-						} else if (obj.position) {
-							obj.position.V3_add(local_offset.toArray());
 						}
-					}
-				})
+						if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
+							Format.cube_size_limiter.clamp(obj)
+						}
+						if (obj.box_uv && obj.visibility) {
+							obj.preview_controller.updateUV(obj)
+						}
+					})
+				} else {
+					// 反馈#228：交点候选的 vertex_index 落在 0..7 角点轴表之外。
+					// 没有轴向信息就无法决定从哪一侧缩放（旧代码会拿 undefined 下标表直接抛错），
+					// 保守地整块平移（与 move 模式一致）：pivot 走 move_pivot 分支，不会到这里。
+					moveElements(global_delta);
+				}
+			} else if (mode === 'move') {
+				moveElements(global_delta);
 			} else if (mode == 'rotate') {
 				Vertexsnap.elements.forEach((obj) => {
 					let local_start = obj.mesh.worldToLocal(new THREE.Vector3().copy(Vertexsnap.vertex_pos));
@@ -373,6 +486,14 @@ export const Vertexsnap = {
 		}
 	}
 }
+
+// 反馈#228：顶点捕捉是否把「与其它块的相交点」也列为候选。
+// 工具条按钮与设置项同名（linked_setting 会自动从 settings.community_vertex_snap_intersections 取名）。
+new Toggle('vertex_snap_intersections', {
+	category: 'edit',
+	icon: 'scatter_plot',
+	linked_setting: 'community_vertex_snap_intersections',
+})
 
 Object.assign(window, {
 	Vertexsnap,

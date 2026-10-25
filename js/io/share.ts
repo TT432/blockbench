@@ -55,7 +55,7 @@ BARS.defineActions(function() {
 				description: {label: 'dialog.sketchfab_uploader.description', type: 'textarea'},
 				category1: {label: 'dialog.sketchfab_uploader.category', type: 'select', options: categories, value: ''},
 				category2: {label: 'dialog.sketchfab_uploader.category2', type: 'select', options: categories, value: ''},
-				tags: {label: 'dialog.sketchfab_uploader.tags', placeholder: 'Tag1 Tag2'},
+				tags: {label: 'dialog.sketchfab_uploader.tags', placeholder: tl('dialog.sketchfab_uploader.tags.placeholder')},
 				tag_suggestions: {label: 'dialog.sketchfab_uploader.suggested_tags', type: 'buttons', buttons: tag_suggestions, click(index) {
 					let {tags} = dialog.getFormResult();
 					let new_tag = tag_suggestions[index];
@@ -184,7 +184,7 @@ BARS.defineActions(function() {
 						'1w': tl('dates.week', [1]),
 						'2w': tl('dates.weeks', [2]),
 					}},
-					info: {type: 'info', text: 'The model and thumbnail will be stored on the Blockbench servers for the duration specified above. [Learn more](https://blockbench.net/blockbench-model-sharing-service/)'},
+					info: {type: 'info', text: 'dialog.share_model.info'},
 					reference_images: {type: 'checkbox', label: 'dialog.share_model.reference_images', value: true, condition: () => ReferenceImage.current_project.length > 0},
 					thumbnail: {type: 'checkbox', label: 'dialog.share_model.thumbnail', value: true},
 				},

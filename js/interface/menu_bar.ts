@@ -639,7 +639,7 @@ export const MenuBar = {
 				'experimental_settings',
 				'open_dev_tools',
 				{
-					name: 'Error Log',
+					name: 'menu.help.developer.error_log',
 					condition: () => window.ErrorLog.length > 0,
 					icon: 'error',
 					color: 'red',
@@ -653,7 +653,7 @@ export const MenuBar = {
 						})
 						new Dialog({
 							id: 'error_log',
-							title: 'Error Log',
+							title: 'dialog.error_log.title',
 							lines,
 							buttons: ['action.copy', 'dialog.close'],
 							confirmIndex: 1,
@@ -666,7 +666,7 @@ export const MenuBar = {
 						}).show();
 					}
 				},
-				{name: 'Expose Native Modules', icon: 'terminal', condition: isApp && (() => {
+				{name: 'menu.help.developer.expose_native_modules', icon: 'terminal', condition: isApp && (() => {
 					return currentwindow.webContents.isDevToolsOpened();
 				}), click: () => {
 					exposeNativeApisInDevTools();
@@ -678,7 +678,7 @@ export const MenuBar = {
 					ModelProject.all.forEach(project => project.locked = false);
 				}},
 				{
-					name: 'Uncorrupt Mesh',
+					name: 'menu.help.developer.uncorrupt_mesh',
 					id: 'uncorrupt_mesh',
 					icon: 'build',
 					condition: () => Mesh.hasSelected(),
