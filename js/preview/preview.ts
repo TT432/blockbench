@@ -743,6 +743,12 @@ export class Preview {
 	}
 	render() {
 		this.controls.update();
+		// 反馈#232：Canvas.outlines 里的 *_ghost_outline 只在 gizmo 拖拽期间有意义（拖动时显示
+		// 原始位置的参考边框）。任何中断路径只要没走到拖拽结束的清空分支，边框就会一直留在场景里，
+		// 智能对象缩放后尤其明显（实例变换与源内容解耦，边框停在原位置）。非拖拽状态一律兜底清空。
+		if (Canvas.outlines.children.length && !Transformer.drag_active) {
+			Canvas.outlines.children.length = 0;
+		}
 		// 社区版 cube 合批：watcher 在渲染前刷新矩阵并增量重烘（内部幂等，关闭时零开销早退）
 		CubeBatcher.beforeRender(this);
 		// Animator.preview() this frame already ran Canvas.scene.updateMatrixWorld(); skip the duplicate traversal inside renderer.render

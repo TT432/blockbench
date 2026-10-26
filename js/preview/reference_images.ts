@@ -1455,6 +1455,18 @@ ReferenceImage.prototype.menu = new Menu([
 		icon: 'fa-copy',
 		click(reference: ReferenceImage) {
 			copied_reference_image = reference.getSaveCopy();
+			// 反馈#223：「粘贴」的可用性由 copied_reference_image 决定。复制后必须立刻刷新工具栏
+			// 条件，否则参考图模式工具栏上的粘贴按钮要等下一次全局条件刷新才出现（跨工程时可能一直不出现）。
+			if (typeof BARS !== 'undefined') BARS.updateConditions();
+		}
+	},
+	{
+		id: 'paste',
+		name: 'action.paste',
+		icon: 'fa-paste',
+		condition: () => copied_reference_image != null,
+		click() {
+			pasteCopiedReferenceImage();
 		}
 	},
 	{
@@ -1652,6 +1664,12 @@ export const ReferenceImageMode = {
 }
 
 
+/** 反馈#223：把剪贴板里的参考图作为独立实例贴进当前工程（复制→粘贴与右键菜单共用） */
+function pasteCopiedReferenceImage(): void {
+	if (!copied_reference_image) return;
+	new ReferenceImage(copied_reference_image).addAsReference(true).select();
+}
+
 BARS.defineActions(function() {
 	new Action('edit_reference_images', {
 		icon: 'wallpaper',
@@ -1713,8 +1731,7 @@ BARS.defineActions(function() {
 		category: 'view',
 		condition: () => copied_reference_image != null,
 		click() {
-			if (!copied_reference_image) return;
-			new ReferenceImage(copied_reference_image).addAsReference(true).select();
+			pasteCopiedReferenceImage();
 		}
 	});
 	new Action('toggle_all_reference_images', {

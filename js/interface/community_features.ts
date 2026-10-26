@@ -6,6 +6,20 @@ import { Interface } from "./interface";
 import { ScrollMemory } from "./scroll_memory";
 import { COMMUNITY_FEATURES, COMMUNITY_FEATURE_AREAS, CommunityFeature, CommunityFeatureArea } from "./community_features_data";
 
+/** 手册里的当前选择（总览 / 某个区域 / 某条功能） */
+interface ManualSelection {
+	kind: string
+	area: string
+	id: string
+}
+
+/**
+ * 反馈#238：记住上次点开的条目。一页里条目很多，重开手册时回到总览很难接着看；
+ * 只在内存里（进程生命周期内有效，重启清零），与 ScrollMemory 的滚动记忆配套。
+ */
+let last_selection: ManualSelection = {kind: 'overview', area: '', id: ''};
+
+
 const MANUAL_CSS = `
 .cf_manual {
 	display: flex;
@@ -196,7 +210,7 @@ BARS.defineActions(() => {
 					data() {
 						return {
 							query: '',
-							selection: {kind: 'overview', area: '', id: ''} as {kind: string, area: string, id: string},
+							selection: {...last_selection} as {kind: string, area: string, id: string},
 						}
 					},
 					computed: {
@@ -259,6 +273,8 @@ BARS.defineActions(() => {
 						applySelection(selection: {kind: string, area: string, id: string}) {
 							// 反馈#235：切走前记下当前选择的滚动位置，切完恢复目标选择的位置
 							this.scroll_memory.save();
+							// 反馈#238：同时记住这次点开的条目，下次打开手册直接回到这里
+							last_selection = {...selection};
 							this.selection = selection;
 							this.$nextTick(() => this.scroll_memory.restore());
 						},

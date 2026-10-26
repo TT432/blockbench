@@ -7,6 +7,7 @@
 import { MOLANG_QUERY_DOCS, MOLANG_MATH_DOCS, MOLANG_EXTRA_DOCS } from "./molang_manual_data";
 import { getCustomMolangDefinitions, CustomMolangDefinition } from "../util/molang";
 import { Interface } from "../interface/interface";
+import { ScrollMemory } from "../interface/scroll_memory";
 
 type ManualSource = 'official' | 'project' | 'plugin';
 
@@ -48,8 +49,13 @@ const MANUAL_CSS = `
 	width: 100%;
 	box-sizing: border-box;
 }
+.mfm_tree_wrapper {
+	flex: 1;
+	min-height: 0;
+}
 .mfm_tree {
 	flex: 1;
+	height: 100%;
 	overflow-y: auto;
 	margin-top: 8px;
 	padding-right: 2px;
@@ -92,8 +98,13 @@ const MANUAL_CSS = `
 	margin: 16px 8px;
 	color: var(--color-subtle_text);
 }
+.mfm_content_wrapper {
+	flex: 1;
+	min-height: 0;
+}
 .mfm_content {
 	flex: 1;
+	height: 100%;
 	overflow-y: auto;
 	padding: 0 6px 0 14px;
 	min-height: 0;
@@ -332,9 +343,17 @@ BARS.defineActions(() => {
 	});
 });
 
+/**
+ * 反馈#238：记住上次点开的条目与两列的滚动位置（只在内存里，重启清零）。
+ * Molang 手册一页有好几百个条目，重开时回到顶部再翻一遍代价很高。
+ */
+let last_selection = '';
+
 function openMolangManual() {
 	ensureManualCSS();
 	let entries = buildManualEntries();
+	// 上次的条目可能来自已卸载的插件/已删除的项目定义，失效时回到总览
+	if (last_selection && !entries.some(entry => entry.key == last_selection)) last_selection = '';
 	new Dialog({
 		id: 'molang_manual',
 				title: 'menu.help.molang_manual',
@@ -344,7 +363,7 @@ function openMolangManual() {
 					data() {
 						return {
 							query: '',
-							selection: '',
+							selection: last_selection,
 							entries,
 						}
 					},
@@ -371,9 +390,43 @@ function openMolangManual() {
 							return this.entries.length;
 						},
 					},
+					created() {
+						// 反馈#238：详情列按「当前条目」记忆滚动位置，左侧条目列表单独一条记忆
+						this.scroll_memory = new ScrollMemory({
+							getKey: () => `molang_manual/${this.selection}`,
+							getContainer: () => this.$refs.content ?? null,
+							getLabel: () => tl('dialog.settings.scroll_to_top'),
+							isFiltered: () => !!this.query.trim(),
+						});
+						this.tree_memory = new ScrollMemory({
+							getKey: () => 'molang_manual/tree',
+							getContainer: () => this.$refs.tree ?? null,
+							getLabel: () => tl('dialog.settings.scroll_to_top'),
+							isFiltered: () => !!this.query.trim(),
+						});
+					},
+					mounted() {
+						this.scroll_memory.attach(this.$refs.scroll_area ?? null);
+						this.scroll_memory.restore();
+						this.tree_memory.attach(this.$refs.sidebar ?? null);
+						this.tree_memory.restore();
+					},
+					watch: {
+						query() {
+							// 过滤会重建两列内容，此时回到顶部，不用陈旧位置
+							this.$nextTick(() => {
+								this.scroll_memory.restore();
+								this.tree_memory.restore();
+							});
+						}
+					},
 					methods: {
 						select(entry: MolangManualEntry) {
+							if (this.selection == entry.key) return;
+							this.scroll_memory.save();
+							last_selection = entry.key;
 							this.selection = entry.key;
+							this.$nextTick(() => this.scroll_memory.restore());
 						},
 						sourceLabel(entry: MolangManualEntry): string {
 							if (entry.source == 'plugin') return tl('molang_manual.source.plugin', [entry.provider || '?']);
@@ -387,7 +440,8 @@ function openMolangManual() {
 								<div class="mfm_search">
 									<input type="text" class="dark_bordered" placeholder="${ tl('molang_manual.search') }" v-model="query">
 								</div>
-								<div class="mfm_tree">
+								<div class="mfm_tree_wrapper" ref="sidebar">
+								<div class="mfm_tree" ref="tree">
 									<template v-for="group in groups">
 										<div class="mfm_group">{{ group.label }}<span class="mfm_count">{{ group.entries.length }}</span></div>
 										<div
@@ -401,8 +455,10 @@ function openMolangManual() {
 									</template>
 									<div class="mfm_empty" v-if="!groups.length">${ tl('molang_manual.no_match') }</div>
 								</div>
+								</div>
 							</div>
-							<div class="mfm_content">
+							<div class="mfm_content_wrapper" ref="scroll_area">
+							<div class="mfm_content" ref="content">
 								<div class="mfm_overview" v-if="!current">
 									<h2>${ tl('molang_manual.title') }</h2>
 									<div class="mfm_badges">
@@ -437,6 +493,7 @@ function openMolangManual() {
 										<code class="mfm_code">{{ current.signature.replace('new.', 'n.') }}</code>
 									</template>
 								</div>
+							</div>
 							</div>
 						</div>
 					`
