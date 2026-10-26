@@ -1210,6 +1210,13 @@ import { TransformerModule } from "./transform_modules";
 					return PointerTarget.active == PointerTarget.types.gizmo_transform;
 				}
 			})
+			// #232：真实拖拽状态。`dragging` 读的是 PointerTarget，任何按键的 pointerup 都会把它清掉，
+			// 不能用来判断「拖拽是否还在进行」；参考边框的兜底清理要按这个字段判断。
+			Object.defineProperty(this, 'drag_active', {
+				get() {
+					return _dragging;
+				}
+			})
 			this.center = function() {
 				delete Transformer.rotation_ref;
 				if (!scope.dragging) Transformer.rotation_selection.set(0, 0, 0);
@@ -1355,6 +1362,8 @@ import { TransformerModule } from "./transform_modules";
 								TransformerModule.active.dispatchPointerDown({event});
 							}
 							if (Toolbox.selected.id !== 'pivot_tool') {
+								// #232：先清掉上一次可能残留的参考边框，避免重复叠加
+								Canvas.outlines.children.length = 0;
 								Canvas.outlineObjects(Outliner.selected);
 							}
 							extendTransformLine(true);
@@ -1433,6 +1442,16 @@ import { TransformerModule } from "./transform_modules";
 			}
 			function onPointerUp( event, keep_changes = true ) {
 				//event.preventDefault(); // Prevent MouseEvent on mobile
+				// #232：只有主键（左/右）或触控（button 为 undefined）的松开才算拖拽结束。
+				// 拖拽途中松开中键或鼠标侧键也会派发 mouseup：此前它在移除监听后提前返回，清空
+				// 参考边框与提交 Undo 的那段被跳过——参考边框（Canvas.outlines 里的 ghost）于是
+				// 留在场景里、跟着缩放后的模型错位显示，Undo 事务也停在未完成状态。
+				if ( event && event.button !== undefined && event.button !== 0 && event.button !== 2 ) {
+					// 全局 pointerup 会把 PointerTarget 清掉，但拖拽还在继续：重新占住 gizmo 目标，
+					// 让 dragging / PointerTarget 语义与实际拖拽一致
+					if ( _dragging ) PointerTarget.requestTarget( PointerTarget.types.gizmo_transform );
+					return;
+				}
 				document.removeEventListener( "mouseup", onPointerUp );
 				PointerTarget.endTarget();
 				scope.was_clicked = false;

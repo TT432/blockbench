@@ -699,8 +699,6 @@ export const Painter = {
 	// #230：Alt + 右键拖动调整笔刷直径（PS 风格）。默认关闭，开关 = 设置「Alt + 右键拖动笔刷直径」。
 	// 只影响笔刷直径视图（tool_settings.brush_size），不写工程数据，因此不进 Undo。
 	brush_size_drag: false,
-	/** 拖动期间被 Alt 切走、需要在松手后恢复的工具（通常是有 alt_tool 的画笔工具） */
-	brush_size_drag_swapped: null,
 	/**
 	 * #230：判定「Alt + 右键」时不能只看当前工具——Alt 会把画笔临时切成吸管（alt_tool），
 	 * `slider_brush_size.condition` 随即为假，导致拖动根本不开始（#230 未修复的根因之一）。
@@ -726,14 +724,13 @@ export const Painter = {
 		let steps = 0;
 		// #230：Alt 已把工具临时切成吸管时，拖动期间先切回画笔——这样笔刷直径视图
 		// （3D 笔刷轮廓、UV 编辑器的笔刷预览）与滑条的显示条件都与未按 Alt 时一致。
-		// 松手后若 Alt 仍按着，再恢复吸管，符合「拖动时看直径、松手继续吸色」的预期。
-		let swapped = null;
+		// #237：调完直径就留在画笔上——无论先松开 Alt 还是先松开右键都回到画笔，
+		// 不再恢复吸管。要吸色重新按住 Alt 即可：此时 Toolbox.original 已清空，
+		// Alt 会按正常流程再次切到 alt_tool。
 		if (Toolbox.original instanceof Tool) {
-			swapped = Toolbox.original;
-			swapped.select();
+			Toolbox.original.select();
 			delete Toolbox.original;
 		}
-		Painter.brush_size_drag_swapped = swapped;
 		Painter.brush_size_drag = true;
 		if (typeof event.preventDefault === 'function') event.preventDefault();
 		Blockbench.setStatusBarText(`${tl('action.slider_brush_size')}: ${slider.get()}`);
@@ -751,16 +748,6 @@ export const Painter = {
 			},
 			onEnd() {
 				Painter.brush_size_drag = false;
-				let swapped = Painter.brush_size_drag_swapped;
-				Painter.brush_size_drag_swapped = null;
-				if (swapped && Pressing.alt) {
-					let alt_tool = swapped.alt_tool && BarItems[swapped.alt_tool];
-					if (alt_tool instanceof Tool && Condition(alt_tool)) {
-						// 重新走回 Alt 工具切换：Toolbox.original 让松开 Alt 时仍能回到原工具
-						Toolbox.original = swapped;
-						alt_tool.select();
-					}
-				}
 				preventContextMenu();
 				Blockbench.setStatusBarText();
 			}

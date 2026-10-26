@@ -87,6 +87,26 @@ function getWindowIconPath() {
 	return path.join(__dirname, './../icon.ico');
 }
 
+/**
+ * 反馈#236：`webContents.loadURL()` 会往窗口的会话历史里压一条记录，热更新重载后鼠标侧键
+ * （后退/前进，Chromium 的 Back/Forward 应用命令）就能把窗口导航回旧文档：旧文档的
+ * beforeunload 会走「关闭窗口」流程（看起来像试图退出软件），并且旧文档里注册的 IPC /
+ * 关闭按钮监听已失效，右上角 X 于是关不掉。桌面应用不需要前进/后退，加载完清空历史即可。
+ */
+function clearNavigationHistory(win) {
+	try {
+		if (!win || win.isDestroyed()) return;
+		const navigation_history = win.webContents.navigationHistory;
+		if (navigation_history && typeof navigation_history.clear === 'function') {
+			navigation_history.clear();
+		} else if (typeof win.webContents.clearHistory === 'function') {
+			win.webContents.clearHistory();
+		}
+	} catch (err) {
+		console.warn('[nav] Failed to clear navigation history:', err && err.message);
+	}
+}
+
 function createWindow(second_instance, options = {}) {
 	if (app.requestSingleInstanceLock && !app.requestSingleInstanceLock()) {
 		app.quit()
@@ -200,6 +220,7 @@ function createWindow(second_instance, options = {}) {
 		slashes: true
 	});
 	win.loadURL(url_path).finally(() => {
+		clearNavigationHistory(win);
 		win.show();
 	});
 	win.on('closed', () => {
@@ -359,6 +380,7 @@ ipcMain.handle('bb-update:reload', async () => {
 				slashes: true
 			}));
 		} catch (e) {}
+		clearNavigationHistory(win);
 	};
 	for (let win of all_wins) {
 		if (win.isDestroyed()) continue;
@@ -367,6 +389,7 @@ ipcMain.handle('bb-update:reload', async () => {
 		} catch (err) {
 			await fallback(win, err);
 		}
+		clearNavigationHistory(win);
 	}
 	return current_version;
 })
