@@ -3,6 +3,7 @@ import { CustomMenuItem } from "../interface/menu";
 import { adjustFromAndToForInflateAndStretch } from "../outliner/types/cube";
 import { compileJSON } from "../util/json";
 import { toSnakeCase } from "../util/util";
+import { getPreviewSceneResource } from "./scene_cache";
 
 export interface PreviewSceneOptions {
 	name?: string
@@ -113,32 +114,38 @@ export class PreviewScene {
 			})
 		}
 	}
-	async lazyLoadFromWeb() {
-		let repo = PreviewScene.source_repository;
-		// repo = './../blockbench-scenes'
-		this.loaded = true;
-		let response = await fetch(`${repo}/${this.web_config_path}`);
-		if (!response.ok) {
-			console.error(response);
+	async lazyLoadFromWeb(): Promise<boolean> {
+		const repo = PreviewScene.source_repository;
+		try {
+			const config_url = await getPreviewSceneResource(`${repo}/${this.web_config_path}`);
+			const response = await fetch(config_url);
+			const json = await response.json() as PreviewSceneOptions;
+			const pending: Promise<void>[] = [];
+			if (json.preview_models) {
+				json.preview_models.forEach(model => {
+					if (typeof model == 'object' && model.texture) {
+						pending.push(getPreviewSceneResource(`${repo}/${model.texture}`).then(url => {
+							model.texture = url;
+						}));
+					}
+				})
+			}
+			if (json.cubemap instanceof Array) {
+				json.cubemap.forEach((path, i) => {
+					pending.push(getPreviewSceneResource(`${repo}/${path}`).then(url => {
+						json.cubemap[i] = url;
+					}));
+				})
+			}
+			await Promise.all(pending);
+			this.extend(json);
+			this.loaded = true;
+			return true;
+		} catch (error) {
+			console.error('Failed to load preview scene', this.id, error);
 			Blockbench.showQuickMessage('message.preview_scene_load_failed', 2000);
+			return false;
 		}
-		let json = await response.json() as PreviewSceneOptions;
-		function convertURL(url: string) {
-			return `${repo}/${url}`;
-		}
-		if (json.preview_models) {
-			json.preview_models.forEach(model => {
-				if (typeof model == 'object' && model.texture) {
-					model.texture = convertURL(model.texture);
-				}
-			})
-		}
-		if (json.cubemap instanceof Array) {
-			json.cubemap.forEach((url, i) => {
-				json.cubemap[i] = convertURL(url);
-			})
-		}
-		this.extend(json);
 	}
 	/**
 	 * Selects this preview scene
@@ -149,7 +156,7 @@ export class PreviewScene {
 			if (accepted != true) return false;
 		}
 		if (!this.loaded) {
-			await this.lazyLoadFromWeb()
+			if (!(await this.lazyLoadFromWeb())) return false;
 		}
 		if (PreviewScene.active) PreviewScene.active.unselect();
 

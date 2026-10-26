@@ -673,6 +673,13 @@ document.getElementById('window_controls_button_close').addEventListener('click'
 	currentwindow.close()
 })
 
+// 热更新用户可能仍运行旧主进程，无法依赖 main.js 清空 loadURL 产生的历史。
+// 在当前文档顶部保留一条同文档记录，侧键后退只触发 popstate，不会卸载文档并误入退出流程。
+history.pushState(history.state, '');
+window.addEventListener('popstate', event => {
+	history.pushState(event.state, '');
+});
+
 //Close
 window.onbeforeunload = function (event) {
 	try {
