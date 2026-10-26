@@ -1,7 +1,7 @@
 import { Filesystem } from "../file_system";
 import { FormResultValue } from "../interface/form";
 import { CSS3DObject } from "../lib/CSS3DRenderer";
-import { clipboard } from "../native_apis";
+import { clipboard, nativeImage } from "../native_apis";
 import { addEventListeners, getAverageRGB } from "../util/util";
 import { Preview } from "./preview";
 
@@ -1454,17 +1454,14 @@ ReferenceImage.prototype.menu = new Menu([
 		name: 'action.copy',
 		icon: 'fa-copy',
 		click(reference: ReferenceImage) {
-			copied_reference_image = reference.getSaveCopy();
-			// 反馈#223：「粘贴」的可用性由 copied_reference_image 决定。复制后必须立刻刷新工具栏
-			// 条件，否则参考图模式工具栏上的粘贴按钮要等下一次全局条件刷新才出现（跨工程时可能一直不出现）。
-			if (typeof BARS !== 'undefined') BARS.updateConditions();
+			copyReferenceImage(reference);
 		}
 	},
 	{
 		id: 'paste',
 		name: 'action.paste',
 		icon: 'fa-paste',
-		condition: () => copied_reference_image != null,
+		condition: () => getCopiedReferenceImage() != null,
 		click() {
 			pasteCopiedReferenceImage();
 		}
@@ -1664,10 +1661,71 @@ export const ReferenceImageMode = {
 }
 
 
-/** 反馈#223：把剪贴板里的参考图作为独立实例贴进当前工程（复制→粘贴与右键菜单共用） */
+const REFERENCE_IMAGE_CLIPBOARD_MARKER = 'blockbench-reference-image';
+
+function getReferenceClipboardPreview(reference: ReferenceImage): string | null {
+	const source = reference.is_video ? reference.video : reference.img;
+	if (!source) return null;
+	const [left, top, right, bottom] = reference.getNormalizedCrop();
+	const source_width = reference.source_width;
+	const source_height = reference.source_height;
+	const x = Math.round(left * source_width);
+	const y = Math.round(top * source_height);
+	const width = Math.max(1, Math.round(source_width * (1 - left - right)));
+	const height = Math.max(1, Math.round(source_height * (1 - top - bottom)));
+	try {
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		canvas.getContext('2d').drawImage(source, x, y, width, height, 0, 0, width, height);
+		return canvas.toDataURL('image/png');
+	} catch (error) {
+		console.warn('Failed to rasterize reference image for clipboard', error);
+		return null;
+	}
+}
+
+function copyReferenceImage(reference: ReferenceImage): void {
+	copied_reference_image = reference.getSaveCopy();
+	const payload = encodeURIComponent(JSON.stringify({type: 'reference_image', content: copied_reference_image}));
+	const preview = getReferenceClipboardPreview(reference);
+	const html = `${preview ? `<img src="${preview}">` : ''}<!--${REFERENCE_IMAGE_CLIPBOARD_MARKER}:${payload}-->`;
+	if (isApp) {
+		if (preview) {
+			clipboard.write({image: nativeImage.createFromDataURL(preview), html});
+		} else {
+			clipboard.writeHTML(html);
+		}
+	} else if (preview && navigator.clipboard?.write) {
+		fetch(preview).then(response => response.blob()).then(image => navigator.clipboard.write([
+			new ClipboardItem({
+				'image/png': image,
+				'text/html': new Blob([html], {type: 'text/html'})
+			})
+		])).catch(error => console.warn('Failed to write reference image to clipboard', error));
+	}
+	BARS.updateConditions();
+}
+
+function getCopiedReferenceImage(): ReferenceImageOptions | null {
+	if (copied_reference_image) return copied_reference_image;
+	if (!isApp) return null;
+	try {
+		const match = clipboard.readHTML().match(new RegExp(`<!--${REFERENCE_IMAGE_CLIPBOARD_MARKER}:([\\s\\S]*?)-->`));
+		if (!match) return null;
+		const payload = JSON.parse(decodeURIComponent(match[1]));
+		if (payload?.type == 'reference_image' && payload.content?.source) {
+			copied_reference_image = payload.content;
+		}
+	} catch (error) {}
+	return copied_reference_image;
+}
+
+/** 反馈#223：从本窗口或系统剪贴板粘贴独立参考图，像素同时可供其他应用使用。 */
 function pasteCopiedReferenceImage(): void {
-	if (!copied_reference_image) return;
-	new ReferenceImage(copied_reference_image).addAsReference(true).select();
+	const options = getCopiedReferenceImage();
+	if (!options) return;
+	new ReferenceImage(options).addAsReference(true).select();
 }
 
 BARS.defineActions(function() {
@@ -1729,7 +1787,7 @@ BARS.defineActions(function() {
 		name: 'action.paste',
 		icon: 'fa-paste',
 		category: 'view',
-		condition: () => copied_reference_image != null,
+		condition: () => getCopiedReferenceImage() != null,
 		click() {
 			pasteCopiedReferenceImage();
 		}

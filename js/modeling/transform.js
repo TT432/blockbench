@@ -590,18 +590,15 @@ export function getAxisLockReference(tool_id = Toolbox.selected?.id) {
 	let reference = getLocalAxisLockReference();
 	return reference?.mesh ? reference : undefined;
 }
-/** Apply one world-space delta to top-level selections; descendants follow their parent matrix. */
+/** Apply one world-space delta to selected roots, baking bone-rig descendants into absolute model data. */
 export function moveSelectionInWorldAxis(difference, world_axis) {
 	let world_delta = world_axis.clone().multiplyScalar(difference);
 	let selected_groups = Group.multi_selected.slice();
-	let groups = selected_groups.filter(group => !group.parent?.selected);
-	let elements = Outliner.selected.filter(element => !selected_groups.some(group => element.isChildOf(group, 128)));
-	for (let group of groups) {
-		let local_delta = getWorldDeltaInParentSpace(group, world_delta);
-		group.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
-	}
-	for (let obj of elements) {
-		let local_delta = getWorldDeltaInParentSpace(obj, world_delta);
+	let root_groups = selected_groups.filter(group => !group.parent?.selected);
+	let groups = [];
+	let direct_elements = Outliner.selected.filter(element => !selected_groups.some(group => element.isChildOf(group, 128)));
+	let elements = [];
+	function moveElement(obj, local_delta) {
 		if (obj.from) {
 			obj.from.V3_add(local_delta.x, local_delta.y, local_delta.z);
 			if (obj.to) obj.to.V3_add(local_delta.x, local_delta.y, local_delta.z);
@@ -612,6 +609,28 @@ export function moveSelectionInWorldAxis(difference, world_axis) {
 			obj.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
 		}
 		if (obj instanceof Cube && obj.autouv == 2) obj.mapAutoUV();
+	}
+	for (let group of root_groups) {
+		let local_delta = getWorldDeltaInParentSpace(group, world_delta);
+		if (Format.bone_rig) {
+			// 骨骼格式中组与元素的坐标都是绝对数据；只改根组 origin 会让后代在下次完整刷新时回弹。
+			group.forEachChild(node => {
+				if (node instanceof Group) {
+					node.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
+					groups.safePush(node);
+				} else {
+					moveElement(node, local_delta);
+					elements.safePush(node);
+				}
+			}, undefined, true);
+		} else {
+			group.origin.V3_add(local_delta.x, local_delta.y, local_delta.z);
+			groups.safePush(group);
+		}
+	}
+	for (let obj of direct_elements) {
+		moveElement(obj, getWorldDeltaInParentSpace(obj, world_delta));
+		elements.safePush(obj);
 	}
 	Canvas.updateView({
 		elements,
@@ -1611,9 +1630,7 @@ BARS.defineActions(function() {
 	function getPositionSliderUndoGroups() {
 		const smart_group = getSmartInstanceTransformGroup();
 		if (smart_group) return [smart_group];
-		if (toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local' && Format.bone_rig && Group.first_selected &&
-			(Group.multi_selected.length > 1 || Group.first_selected.matchesSelection())
-		) {
+		if (toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local' && Format.bone_rig && Group.first_selected) {
 			let groups = [];
 			for (let group of Group.multi_selected) {
 				group.forEachChild(child => groups.safePush(child), Group, true);
@@ -1622,6 +1639,17 @@ BARS.defineActions(function() {
 		}
 		return toggle_pos_per_element.value ? [] : Group.all.filter(g => g.selected);
 	}
+	function getPositionSliderUndoElements() {
+		let elements = Outliner.selected.slice();
+		if (toggle_pos_axis_lock.value && BarItems.transform_space.value == 'local' && Format.bone_rig) {
+			for (let group of Group.multi_selected) {
+				group.forEachChild(child => {
+					if (child instanceof Group == false) elements.safePush(child);
+				});
+			}
+		}
+		return elements;
+	}
 	const slider_pos_common_options = {
 		category: 'transform',
 		condition: () => (Outliner.selected.length && Modes.edit),
@@ -1629,7 +1657,7 @@ BARS.defineActions(function() {
 		onBefore: function() {
 			const smart_group = getSmartInstanceTransformGroup();
 			Undo.initEdit({
-				elements: smart_group ? [] : Outliner.selected,
+				elements: smart_group ? [] : getPositionSliderUndoElements(),
 				groups: getPositionSliderUndoGroups()
 			})
 		},

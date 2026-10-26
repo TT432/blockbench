@@ -6,6 +6,18 @@ import type { CubeBatcher as CubeBatcherType } from '../../js/preview/cube_batch
  * Extends the global scope with the members added by Blockbench.
  */
 declare global {
+	/** Runtime support for the ES2024 Promise.withResolvers API. */
+	interface PromiseConstructor {
+		/** Creates a promise together with its resolve and reject functions. */
+		withResolvers<T>(): {
+			/** The newly created promise. */
+			promise: Promise<T>
+			/** Fulfills the promise with a value or another promise. */
+			resolve: (value: T | PromiseLike<T>) => void
+			/** Rejects the promise with an error reason. */
+			reject: (reason?: unknown) => void
+		}
+	}
 	// const Prism: typeof import('prismjs')
 	/**
 	 * @deprecated Use {@link Canvas.scene} instead

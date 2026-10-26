@@ -140,17 +140,21 @@ new TransformerModule('animation', {
 			let normal = Transformer.axis == 'E'
 				? context.rotate_normal
 				: axis_number == 0 ? THREE.NormalX : (axis_number == 1 ? THREE.NormalY : THREE.NormalZ);
-			let rotWorldMatrix = new THREE.Matrix4();
-			rotWorldMatrix.makeRotationAxis(normal, Math.degToRad(difference))
-			rotWorldMatrix.multiply(mesh.matrixWorld)
+			let world_rotation = new THREE.Quaternion();
+			mesh.getWorldQuaternion(world_rotation);
+			let rotated = new THREE.Quaternion()
+				.setFromAxisAngle(normal, Math.degToRad(difference))
+				.multiply(world_rotation);
 
 			if (Timeline.selected_animator?.rotation_global !== true) {
-				let inverse = new THREE.Matrix4().copy(mesh.parent.matrixWorld).invert()
-				rotWorldMatrix.premultiply(inverse)
+				let parent_rotation = new THREE.Quaternion();
+				mesh.parent.getWorldQuaternion(parent_rotation);
+				rotated.premultiply(parent_rotation.invert());
 			}
 
-			mesh.matrix.copy(rotWorldMatrix);
-			mesh.setRotationFromMatrix(rotWorldMatrix);
+			// matrixWorld 包含动画缩放；对它直接 setRotationFromMatrix 会把缩放当成旋转角度。
+			// 四元数路径只组合朝向，保持对象位置和缩放不变。
+			mesh.quaternion.copy(rotated);
 
 			updateRotationKeyframeFromMesh();
 		
