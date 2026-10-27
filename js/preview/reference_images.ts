@@ -1704,6 +1704,8 @@ function copyReferenceImage(reference: ReferenceImage): void {
 			})
 		])).catch(error => console.warn('Failed to write reference image to clipboard', error));
 	}
+	// 反馈#249：复制后给出成功提示（与保存项目的提示同一形式：底部快速消息）
+	Blockbench.showQuickMessage('message.reference_image_copied');
 	BARS.updateConditions();
 }
 

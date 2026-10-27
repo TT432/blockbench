@@ -267,6 +267,11 @@ onVueSetup(function() {
 					let master = setting.group ? settings[setting.group] : undefined;
 					return !!master && master.ui_value === false;
 				},
+				// 反馈#251：把数值项恢复为默认值，走与右键菜单「重置至原值」相同的写回路径
+				resetToDefault(this: SettingsDialogVueData, setting: Setting) {
+					setting.ui_value = setting.default_value;
+					this.saveSettings();
+				},
 				getPluginName(plugin_id: string): string {
 					let plugin = Plugins.all.find(p => p.id == plugin_id);
 					return plugin?.title ?? plugin_id;
@@ -349,6 +354,13 @@ onVueSetup(function() {
 
 							<template v-if="setting.type === 'number'">
 								<div class="setting_element"><numeric-input v-model.number="setting.ui_value" :min="setting.min" :max="setting.max" :step="setting.step" v-on:input="saveSettings()" /></div>
+								<!-- 反馈#251：改过的数值项给一个重置为默认值的按钮（未改动时不显示） -->
+								<div class="tool setting_reset_button" v-if="setting.ui_value !== setting.default_value"
+									@click.stop="resetToDefault(setting)"
+									:title="tl('dialog.settings.reset_to_default') + ' (' + setting.default_value + ')'"
+								>
+									<i class="material-icons">restart_alt</i>
+								</div>
 							</template>
 							<template v-else-if="setting.type === 'click'">
 								<div class="setting_element setting_icon" v-html="getIconNode(setting.icon).outerHTML"></div>

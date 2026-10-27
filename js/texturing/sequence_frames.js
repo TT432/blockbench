@@ -238,9 +238,13 @@ function importStripFrames(form, source) {
 			let px_per_uv_x = canvas.width / uv_w;
 			let px_per_uv_y = canvas.height / uv_h;
 			frame_positions.forEach(({pos, sx, sy}) => {
-				ctx.drawImage(img, sx, sy, fw, fh,
-					pos[0] * px_per_uv_x, pos[1] * px_per_uv_y,
-					fw_uv * px_per_uv_x, fh_uv * px_per_uv_y);
+				let dx = pos[0] * px_per_uv_x, dy = pos[1] * px_per_uv_y;
+				let dw = fw_uv * px_per_uv_x, dh = fh_uv * px_per_uv_y;
+				// 反馈#246：先清空目标矩形再绘制。序列帧贴图里的透明/空颜色像素必须覆盖目标处
+				// 「已上色但没有 UV 占用」的像素；默认的 source-over 合成会画在旧颜色上面，
+				// 表现成透明色叠在背景色上（空色不生效）。
+				ctx.clearRect(Math.round(dx), Math.round(dy), Math.round(dw), Math.round(dh));
+				ctx.drawImage(img, sx, sy, fw, fh, dx, dy, dw, dh);
 			});
 		});
 	}
@@ -461,6 +465,13 @@ function importModelFrames(form, model, source_textures) {
 		});
 	}
 	function paintAllFrames(ctx, r_x, r_y) {
+		// 反馈#246：整块帧区域先清空，再逐面绘制——帧内容的空色/透明像素要覆盖目标处
+		// 已上色但没有 UV 占用的像素（默认 source-over 会让旧颜色透出来）。清空按帧做一次，
+		// 不能按面做，否则后绘制的面会擦掉前面已画好的内容。
+		frame_positions.forEach(pos => {
+			ctx.clearRect(Math.round(pos[0] * r_x), Math.round(pos[1] * r_y),
+				Math.round(block_w * r_x), Math.round(block_h * r_y));
+		});
 		elements.forEach(el => {
 			el_map[el.uuid].faces.forEach(face_info => {
 				let src = face_canvases[el.uuid + ':' + face_info.fkey];

@@ -406,6 +406,8 @@ function setupSettings() {
 	// 反馈#230：绘画模式按住 Alt 拖动右键调整笔刷直径（PS 风格），默认关闭。
 	// 生效入口见 painter.js startBrushSizeDrag()，由 3D 视口与 UV 编辑器的 pointerdown 调用。
 	new Setting('community_brush_size_rmb_drag', {category: 'community', value: false, group: 'community_group_paint'});
+	// 反馈#248：上一条拖动的灵敏度（1~20，默认 10 = 原实现灵敏度（每 4px 一格）的 1/5，即每 20px 一格）。
+	new Setting('community_brush_size_drag_sensitivity', {category: 'community', value: 10, type: 'number', min: 1, max: 20, step: 1, group: 'community_group_paint'});
 
 	// 反馈#228：顶点捕捉时是否把「与其它块的相交点」也作为捕捉候选（默认关闭，保持上游行为）。
 	// 开启后仅在顶点捕捉工具激活时生效，见 vertex_snap.js addIntersectionVertices()。
