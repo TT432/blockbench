@@ -462,8 +462,13 @@ export class ModelProject {
 		}
 
 		this.undo.closeAmendEditMenu();
-		this.reference_images.forEach(reference => reference.detach());
+		// 反馈#244：必须先退出参考图模式，再卸载本工程的参考图。deactivate() 会对选中/全部参考图
+		// 调用 update()，而此刻 Blockbench.Project 仍指向正在退出的工程（切换发生在随后的
+		// loadEditorState），update() 的宿主工程守卫会把刚 detach 的节点重新挂回全局预览层；
+		// 切换完成后这些实例已不在任何工程的列表中，没有任何路径再移除它们，于是被复制过的
+		// 参考图会穿透显示在新标签页的模型上。
 		if (ReferenceImageMode.active) ReferenceImageMode.deactivate();
+		this.reference_images.forEach(reference => reference.detach());
 		if (TextureAnimator.isPlaying) TextureAnimator.stop();
 		this.selected = false;
 		Painter.current = {};
