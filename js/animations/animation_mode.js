@@ -778,6 +778,18 @@ export const Animator = {
 						clearTimeout(timeout)
 						timeout = setTimeout(() => {
 							Blockbench.read(path, {errorbox: false}, (files) => {
+								if (!files || !files[0]) return;
+								// 外部覆盖粒子文件时，内嵌副本（ParticleAsset.content）必须一起更新：
+								// 否则粘贴关键帧等走 ParticleAsset.loadEmitter 的路径会用旧内容重新
+								// 配置运行时效果，预览退回覆盖前的一版（反馈#245）。
+								let json = autoParseJSON(files[0].content, {file_path: path});
+								if (json && json.particle_effect) {
+									let asset = ParticleAsset.fromRef(path);
+									if (asset) {
+										asset.content = json;
+										asset.saved = true;
+									}
+								}
 								Animator.loadParticleEmitter(path, files[0].content);
 							})
 						}, 60)
