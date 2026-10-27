@@ -1191,6 +1191,51 @@
 	dialog#about .multi_column_list {
 		column-count: 3;
 	}
+	dialog#about .community_description {
+		line-height: 1.65;
+	}
+	dialog#about .community_links {
+		display: flex;
+		justify-content: center;
+		flex-wrap: wrap;
+		gap: 12px;
+		margin-top: 6px;
+		margin-bottom: 4px;
+	}
+	dialog#about .community_links a {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 16px;
+		border-radius: 6px;
+		text-decoration: none;
+		color: var(--color-subtle_text);
+	}
+	dialog#about .community_links a:hover {
+		background-color: var(--color-accent);
+		color: var(--color-light);
+	}
+	dialog#about .community_links a i {
+		font-size: 1.4em;
+	}
+	dialog#about .community_links a i.fa-github {
+		color: #dddddd;
+	}
+	dialog#about .community_links a svg.afdian_icon {
+		width: 1.4em;
+		height: 1.4em;
+		fill: #946CE6;
+	}
+	dialog#about .community_links a:hover i {
+		color: var(--color-light);
+	}
+	dialog#about .community_links a:hover svg.afdian_icon {
+		fill: var(--color-light);
+	}
+	dialog#about .community_links a label {
+		cursor: inherit;
+		pointer-events: none;
+	}
 	.special_thanks_mentions li {
 		line-height: 18px;
 		margin-bottom: 8px;
