@@ -737,8 +737,10 @@ export const Painter = {
 		dragHelper(event, {
 			start_distance: 2,
 			onMove(context) {
-				// 竖直拖动调值：每 4px 一个直径步进，向上变大
-				let next_steps = Math.round(-context.delta.y / 4);
+				// 竖直拖动调值：反馈#248 灵敏度可调（1~20，默认 10）。默认 10 时每 20px 一个直径步进
+				// （= 原实现「每 4px 一格」的 1/5 灵敏度），数值越大同样距离变化越快。
+				let sensitivity = Math.clamp(settings.community_brush_size_drag_sensitivity?.value || 10, 1, 20);
+				let next_steps = Math.round(-context.delta.y * sensitivity / 200);
 				if (next_steps === steps) return;
 				let difference = next_steps - steps;
 				steps = next_steps;
@@ -752,6 +754,90 @@ export const Painter = {
 				Blockbench.setStatusBarText();
 			}
 		});
+		return true;
+	},
+	/**
+	 * 反馈#250：选区工具的新模式「所选块」。
+	 * 在 3D 视图点击方块 → 把该块各面 UV 覆盖的贴图像素写进纹理选区。
+	 * Ctrl/Cmd 追加到现有选区（不清空），Shift 扩展到该块所在组内的所有方块。
+	 */
+	selectBlockFaces(data) {
+		let texture = UVEditor.texture || Texture.selected;
+		let element = data?.element;
+		if (!texture || !element || !element.faces) return false;
+		let event = data.event || {};
+		let additive = !!(event.ctrlOrCmd || event.ctrlKey || event.metaKey || Pressing.overrides.ctrl);
+		let whole_group = !!(event.shiftKey || Pressing.overrides.shift);
+
+		let targets = [element];
+		if (whole_group && element.parent instanceof Group) {
+			targets = [];
+			(function collect(node) {
+				(node.children || []).forEach(child => {
+					if (child instanceof Group) {
+						collect(child);
+					} else if (child instanceof OutlinerElement && child.faces) {
+						targets.push(child);
+					}
+				});
+			})(element.parent);
+		}
+
+		let factor_x = texture.width / texture.getUVWidth();
+		let factor_y = texture.height / texture.getUVHeight();
+		let width = texture.width, height = texture.height;
+		if (!(factor_x > 0) || !(factor_y > 0)) return false;
+
+		let selection = texture.selection;
+		Undo.initSelection({texture_selection: true});
+		if (additive) {
+			// 追加：已全选时结果不变；已无选区时从空白开始，已有自定义选区则保留
+			if (selection.override !== true) selection.setOverride(null);
+		} else {
+			// 替换：无论此前是「全选 / 无选区 / 自定义」都从空白矩阵重新开始
+			selection.setOverride(null);
+			if (selection.array) selection.array.fill(0);
+		}
+
+		let mark = (x0, y0, x1, y1) => {
+			x0 = Math.max(0, x0); y0 = Math.max(0, y0);
+			x1 = Math.min(width, x1); y1 = Math.min(height, y1);
+			for (let x = x0; x < x1; x++) {
+				for (let y = y0; y < y1; y++) {
+					selection.set(x, y, 1);
+				}
+			}
+		};
+		targets.forEach(target => {
+			for (let fkey in target.faces) {
+				let face = target.faces[fkey];
+				if (!face || face.texture === null) continue;
+				if (face.getTexture() !== texture) continue;
+				if (face instanceof MeshFace) {
+					// Mesh 面可能不是矩形：按占用矩阵逐 UV 格映射到像素
+					let matrix = face.getOccupationMatrix(false);
+					for (let ux in matrix) {
+						let column = matrix[ux];
+						let ux_i = parseInt(ux);
+						let px0 = Math.floor(ux_i * factor_x);
+						let px1 = Math.max(px0 + 1, Math.ceil((ux_i + 1) * factor_x));
+						for (let uy in column) {
+							if (!column[uy]) continue;
+							let uy_i = parseInt(uy);
+							let py0 = Math.floor(uy_i * factor_y);
+							let py1 = Math.max(py0 + 1, Math.ceil((uy_i + 1) * factor_y));
+							mark(px0, py0, px1, py1);
+						}
+					}
+				} else {
+					let rect = face.getBoundingRect();
+					mark(Math.floor(rect.ax * factor_x), Math.floor(rect.ay * factor_y),
+						Math.ceil(rect.bx * factor_x), Math.ceil(rect.by * factor_y));
+				}
+			}
+		});
+		Undo.finishSelection('Select block faces');
+		UVEditor.updateSelectionOutline();
 		return true;
 	},
 	useFilltool(texture, ctx, x, y, area) {
@@ -3779,6 +3865,8 @@ BARS.defineActions(function() {
 		lasso: {name: 'action.selection_tool.lasso', icon: 'fa-draw-polygon'},
 		wand: {name: 'action.selection_tool.wand', icon: 'fa-magic'},
 		color: {name: 'action.selection_tool.color', icon: 'fa-eye-dropper'},
+		// 反馈#250：在 3D 视图里点击方块，直接框选该块的材质面
+		block: {name: 'action.selection_tool.block', icon: 'fa-cube'},
 	};
 	let selection_tool = new Tool('selection_tool', {
 		icon: 'select',
@@ -3823,7 +3911,10 @@ BARS.defineActions(function() {
 			intersect: {name: 'action.selection_tool_operation_mode.intersect'},
 		},
 		onCanvasClick(data) {
-			if (data && data.element) {
+			if (selection_tool.mode == 'block') {
+				// 反馈#250：新模式「所选块」——在 3D 视图点击方块，选中该块的材质面
+				if (data && data.element) Painter.selectBlockFaces(data);
+			} else if (data && data.element) {
 				Blockbench.showQuickMessage('message.copy_paste_tool_viewport')
 			}
 		},
