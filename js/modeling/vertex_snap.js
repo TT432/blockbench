@@ -110,15 +110,25 @@ export const Vertexsnap = {
 
 		let index = geometry.index;
 		let cache = Vertexsnap.feature_edge_cache;
+		// 反馈#253：方块（Cube）不走三角形反推。Cube 的位置属性始终是完整的 8 角盒
+		// （updateFaces 只重设 index，不改 position），删掉的面只是少了三角形；从三角形反推
+		// 会在相邻两面同时被删时丢掉这两面的公用棱（该棱已无相邻三角形可判夹角），实测
+		// 六面完整 12 条 → 删两面 11 条。改用局部包围盒的 12 条棱即为真实棱。
+		let box_bounds = (element instanceof Cube && geometry.boundingBox) ? geometry.boundingBox : null;
 		// 缓存 key = 属性对象引用 + version/count。几何编辑要么换掉 position/index 属性对象
 		// （Mesh.updateGeometry 每次都 new BufferAttribute，version 仍会重置为 0），要么就地
-		// 改写数组并 bump position.version（Cube.setShape）；任一变化都必须重建
+		// 改写数组。注意 THREE.BufferGeometry.prototype.setShape（Cube 缩放/移动）只置
+		// needsUpdate、不 bump position.version，命中盒子路径时把包围盒数值并入 key，
+		// 否则方块改尺寸后仍返回旧棱。
 		let cache_key = [
 			position.version,
 			position.count,
 			index ? index.count : -1,
 			index ? index.version : 0,
 		].join(':');
+		if (box_bounds) {
+			cache_key += '|' + box_bounds.min.toArray().join(',') + '|' + box_bounds.max.toArray().join(',');
+		}
 		let cached = cache.get(element.uuid);
 		if (cached
 			&& cached.geometry === geometry
@@ -126,6 +136,18 @@ export const Vertexsnap = {
 			&& cached.index_attribute === index
 			&& cached.key === cache_key) {
 			return cached;
+		}
+
+		if (box_bounds) {
+			return Vertexsnap.storeFeatureEdges(element, {
+				key: cache_key,
+				geometry,
+				position_attribute: position,
+				index_attribute: index,
+				edges: Vertexsnap.getBoxEdges(box_bounds),
+				box: box_bounds.clone(),
+				box_is_box: true,
+			});
 		}
 
 		let edge_map = new Map();
@@ -203,20 +225,47 @@ export const Vertexsnap = {
 			box.expandByPoint(pb.fromArray(edge.b));
 		}
 
-		let result = {
+		return Vertexsnap.storeFeatureEdges(element, {
 			key: cache_key,
 			geometry,
 			position_attribute: position,
 			index_attribute: index,
 			edges,
 			box,
-		};
-		// 重新插入放到 Map 末尾（近似 LRU），并维护棱数总预算
+			box_is_box: false,
+		});
+	},
+	/**
+	 * 反馈#253：局部包围盒的 12 条棱（每 6 个数一条，起点 xyz、终点 xyz）。
+	 */
+	getBoxEdges(box_bounds) {
+		let x0 = box_bounds.min.x, y0 = box_bounds.min.y, z0 = box_bounds.min.z;
+		let x1 = box_bounds.max.x, y1 = box_bounds.max.y, z1 = box_bounds.max.z;
+		return [
+			x0, y0, z0, x1, y0, z0,
+			x1, y0, z0, x1, y0, z1,
+			x1, y0, z1, x0, y0, z1,
+			x0, y0, z1, x0, y0, z0,
+			x0, y1, z0, x1, y1, z0,
+			x1, y1, z0, x1, y1, z1,
+			x1, y1, z1, x0, y1, z1,
+			x0, y1, z1, x0, y1, z0,
+			x0, y0, z0, x0, y1, z0,
+			x1, y0, z0, x1, y1, z0,
+			x1, y0, z1, x1, y1, z1,
+			x0, y0, z1, x0, y1, z1,
+		];
+	},
+	/**
+	 * 把特征棱结果写入缓存。重新插入放到 Map 末尾（近似 LRU），并维护棱数总预算。
+	 */
+	storeFeatureEdges(element, result) {
+		let cache = Vertexsnap.feature_edge_cache;
 		let previous = cache.get(element.uuid);
 		if (previous) Vertexsnap.feature_edge_cache_edges -= previous.edges.length / 6;
 		cache.delete(element.uuid);
 		cache.set(element.uuid, result);
-		Vertexsnap.feature_edge_cache_edges += edges.length / 6;
+		Vertexsnap.feature_edge_cache_edges += result.edges.length / 6;
 		while (cache.size > 1 && (cache.size > FEATURE_EDGE_CACHE_SIZE || Vertexsnap.feature_edge_cache_edges > FEATURE_EDGE_CACHE_BUDGET)) {
 			let oldest_uuid = cache.keys().next().value;
 			Vertexsnap.feature_edge_cache_edges -= cache.get(oldest_uuid).edges.length / 6;
@@ -245,6 +294,10 @@ export const Vertexsnap = {
 	 * 复杂度：元素对先用特征棱世界包围盒相交批量预筛，再逐线段 raycast；
 	 * 单元素最多追加 256 个交点、单次调用最多 8192 条射线，元素总数超过 512 时整体跳过：
 	 * 这种规模的模型上逐线段射线检测会让悬停/选中明显卡顿，而顶点捕捉本身也已不实用。
+	 *
+	 * 反馈#253（删面后交点缺失）：方块元素的命中目标换成局部包围盒（见 cast_segment_box），
+	 * 不再用 mesh 三角形。删面只是从 index 里去掉三角形，盒面本身与描边仍在，
+	 * 因此被删面上的交点不再丢失；顺带不再受材质背面剔除影响。
 	 */
 	addIntersectionVertices(element, vectors) {
 		if (typeof settings === 'undefined' || !settings.community_vertex_snap_intersections?.value) return;
@@ -268,7 +321,12 @@ export const Vertexsnap = {
 			if (!other_edges || !other_edges.edges.length) continue;
 			other_mesh.updateMatrixWorld();
 			if (!own_box.intersectsBox(Vertexsnap.getFeatureEdgesWorldBox(other_edges, other_mesh))) continue;
-			candidates.push({mesh: other_mesh, edges: other_edges.edges});
+			candidates.push({
+				mesh: other_mesh,
+				edges: other_edges.edges,
+				// 反馈#253：方块用局部包围盒当命中目标（见 cast_segment_box）
+				box: other_edges.box_is_box ? other_mesh.geometry.boundingBox : null,
+			});
 		}
 		if (!candidates.length) return;
 
@@ -297,11 +355,79 @@ export const Vertexsnap = {
 			added++;
 		};
 
-		// 沿 start→end 线段投射到 target_mesh。正反两向各投一次：材质多为 FrontSide，
+		let local_start = new THREE.Vector3();
+		let local_end = new THREE.Vector3();
+		let hit_world_point = new THREE.Vector3();
+		let inverse = new THREE.Matrix4();
+		let hit_p0 = [0, 0, 0];
+		let hit_p1 = [0, 0, 0];
+		let hit_min = [0, 0, 0];
+		let hit_max = [0, 0, 0];
+
+		// 反馈#253：方块的命中目标用局部包围盒，而不是 mesh 三角形。删面只删 index 里的三角形，
+		// 盒面（含被删的面）在视觉描边里依然存在，交点也应保留；同时躲开材质背面剔除。
+		// 做法：把线段两端变到目标元素局部空间，用 slab 法求线段与 AABB 的交（最多两个）。
+		let cast_segment_box = target => {
+			cast_count++;
+			inverse.copy(target.mesh.matrixWorld).invert();
+			local_start.copy(start).applyMatrix4(inverse);
+			local_end.copy(end).applyMatrix4(inverse);
+			hit_p0[0] = local_start.x; hit_p0[1] = local_start.y; hit_p0[2] = local_start.z;
+			hit_p1[0] = local_end.x; hit_p1[1] = local_end.y; hit_p1[2] = local_end.z;
+			hit_min[0] = target.box.min.x; hit_min[1] = target.box.min.y; hit_min[2] = target.box.min.z;
+			hit_max[0] = target.box.max.x; hit_max[1] = target.box.max.y; hit_max[2] = target.box.max.z;
+			let t_enter = -Infinity;
+			let t_exit = Infinity;
+			for (let axis = 0; axis < 3; axis++) {
+				let p0 = hit_p0[axis];
+				let delta = hit_p1[axis] - p0;
+				let min = hit_min[axis];
+				let max = hit_max[axis];
+				if (Math.abs(delta) < 1e-9) {
+					// 与该轴的两张面平行：线段必须落在两条盒面之间才可能相交
+					if (p0 < min - INTERSECTION_EPSILON || p0 > max + INTERSECTION_EPSILON) return;
+					continue;
+				}
+				let ta = (min - p0) / delta;
+				let tb = (max - p0) / delta;
+				if (ta > tb) {
+					let swap = ta;
+					ta = tb;
+					tb = swap;
+				}
+				if (ta > t_enter) t_enter = ta;
+				if (tb < t_exit) t_exit = tb;
+				if (t_enter > t_exit) return;
+			}
+			// 只有落在 0..1 内的进/出点才是线段与盒面的真实交点；
+			// 线段整段在盒内时进出点都在区间外，不产生交点
+			let length = local_start.distanceTo(local_end);
+			let first = t_enter >= 0 && t_enter <= 1;
+			let second = t_exit >= 0 && t_exit <= 1 && (t_exit - t_enter)*length > INTERSECTION_EPSILON;
+			if (!first && !second) return;
+			for (let pass = 0; pass < 2; pass++) {
+				if (pass === 1 && !second) return;
+				if (!first && pass === 0) continue;
+				if (added >= INTERSECTION_MAX_POINTS) return;
+				let t = pass === 0 ? t_enter : t_exit;
+				hit_world_point.set(
+					hit_p0[0] + (hit_p1[0] - hit_p0[0])*t,
+					hit_p0[1] + (hit_p1[1] - hit_p0[1])*t,
+					hit_p0[2] + (hit_p1[2] - hit_p0[2])*t,
+				).applyMatrix4(target.mesh.matrixWorld);
+				add_point(hit_world_point);
+			}
+		};
+
+		// 沿 start→end 线段投射到 target。正反两向各投一次：材质多为 FrontSide，
 		// 射线从背面接近表面时会被背面剔除，只投单向同样会漏掉交点。
-		let cast_segment = target_mesh => {
+		let cast_segment = target => {
 			let edge_length = direction.subVectors(end, start).length();
 			if (edge_length < 1e-6) return;
+			if (target.box) {
+				cast_segment_box(target);
+				return;
+			}
 			direction.divideScalar(edge_length);
 			back_direction.copy(direction).negate();
 			for (let pass = 0; pass < 2; pass++) {
@@ -310,7 +436,7 @@ export const Vertexsnap = {
 				raycaster.set(pass ? end : start, pass ? back_direction : direction);
 				raycaster.near = 0;
 				raycaster.far = edge_length;
-				for (let intersection of raycaster.intersectObject(target_mesh, false)) {
+				for (let intersection of raycaster.intersectObject(target.mesh, false)) {
 					add_point(intersection.point);
 					if (added >= INTERSECTION_MAX_POINTS) return;
 				}
@@ -324,19 +450,20 @@ export const Vertexsnap = {
 			end.fromArray(own.edges, i + 3).applyMatrix4(mesh.matrixWorld);
 			for (let candidate of candidates) {
 				if (added >= INTERSECTION_MAX_POINTS || cast_count >= INTERSECTION_MAX_RAYS) break;
-				cast_segment(candidate.mesh);
+				cast_segment(candidate);
 			}
 		}
 
 		// B 向：其它元素特征棱 → 本元素表面。旧实现缺这一向，其它块的棱穿过本块表面
 		// 产生的交点全部丢失（反馈#228 复查里交线末端没有绿点就是这个原因）
+		let own_target = {mesh, edges: own.edges, box: own.box_is_box ? mesh.geometry.boundingBox : null};
 		for (let candidate of candidates) {
 			if (added >= INTERSECTION_MAX_POINTS || cast_count >= INTERSECTION_MAX_RAYS) break;
 			for (let i = 0; i < candidate.edges.length; i += 6) {
 				if (added >= INTERSECTION_MAX_POINTS || cast_count >= INTERSECTION_MAX_RAYS) break;
 				start.fromArray(candidate.edges, i).applyMatrix4(candidate.mesh.matrixWorld);
 				end.fromArray(candidate.edges, i + 3).applyMatrix4(candidate.mesh.matrixWorld);
-				cast_segment(mesh);
+				cast_segment(own_target);
 			}
 		}
 	},

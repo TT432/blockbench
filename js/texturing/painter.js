@@ -757,57 +757,27 @@ export const Painter = {
 		return true;
 	},
 	/**
-	 * 反馈#250：选区工具的新模式「所选块」。
-	 * 在 3D 视图点击方块 → 把该块各面 UV 覆盖的贴图像素写进纹理选区。
-	 * Ctrl/Cmd 追加到现有选区（不清空），Shift 扩展到该块所在组内的所有方块。
+	 * 反馈#250：选区工具的「所选块」子模式是否生效（绘画模式 + 选区工具 + block 子模式）。
+	 * 视图点击的选中语义（Ctrl 加/减选、Shift 选组）挂在 preview.ts 上，那里需要据此判断。
 	 */
-	selectBlockFaces(data) {
+	isBlockSelectMode() {
+		return !!(Modes.paint && Toolbox.selected?.id == 'selection_tool' && BarItems.selection_tool?.mode == 'block');
+	},
+	/**
+	 * 反馈#250：把当前选中的块在使用当前贴图的那些面所覆盖的像素写进纹理选区。
+	 * 元素选中由视图点击按 Ctrl（加/减选块）与 Shift（选组）语义产出，这里只按选中结果重建
+	 * 纹理选区，避免两套选择逻辑互相覆盖。
+	 */
+	selectBlockFaces() {
 		let texture = UVEditor.texture || Texture.selected;
-		let element = data?.element;
-		if (!texture || !element || !element.faces) return false;
-		let event = data.event || {};
-		let additive = !!(event.ctrlOrCmd || event.ctrlKey || event.metaKey || Pressing.overrides.ctrl);
-		let whole_group = !!(event.shiftKey || Pressing.overrides.shift);
-
-		let targets = [element];
-		if (whole_group && element.parent instanceof Group) {
-			targets = [];
-			(function collect(node) {
-				(node.children || []).forEach(child => {
-					if (child instanceof Group) {
-						collect(child);
-					} else if (child instanceof OutlinerElement && child.faces) {
-						targets.push(child);
-					}
-				});
-			})(element.parent);
-		}
-
-		let factor_x = texture.width / texture.getUVWidth();
-		let factor_y = texture.height / texture.getUVHeight();
+		if (!texture) return false;
 		let width = texture.width, height = texture.height;
+		let factor_x = width / texture.getUVWidth();
+		let factor_y = height / texture.getUVHeight();
 		if (!(factor_x > 0) || !(factor_y > 0)) return false;
 
-		let selection = texture.selection;
-		Undo.initSelection({texture_selection: true});
-		if (additive) {
-			// 追加：已全选时结果不变；已无选区时从空白开始，已有自定义选区则保留
-			if (selection.override !== true) selection.setOverride(null);
-		} else {
-			// 替换：无论此前是「全选 / 无选区 / 自定义」都从空白矩阵重新开始
-			selection.setOverride(null);
-			if (selection.array) selection.array.fill(0);
-		}
-
-		let mark = (x0, y0, x1, y1) => {
-			x0 = Math.max(0, x0); y0 = Math.max(0, y0);
-			x1 = Math.min(width, x1); y1 = Math.min(height, y1);
-			for (let x = x0; x < x1; x++) {
-				for (let y = y0; y < y1; y++) {
-					selection.set(x, y, 1);
-				}
-			}
-		};
+		let rects = [];
+		let targets = Outliner.elements.filter(element => element.selected && element.faces);
 		targets.forEach(target => {
 			for (let fkey in target.faces) {
 				let face = target.faces[fkey];
@@ -819,20 +789,43 @@ export const Painter = {
 					for (let ux in matrix) {
 						let column = matrix[ux];
 						let ux_i = parseInt(ux);
-						let px0 = Math.floor(ux_i * factor_x);
-						let px1 = Math.max(px0 + 1, Math.ceil((ux_i + 1) * factor_x));
 						for (let uy in column) {
 							if (!column[uy]) continue;
 							let uy_i = parseInt(uy);
-							let py0 = Math.floor(uy_i * factor_y);
-							let py1 = Math.max(py0 + 1, Math.ceil((uy_i + 1) * factor_y));
-							mark(px0, py0, px1, py1);
+							rects.push([ux_i * factor_x, uy_i * factor_y, (ux_i + 1) * factor_x, (uy_i + 1) * factor_y]);
 						}
 					}
 				} else {
 					let rect = face.getBoundingRect();
-					mark(Math.floor(rect.ax * factor_x), Math.floor(rect.ay * factor_y),
-						Math.ceil(rect.bx * factor_x), Math.ceil(rect.by * factor_y));
+					rects.push([rect.ax * factor_x, rect.ay * factor_y, rect.bx * factor_x, rect.by * factor_y]);
+				}
+			}
+		});
+
+		let selection = texture.selection;
+		Undo.initSelection({texture_selection: true});
+		if (rects.length === 0) {
+			// 没有选中块，或选中的块都不使用当前贴图 → 清空自定义选区。不能留「自定义 + 全 0」：
+			// 那会让 allow() 到处返回 0，等于把绘画冻结掉，而选区轮廓又是空的，用户看不出原因。
+			selection.setOverride(false);
+			Undo.finishSelection();
+			UVEditor.updateSelectionOutline();
+			return true;
+		}
+		// 从空白矩阵重建。不能只调 setOverride(null)：override 已经是 null（自定义选区）时
+		// 该方法会提前返回并保留旧像素，重建就退化成在旧选区上累加。
+		selection.setOverride(null);
+		if (!selection.array) {
+			selection.activate();
+		} else {
+			selection.array.fill(0);
+		}
+		rects.forEach(([ax, ay, bx, by]) => {
+			let x0 = Math.max(0, Math.floor(ax)), y0 = Math.max(0, Math.floor(ay));
+			let x1 = Math.min(width, Math.ceil(bx)), y1 = Math.min(height, Math.ceil(by));
+			for (let x = x0; x < x1; x++) {
+				for (let y = y0; y < y1; y++) {
+					selection.set(x, y, 1);
 				}
 			}
 		});
@@ -3893,11 +3886,7 @@ BARS.defineActions(function() {
 					icon: selection_tools[id].icon,
 					keybind: BarItems.selection_tool.sub_keybinds[id]?.keybind || undefined,
 					click() {
-						selection_tool.setIcon(selection_tools[id].icon);
-						selection_tool.mode = id;
-						selection_tool.select();
-						BARS.updateConditions();
-						BarItems.slider_color_select_threshold.update();
+						setSelectionToolMode(id);
 					}
 				}
 				entries.push(entry);
@@ -3911,10 +3900,9 @@ BARS.defineActions(function() {
 			intersect: {name: 'action.selection_tool_operation_mode.intersect'},
 		},
 		onCanvasClick(data) {
-			if (selection_tool.mode == 'block') {
-				// 反馈#250：新模式「所选块」——在 3D 视图点击方块，选中该块的材质面
-				if (data && data.element) Painter.selectBlockFaces(data);
-			} else if (data && data.element) {
+			// 反馈#250：「所选块」子模式的元素选中走 Preview.click，纹理选区由模块底部的
+			// update_selection 监听按选中结果重建；这里只需避免误弹「复制粘贴工具」提示。
+			if (selection_tool.mode != 'block' && data && data.element) {
 				Blockbench.showQuickMessage('message.copy_paste_tool_viewport')
 			}
 		},
@@ -3938,14 +3926,22 @@ BARS.defineActions(function() {
 	})
 	for (let id in selection_tools) {
 		selection_tool.addSubKeybind(id, selection_tools[id].name, null, event => {
-			selection_tool.setIcon(selection_tools[id].icon);
-			selection_tool.mode = id;
-			selection_tool.select();
-			BARS.updateConditions();
-			BarItems.slider_color_select_threshold.update();
+			setSelectionToolMode(id);
 		});
 	}
 	selection_tool.mode = 'rectangle';
+	/**
+	 * 反馈#250：切换「选区工具」子模式的唯一入口（侧边菜单与子快捷键都走这里）。
+	 * 切进「所选块」子模式时需要按当前已选中的块重建纹理选区，否则会继续显示上一个子模式的选区。
+	 */
+	function setSelectionToolMode(id) {
+		selection_tool.setIcon(selection_tools[id].icon);
+		selection_tool.mode = id;
+		selection_tool.select();
+		BARS.updateConditions();
+		BarItems.slider_color_select_threshold.update();
+		if (id == 'block') Painter.selectBlockFaces();
+	}
 
 	new Tool('move_layer_tool', {
 		icon: 'drag_pan',
@@ -4622,4 +4618,10 @@ BARS.defineActions(function() {
 Object.assign(window, {
 	Painter,
 	IntMatrix,
+});
+
+// 反馈#250：「所选块」子模式下，纹理选区始终由「当前选中的块」派生。任何选择变化（视图点击、
+// 大纲面板点击、Ctrl+A、选组…）都会派发 update_selection，这里据此重建，保证两套视图一致。
+Blockbench.on('update_selection', () => {
+	if (Painter.isBlockSelectMode()) Painter.selectBlockFaces();
 });

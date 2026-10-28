@@ -66,7 +66,8 @@ export class Group extends OutlinerNode {
 		return this;
 	}
 	select(event, is_outliner_click) {
-		if (Blockbench.hasFlag('renaming') || this.locked) return this;
+		// 反馈#254：锁定组及其后代的组都不可被选中
+		if (Blockbench.hasFlag('renaming') || this.isEffectivelyLocked()) return this;
 		if (!event) event = true
 		var allSelected = Group.multi_selected.length == 1 && Group.first_selected === this && Outliner.selected.length && this.matchesSelection();
 		let previous_first_selected = Project.selected_elements[0];
@@ -198,13 +199,14 @@ export class Group extends OutlinerNode {
 		return this;
 	}
 	clickSelect(event, is_outliner_click) {
-		if (Blockbench.hasFlag('renaming') || this.locked) return this;
+		// 反馈#254：锁定组及其后代的组都不可被选中
+		if (Blockbench.hasFlag('renaming') || this.isEffectivelyLocked()) return this;
 		Undo.initSelection();
 		this.select(event, is_outliner_click);
 		Undo.finishSelection('Select group');
 	}
 	multiSelect() {
-		if (this.locked) return this;
+		if (this.isEffectivelyLocked()) return this;
 		this.selected = true;
 		this.directly_selected = true;
 		Group.multi_selected.safePush(this);
@@ -218,6 +220,7 @@ export class Group extends OutlinerNode {
 		console.warn('Group#selectChildren is deprecated');
 	}
 	markAsSelected(descendants) {
+		if (this.isEffectivelyLocked()) return this;
 		this.selected = true
 		this.children.forEach(function(s) {
 			s.markAsSelected(descendants)

@@ -367,6 +367,19 @@ export abstract class OutlinerNode {
 		}
 		return iterate(this.parent, 0)
 	}
+	/**
+	 * 节点是否处于「锁定」状态：自身锁定，或任一祖先组锁定。
+	 * 反馈#254：锁定组的后代也不能被选中/被批量操作，选择类入口统一用本方法判断。
+	 */
+	isEffectivelyLocked(): boolean {
+		if (this.locked) return true;
+		let parent: OutlinerNode | 'root' | undefined = this.parent;
+		while (parent instanceof OutlinerNode) {
+			if (parent.locked) return true;
+			parent = parent.parent;
+		}
+		return false;
+	}
 	
 
 	get preview_controller(): NodePreviewController {

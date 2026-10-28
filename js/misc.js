@@ -108,10 +108,14 @@ export function updateSelection(options = {}) {
 	if (!Project) return;
 	let selected_elements_set = new Set(Project.selected_elements);
 	Project.elements.forEach(obj => {
-		let included = selected_elements_set.has(obj);
-		if (included && !obj.selected && !obj.locked) {
+		// 反馈#254：锁定判断须覆盖「所在祖先组锁定」的情形；锁定节点一律移出选择集
+		let locked = obj.isEffectivelyLocked();
+		let in_set = selected_elements_set.has(obj);
+		if (in_set && locked) Project.selected_elements.remove(obj);
+		let included = in_set && !locked;
+		if (included && !obj.selected) {
 			obj.markAsSelected()
-		} else if ((!included || obj.locked) && obj.selected) {
+		} else if (!included && obj.selected) {
 			obj.unselect()
 			if (UVEditor.selected_element_faces[obj.uuid]) {
 				delete UVEditor.selected_element_faces[obj.uuid];

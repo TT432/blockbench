@@ -2387,6 +2387,8 @@
 	"menu.particle_asset.change_texture": "Change Texture",
 	"menu.sound_asset.change_file": "Change Audio File",
 	"message.invalid_particle_file": "Invalid particle file",
+	"message.particle_texture_missing": "Particle texture not found: %0",
+	"message.particle_texture_size_mismatch": "Particle texture is %0 × %1 pixels but the file declares %2 × %3, so UV sampling falls outside the texture",
 	"message.effect_relative_path_needs_save": "Save the project first so relative paths can be resolved against its folder",
 	"action.import_texture.desc": "Import one or more textures from your file system",
 	"action.create_texture": "Create Texture",

@@ -455,6 +455,8 @@
 	"menu.particle_asset.change_texture": "更换贴图",
 	"menu.sound_asset.change_file": "更换音频文件",
 	"message.invalid_particle_file": "无效的粒子文件",
+	"message.particle_texture_missing": "未找到粒子贴图：%0",
+	"message.particle_texture_size_mismatch": "粒子贴图实际为 %0×%1 像素，但文件声明 %2×%3，UV 采样会越界",
 	"message.effect_relative_path_needs_save": "请先保存工程，相对路径需要按工程所在目录解析",
 	"action.import_texture.desc": "从本地导入一个或多个纹理",
 	"action.create_texture": "创建纹理",

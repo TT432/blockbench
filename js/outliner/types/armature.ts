@@ -65,6 +65,7 @@ export class Armature extends OutlinerElement {
 		return this;
 	}
 	markAsSelected(descendants: boolean = false) {
+		if (this.isEffectivelyLocked()) return this;
 		Outliner.selected.safePush(this);
 		this.selected = true;
 		if (descendants) {

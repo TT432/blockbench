@@ -10,7 +10,7 @@
 	so existing consumers keyed by that string keep working.
 */
 
-import { fs, PathModule, NodeBuffer } from "../native_apis";
+import { fs, NodeBuffer } from "../native_apis";
 import { resolveEffectPath, effectLookupRef } from "./effect_path";
 
 // 资源路径归一化键：Windows 上文件系统不区分大小写、两种分隔符等价，
@@ -197,12 +197,8 @@ export class ParticleAsset {
 		let effect = Animator.particle_effects[this.getRef()];
 		let texture_path = effect?.config?.particle_texture_path;
 		if (!texture_path || !isApp || !this.path) return;
-		let path_arr = this.path.split(/[\\/]+/);
-		let particle_index = path_arr.indexOf('particles');
-		if (particle_index < 0) return;
-		path_arr.splice(particle_index);
-		let file_path = PathModule.join(path_arr.join(PathModule.sep), texture_path.replace(/\.png$/, '') + '.png');
-		if (!fs.existsSync(file_path)) return;
+		let file_path = Animator.resolveParticleTexturePath(this.path, texture_path);
+		if (!file_path) return;
 		try {
 			let buffer = fs.readFileSync(file_path);
 			this.texture = 'data:image/png;base64,' + buffer.toString('base64');

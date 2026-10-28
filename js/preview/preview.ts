@@ -1069,10 +1069,13 @@ export class Preview {
 			let multi_select = Keybinds.extra.preview_select.keybind.additionalModifierTriggered(event, 'multi_select');
 			let group_select = Keybinds.extra.preview_select.keybind.additionalModifierTriggered(event, 'group_select');
 			let loop_select = Keybinds.extra.preview_select.keybind.additionalModifierTriggered(event, 'loop_select');
+			// 反馈#250：绘画模式的框选工具「所选块」子模式。该模式的选择对象是模型上的块，
+			// 因此沿用建模视图的 Ctrl 加减选 / Shift 选组语义，不被下面两处绘画模式的强制单选逻辑清掉。
+			let block_select = Painter.isBlockSelectMode();
 
 			if (Toolbox.selected.paintTool || Toolbox.selected.id == 'knife_tool') {
 				// 反馈#101：绘画模式下油漆桶允许按住 Ctrl 多选/减选方块
-				if (!(settings.community_paint_fill_multi_select.value && Toolbox.selected.id == 'fill_tool' && multi_select)) {
+				if (!block_select && !(settings.community_paint_fill_multi_select.value && Toolbox.selected.id == 'fill_tool' && multi_select)) {
 					multi_select = group_select = loop_select = false;
 				}
 			}
@@ -1098,7 +1101,7 @@ export class Preview {
 				Toolbox.selected.selectElements &&
 				Modes.selected instanceof Mode &&
 				Modes.selected.selectElements &&
-				!(Modes.paint && (BarItems.brush_lock_mode as BarSelect).value == 'selected_faces') &&
+				!(Modes.paint && !block_select && (BarItems.brush_lock_mode as BarSelect).value == 'selected_faces') &&
 				(data.type === 'element' || Toolbox.selected.id == 'knife_tool' || (data.type == 'line' && data.element instanceof SplineMesh))
 			) {
 				Undo.initSelection();
@@ -1111,11 +1114,30 @@ export class Preview {
 					}
 				}
 				Blockbench.dispatchEvent('canvas_select', data)
-				if (Modes.paint && !(Toolbox.selected.id == 'fill_tool' && multi_select)) {
+				if (Modes.paint && !block_select && !(Toolbox.selected.id == 'fill_tool' && multi_select)) {
 					// @ts-expect-error
 					event = {};
 				}
-				if (data.element.parent instanceof OutlinerNode && (data.element instanceof Mesh == false || data.element instanceof SplineMesh == false || select_mode == 'object') && (
+				if (block_select) {
+					// 反馈#250：绘画模式框选工具「所选块」子模式。选择对象是模型上的块，沿用建模
+					// 视图的修饰键语义：单击 = 只选该块；Ctrl = 加选/减选该块；Shift = 选中该块所在的整个组。
+					// 纹理选区由 Painter.selectBlockFaces 按这里产出的 element.selected 重建。
+					if (multi_select) {
+						if (data.element.selected) {
+							data.element.unselect();
+						} else {
+							data.element.markAsSelected();
+						}
+					} else if (group_select && data.element.parent instanceof Group) {
+						unselectAllElements();
+						data.element.parent.select(event, false);
+					} else {
+						unselectAllElements();
+						data.element.markAsSelected();
+					}
+					TickUpdates.selection = true;
+					updateSelection();
+				} else if (data.element.parent instanceof OutlinerNode && (data.element instanceof Mesh == false || data.element instanceof SplineMesh == false || select_mode == 'object') && (
 					// @ts-expect-error
 					(Animator.open && !data.element.constructor.animator) ||
 					group_select ||
