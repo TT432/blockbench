@@ -6,6 +6,7 @@
 import { PointerTarget } from "../../interface/pointer_target";
 import { selectSplinePoints } from "../transform";
 import { TransformerModule } from "./transform_modules";
+import { RotateAngleIndicator } from "./rotate_indicator";
 
  ( function () {
 
@@ -1068,6 +1069,13 @@ import { TransformerModule } from "./transform_modules";
 				var worldRotation = new THREE.Euler();
 				var camPosition = new THREE.Vector3();
 
+				// 反馈#252：旋转角度扇形指示。起点/当前点都记世界空间方向（旋转中心 → 光标平面交点），
+				// 与 onPointerMove 里各自的局部换算无关，避免两侧坐标系不一致导致扇面角度失真。
+				var rotate_start_world = new THREE.Vector3();
+				var rotate_current_world = new THREE.Vector3();
+				var rotate_start_ready = false;
+				var rotate_indicator = null;
+
 
 			this.setMode = function ( mode ) {
 				if (mode === 'hidden') {
@@ -1277,6 +1285,54 @@ import { TransformerModule } from "./transform_modules";
 				_gizmo[ _mode ].highlight( scope.axis );
 			}
 
+			/**
+			 * 反馈#252：更新旋转角度扇形。
+			 * 起点与当前点都是世界空间方向（旋转中心 → 光标在活动平面上的交点），法线取真实旋转轴：
+			 * X/Y/Z 是局部轴经 worldRotation 转到世界后的向量，E（自由旋转）是相机视线方向——
+			 * 与 onPointerMove 里 rotate_normal 的取法一致。
+			 */
+			function updateRotateIndicator() {
+				if (!rotate_indicator) {
+					rotate_indicator = new RotateAngleIndicator();
+					Canvas.gizmos.push(rotate_indicator.group);
+				}
+				rotate_indicator.attach(Canvas.scene);
+				if (scope.axis === null) {
+					rotate_indicator.hide();
+					return;
+				}
+				let axis = scope.axis.length == 2 ? scope.axis[1] : scope.axis[0];
+				let axis_key = String(axis).toUpperCase();
+				let normal;
+				if (axis_key === 'E') {
+					normal = Preview.selected.camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(-1);
+				} else {
+					normal = new THREE.Vector3(
+						axis_key === 'X' ? 1 : 0,
+						axis_key === 'Y' ? 1 : 0,
+						axis_key === 'Z' ? 1 : 0
+					);
+					if (!normal.lengthSq()) normal.set(0, 0, 1);
+					normal.applyEuler(worldRotation);
+				}
+				rotate_indicator.setColor(
+					axis_key === 'X' ? gizmo_colors.r
+					: axis_key === 'Y' ? gizmo_colors.g
+					: axis_key === 'Z' ? gizmo_colors.b
+					: gizmo_colors.outline
+				);
+				rotate_indicator.update({
+					origin: worldPosition,
+					normal,
+					start_dir: rotate_start_world.clone(),
+					current_dir: rotate_current_world.clone(),
+					radius: Transformer.scale.x * 1.5,
+				});
+			}
+			function hideRotateIndicator() {
+				if (rotate_indicator) rotate_indicator.hide();
+			}
+
 			function onPointerHover( event ) {
 
 				if ( !scope.visible || ( event.button !== undefined && event.button !== 0 ) ) return;
@@ -1358,6 +1414,11 @@ import { TransformerModule } from "./transform_modules";
 
 						if ( planeIntersect ) {
 							offset.copy( planeIntersect.point );
+							// 反馈#252：记下旋转拖拽的起始方向（世界空间，落在活动平面上）
+							if (Toolbox.selected.transformerMode === 'rotate') {
+								rotate_start_world.copy(planeIntersect.point).sub(worldPosition);
+								rotate_start_ready = false;
+							}
 							if (TransformerModule.active) {
 								TransformerModule.active.dispatchPointerDown({event});
 							}
@@ -1405,6 +1466,8 @@ import { TransformerModule } from "./transform_modules";
 				} else {
 
 					point.sub( worldPosition );
+					// 反馈#252：此时 point 是世界空间方向（光标在旋转平面上的落点），先记下来给扇形用
+					rotate_current_world.copy( point );
 					point.removeEuler(worldRotation);
 
 					if (scope.axis == 'E') {
@@ -1421,6 +1484,14 @@ import { TransformerModule } from "./transform_modules";
 						]
 						angle = Math.radToDeg( rotations[axisNumber] )
 					}
+					// 反馈#252：旋转量由模块从第一次 move 的采样角度起算（initial_value），
+					// 扇形起点必须对齐同一个采样点，否则扇面会多画按下 → 首次移动的那一段。
+					if (module && !rotate_start_ready) {
+						rotate_start_world.copy(rotate_current_world);
+						rotate_start_ready = true;
+					}
+					// 反馈#252：拖拽过程中显示旋转角度扇形
+					updateRotateIndicator();
 				}
 
 				if (module) {
@@ -1474,6 +1545,8 @@ import { TransformerModule } from "./transform_modules";
 					scope.dispatchEvent( mouseUpEvent );
 					scope.orbit_controls.stopMovement();
 					Canvas.outlines.children.length = 0;
+					// 反馈#252：拖拽结束收起角度扇形
+					hideRotateIndicator();
 
 					extendTransformLine(false);
 

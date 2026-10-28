@@ -275,6 +275,7 @@ export class Cube extends OutlinerElement {
 		return this;
 	}
 	markAsSelected(...args) {
+		if (this.isEffectivelyLocked()) return this;
 		let was_selected = this.selected;
 		super.markAsSelected(...args);
 		if (!was_selected && Cube.selected[0]) {

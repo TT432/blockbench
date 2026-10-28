@@ -762,6 +762,7 @@ export const Animator = {
 				.reset()
 				.set('file_path', path)
 				.setFromJSON(json_content, {path});
+			Animator.particle_effects[path].config.onTextureUpdate = () => Animator.checkParticleTextureSize(Animator.particle_effects[path].config);
 			for (var uuid in Animator.particle_effects[path].emitters) {
 				let emitter = Animator.particle_effects[path].emitters[uuid];
 				emitter.updateConfig();
@@ -771,6 +772,7 @@ export const Animator = {
 				config: new Wintersky.Config(WinterskyScene, json_content, {path}),
 				emitters: {}
 			};
+			Animator.particle_effects[path].config.onTextureUpdate = () => Animator.checkParticleTextureSize(Animator.particle_effects[path].config);
 			if (isApp && fs.existsSync(path)) {
 				let timeout;
 				Animator.particle_effects[path].watcher = fs.watch(path, (eventType) => {
@@ -841,22 +843,118 @@ for (let event_name of ['finished_edit', 'undo', 'redo', 'load_undo_save', 'sele
 	});
 }
 
+// 粒子贴图路径解析（反馈#247）。
+// 旧实现有三个静默失败点，任何一个都只会让预览退回占位贴图：
+// ① 只按 PathModule.sep 切分，正斜杠路径（非 Windows 或混用分隔符）永远解析失败；
+// ② 'particles' 段不存在时 splice(-1) 会删掉粒子文件名本身，算出错误路径；
+// ③ 只试资源包根目录，贴图与粒子 json 并排的扁平包解析不到。
+Animator.particle_texture_issues = new Set();
+Animator.resolveParticleTexturePath = function(file_path, texture_path) {
+	if (!isApp || !file_path || !texture_path) return null;
+	let relative = String(texture_path).replace(/\\/g, '/').replace(/^(\.?\/*)/, '').replace(/\.png$/i, '') + '.png';
+	let segments = String(file_path).split(/[\\/]+/);
+	segments.pop();
+	let roots = [];
+	for (let i = segments.length - 1; i >= 0; i--) {
+		if (segments[i].toLowerCase() == 'particles') {
+			roots.push(segments.slice(0, i).join('/'));
+			break;
+		}
+	}
+	roots.push(segments.join('/'));
+	let basename = relative.split('/').pop();
+	let candidates = [];
+	for (let root of roots) {
+		if (!root) continue;
+		candidates.push(root + '/' + relative);
+		if (basename != relative) candidates.push(root + '/' + basename);
+	}
+	for (let candidate of candidates) {
+		if (fs.existsSync(candidate)) return candidate;
+	}
+	return null;
+};
+// 贴图确实找不到时用与 JSON 声明尺寸一致的占位图（灰白棋盘，和工程里缺贴图的表现一致）。
+// 不能直接沿用 wintersky 的 16×16 占位图：UV 仍按 texture_width/height 归一化，
+// 越界后被 ClampToEdge 采成单一色，看起来是“整块不透明方块”，会被误读成透明度渲染 bug。
+Animator.placeholder_particle_textures = {};
+Animator.getPlaceholderParticleTexture = function(config) {
+	let size = config.particle_texture_size || [16, 16];
+	let width = Math.max(1, Math.min(4096, Math.round(Number(size[0]) || 16)));
+	let height = Math.max(1, Math.min(4096, Math.round(Number(size[1]) || 16)));
+	let key = width + 'x' + height;
+	if (Animator.placeholder_particle_textures[key]) return Animator.placeholder_particle_textures[key];
+	let canvas = document.createElement('canvas');
+	canvas.width = width;
+	canvas.height = height;
+	let context = canvas.getContext('2d');
+	let cell = Math.max(1, Math.round(Math.min(width, height) / 4));
+	for (let x = 0; x < width; x += cell) {
+		for (let y = 0; y < height; y += cell) {
+			context.fillStyle = ((x / cell + y / cell) % 2 == 0) ? '#ffffff' : '#999999';
+			context.fillRect(x, y, cell, cell);
+		}
+	}
+	let url = canvas.toDataURL();
+	Animator.placeholder_particle_textures[key] = url;
+	return url;
+};
+Animator.reportParticleTextureIssue = function(key, message_key, message_args) {
+	console.warn('[Particle] ' + tl(message_key, message_args));
+	if (Animator.particle_texture_issues.has(key)) return;
+	Animator.particle_texture_issues.add(key);
+	Blockbench.showQuickMessage(tl(message_key, message_args), 4000);
+};
+// 贴图实际尺寸和 JSON 里的 texture_width/height 不一致时，UV 会越界采样被钳制成单一色，
+// 表现同样是“整块纯色不透明方块”（反馈#247 的另一条成因），必须明确告知而不是让它看起来像渲染 bug。
+Animator.checkParticleTextureSize = function(config) {
+	let image = config.texture && config.texture.image;
+	if (!image || !image.width || !image.height) return;
+	if (config.particle_texture_missing || config.texture_source_category != 'loaded') return;
+	let size = config.particle_texture_size || [16, 16];
+	let declared = [Math.round(Number(size[0]) || 16), Math.round(Number(size[1]) || 16)];
+	if (image.width == declared[0] && image.height == declared[1]) return;
+	Animator.reportParticleTextureIssue(
+		'size:' + (config.particle_texture_path || '') + '|' + image.width + 'x' + image.height + '|' + declared.join('x'),
+		'message.particle_texture_size_mismatch',
+		[image.width, image.height, declared[0], declared[1]]
+	);
+};
+
 export const WinterskyScene = new Wintersky.Scene({
 	fetchTexture: function(config) {
 		if (config.preview_texture) {
 			return config.preview_texture;
 		}
-		if (isApp && config.file_path && config.particle_texture_path) {
-			let path_arr = config.file_path.split(PathModule.sep);
-			let particle_index = path_arr.indexOf('particles')
-			path_arr.splice(particle_index)
-			let filePath = PathModule.join(path_arr.join(PathModule.sep), config.particle_texture_path.replace(/\.png$/, '')+'.png')
+		let texture_path = config.particle_texture_path;
+		if (!texture_path) return;
 
-			if (fs.existsSync(filePath)) {
-				config.preview_texture = filePath;
-				return filePath;
-			}
+		let resolved = Animator.resolveParticleTexturePath(config.file_path, texture_path);
+		if (resolved) {
+			config.preview_texture = resolved;
+			config.particle_texture_missing = false;
+			return resolved;
 		}
+
+		// 工程内贴图兜底：贴图已导入工程（.bbmodel 内嵌）时按名称/相对路径匹配
+		let normalized = String(texture_path).replace(/\\/g, '/').replace(/^(\.?\/*)/, '').replace(/\.png$/i, '').toLowerCase();
+		let project_texture = Texture.all.find(tex => {
+			let candidate = String(tex.path || tex.name || '').replace(/\\/g, '/').replace(/\.png$/i, '').toLowerCase();
+			return candidate == normalized || candidate.endsWith('/' + normalized);
+		});
+		if (project_texture && typeof project_texture.source == 'string' && project_texture.source) {
+			config.preview_texture = project_texture.source;
+			config.particle_texture_missing = false;
+			return project_texture.source;
+		}
+
+		// wintersky 内置贴图（particles / flame_atlas / soul / campfire_smoke）交给它自己处理
+		const builtin_textures = ['textures/particle/particles', 'textures/flame_atlas', 'textures/particle/flame_atlas', 'textures/particle/soul', 'textures/particle/campfire_smoke'];
+		if (!config.file_path || builtin_textures.includes(normalized)) return;
+
+		config.particle_texture_missing = true;
+		Animator.reportParticleTextureIssue('missing:' + normalized, 'message.particle_texture_missing', [texture_path + '.png']);
+		return Animator.getPlaceholderParticleTexture(config);
 	},
 	async fetchParticleFile(identifier, config) {
 		if (!identifier || !config.file_path || !isApp) return;

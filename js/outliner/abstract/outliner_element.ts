@@ -215,6 +215,8 @@ export abstract class OutlinerElement extends OutlinerNode {
 		Undo.finishSelection('Select element');
 	}
 	markAsSelected(select_children?: boolean) {
+		// 反馈#254：锁定节点（自身或所在祖先组锁定）不可被选中，父级递归选择在此处截断
+		if (this.isEffectivelyLocked()) return this;
 		Project.selected_elements.safePush(this);
 		this.selected = true;
 		TickUpdates.selection = true;

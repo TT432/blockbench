@@ -1256,6 +1256,15 @@ function applyOffset(bones, offset) {
 	}
 }
 
+/**
+ * #256：导出名称报告只在用户发起的导出动作中弹出。
+ * Smart Save（Ctrl+S）会把上次的导出文件重写一遍，同样经过 write() → afterSave()，
+ * 但那是保存而不是导出，不能弹报告。
+ * Codec 构造函数只把白名单方法拷贝到实例（Merge.function），对象字面量里的普通
+ * 数据字段不会出现在实例上，所以这里必须用模块级变量而不是 codec 的字段。
+ */
+let bedrock_export_depth = 0;
+
 var codec = new Codec('bedrock', {
 	name: 'Bedrock Model',
 	extension: 'json',
@@ -1401,13 +1410,29 @@ var codec = new Codec('bedrock', {
 			return autoStringify(main_tag)
 		}
 	},
+	async export(options) {
+		bedrock_export_depth++;
+		try {
+			await Codec.prototype.export.call(this, options);
+		} finally {
+			bedrock_export_depth--;
+		}
+	},
+	async writeCollection(collection) {
+		bedrock_export_depth++;
+		try {
+			await Codec.prototype.writeCollection.call(this, collection);
+		} finally {
+			bedrock_export_depth--;
+		}
+	},
 	afterSave(path) {
 		Codec.prototype.afterSave.call(this, path);
-		reportExportNames();
+		if (bedrock_export_depth) reportExportNames();
 	},
 	afterDownload(path) {
 		Codec.prototype.afterDownload.call(this, path);
-		reportExportNames();
+		if (bedrock_export_depth) reportExportNames();
 	},
 	overwrite(content, path, cb) {
 		var data, index;
