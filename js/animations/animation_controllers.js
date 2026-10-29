@@ -63,6 +63,23 @@ export class AnimationControllerState {
 		if (data.animations instanceof Array) {
 			let previous_animations = this.animations.slice();
 			this.animations.empty();
+			// 反馈#261：文件里的短名是「规范化后的导出短名」（内部名不合规时两者不同），
+			// 内部短名/saved_name 都可能匹配不上，需要按本次导出映射反查
+			let export_short_lookup = null;
+			const findByExportShort = (key) => {
+				if (!key) return null;
+				if (!export_short_lookup) {
+					export_short_lookup = new Map();
+					try {
+						let export_names = buildBedrockExportNames();
+						Animation.all.forEach(anim => {
+							let short = export_names.animationShort(anim);
+							if (short && !export_short_lookup.has(short)) export_short_lookup.set(short, anim);
+						});
+					} catch (error) {}
+				}
+				return export_short_lookup.get(key) ?? null;
+			};
 			data.animations.forEach(a => {
 				let animation = previous_animations.find(a1 => a1.uuid == a.uuid) ?? {
 					uuid: guid(),
@@ -77,9 +94,10 @@ export class AnimationControllerState {
 					// Bedrock
 					let key = typeof a == 'object' ? Object.keys(a)[0] : a;
 					// 反馈#257：内部名可任意、文件键为合规导出名，先按内部短名匹配，再按文件键兜底
-					let anim_match = Animation.all.find(anim => anim.getShortName() == key) ?? Animation.all.find(anim => anim.saved_name == key);
+					// 反馈#261：兜底再按「规范化导出短名」反查（内部名不合规时文件里存的就是导出短名）
+					let anim_match = Animation.all.find(anim => anim.getShortName() == key) ?? Animation.all.find(anim => anim.saved_name == key) ?? findByExportShort(key);
 					Object.assign(animation, {
-						key: key || '',
+						key: anim_match ? anim_match.getShortName() : (key || ''),
 						animation: anim_match ? anim_match.uuid : '',// UUID
 						blend_value: (typeof a == 'object' && a[key]) || ''
 					});

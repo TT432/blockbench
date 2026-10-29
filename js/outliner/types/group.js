@@ -383,7 +383,7 @@ export class Group extends OutlinerNode {
 		return array;
 	}
 	showContextMenu(event) {
-		if (this.locked) return this;
+		if (this.isEffectivelyLocked()) return this;
 		if (!Group.multi_selected.includes(this)) this.select(event);
 		this.menu.open(event, this)
 		return this;
