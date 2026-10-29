@@ -10,6 +10,13 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.73',
+		date: '2026-10-29',
+		changes: [
+			'新增：软件内版本回滚。标题栏更新按钮旁与帮助菜单里新增「回滚版本」，按由新到旧列出全部已发布版本、本机已缓存的版本以及安装包自带的内置版本。标记「已缓存」的版本点击即切换（改动指针后重载，无需重启进程），其余版本先从对应 release 下载 payload 并用该版本的 update.json 校验 sha512 再切换。本机保留最近 3 个旧版本供即时回滚（约 100 MB），回滚后照常提示有新版可更新',
+		],
+	},
+	{
 		version: '5.3.72',
 		date: '2026-10-29',
 		changes: [

@@ -740,10 +740,55 @@ type UpdateCheckResult =
 	| {type: 'hot', manifest: {version: string, changelog?: string, size?: number}}
 	| {type: 'cold', version: string, url: string}
 
+interface VersionRow {
+	/** null = the version packaged in the installer (no payload directory) */
+	version: string | null;
+	label: string;
+	date: string;
+	size: number;
+	notes: string;
+	cached: boolean;
+}
+interface VersionInventory {
+	current: string | null;
+	builtin: string;
+	local: string[];
+	remote: {version: string, date?: string, size?: number, notes?: string}[] | null;
+	remote_error: string | null;
+}
+
+/** Numeric ordering for version strings such as "5.3.60" or "5.3.0-beta.2". */
+function compareVersionStrings(a: string, b: string): number {
+	const pa = a.split(/[.\-+]/);
+	const pb = b.split(/[.\-+]/);
+	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+		const na = parseInt(pa[i]) || 0;
+		const nb = parseInt(pb[i]) || 0;
+		if (na !== nb) return na < nb ? -1 : 1;
+	}
+	return 0;
+}
+function formatPayloadSize(bytes: number): string {
+	return (bytes / 1048576).toFixed(1) + ' MB';
+}
+/** Release notes are markdown; flatten them for a row tooltip. */
+function stripMarkdown(text: string): string {
+	return text
+		.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/[#*_>`|-]{1,}/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, 1200);
+}
+
 export const UpdateManager = {
 	manifest: null as {version: string, changelog?: string, size?: number} | null,
 	action: null as Action | null,
 	progress_dialog: null as Dialog | null,
+	rollback_action: null as Action | null,
+	rollback_dialog: null as Dialog | null,
+	rollback_element: null as HTMLElement | null,
 	last_retry_notice: 0,
 
 	initialize() {
@@ -757,6 +802,29 @@ export const UpdateManager = {
 			click: () => this.check(true)
 		});
 		MenuBar.menus.help.addAction('check_for_updates', '#about');
+
+		// Rollback entry: always present in the title bar (next to the update
+		// button when one is shown) and in the Help menu.
+		this.rollback_action = new Action('rollback_version', {
+			name: tl('update.rollback'),
+			description: tl('update.rollback_desc'),
+			icon: 'undo',
+			click: () => this.openRollbackDialog()
+		});
+		MenuBar.menus.help.addAction(this.rollback_action, '#about');
+		this.mountRollbackAction();
+	},
+	mountRollbackAction() {
+		if (!this.rollback_action) return;
+		const menu = document.querySelector('#update_menu');
+		if (!menu) return;
+		// Reuse the mounted node: toElement() would clone it (the original stays
+		// connected) and every call would add a second button. Re-appending the
+		// same node moves it to the end, so the update button stays to its left.
+		const node = this.rollback_element && this.rollback_element.isConnected
+			? this.rollback_element
+			: this.rollback_element = this.rollback_action.getNode();
+		menu.append(node);
 	},
 	async showAppliedChangelog() {
 		try {
@@ -805,6 +873,7 @@ export const UpdateManager = {
 		this.action.toElement('#update_menu');
 		MenuBar.menus.help.addAction('_');
 		MenuBar.menus.help.addAction(this.action);
+		this.mountRollbackAction();
 	},
 	confirmUpdate() {
 		if (!this.manifest) return;
@@ -884,6 +953,151 @@ export const UpdateManager = {
 			message: tl(message_key, [detail]),
 			icon: 'error'
 		});
+	},
+
+	// --- Version rollback (community fork) ---
+	async openRollbackDialog() {
+		if (this.rollback_dialog) {
+			this.rollback_dialog.delete();
+			this.rollback_dialog = null;
+		}
+		let inventory: VersionInventory;
+		try {
+			inventory = await ipcRenderer.invoke('bb-update:versions');
+		} catch (err) {
+			console.error('[update] Failed to read the version list', err);
+			Blockbench.showMessageBox({
+				title: 'update.rollback_failed',
+				message: 'update.rollback_list_failed',
+				icon: 'error'
+			});
+			return;
+		}
+		const current = inventory.current || null;
+		const cached = new Set(inventory.local || []);
+		const rows: VersionRow[] = [{
+			version: null,
+			label: tl('update.rollback_builtin', [inventory.builtin]),
+			date: '',
+			size: 0,
+			notes: '',
+			cached: true
+		}];
+		const seen = new Set<string>();
+		for (let entry of inventory.remote || []) {
+			seen.add(entry.version);
+			rows.push({
+				version: entry.version,
+				label: entry.version,
+				date: entry.date || '',
+				size: entry.size || 0,
+				notes: entry.notes || '',
+				cached: cached.has(entry.version)
+			});
+		}
+		// Cached versions missing from the online list (e.g. offline) stay usable
+		for (let version of cached) {
+			if (!version || seen.has(version)) continue;
+			rows.push({version, label: version, date: '', size: 0, notes: '', cached: true});
+		}
+		// Newest first, builtin (the version packaged in the installer) last
+		rows.sort((a, b) => {
+			if (!a.version) return 1;
+			if (!b.version) return -1;
+			return compareVersionStrings(b.version, a.version);
+		});
+
+		const isRowCurrent = (row: VersionRow) => row.version ? row.version == current : current == null;
+		let selected: VersionRow | null = null;
+		const row_elements: HTMLElement[] = [];
+		const list = Interface.createElement('ul', {
+			id: 'bb_rollback_list',
+			style: `max-height: ${Math.max(200, Math.min(420, window.innerHeight - 340))}px; overflow-y: auto;`
+		});
+		const selectRow = (row: VersionRow, element: HTMLElement) => {
+			selected = row;
+			row_elements.forEach(el => el.classList.remove('selected'));
+			element.classList.add('selected');
+		};
+		for (let row of rows) {
+			const badge = isRowCurrent(row) ? tl('update.rollback_current')
+				: row.cached ? tl('update.rollback_cached')
+				: tl('update.rollback_downloadable');
+			const li = Interface.createElement('li', {
+				class: isRowCurrent(row) ? 'current' : '',
+				title: row.notes ? stripMarkdown(row.notes) : ''
+			}, [
+				Interface.createElement('span', {}, row.label),
+				Interface.createElement('div', {class: 'bb_rollback_field'}, row.date ? new Date(row.date).toLocaleDateString() : ''),
+				Interface.createElement('div', {class: 'bb_rollback_field'}, row.size ? formatPayloadSize(row.size) : ''),
+				Interface.createElement('div', {class: 'bb_rollback_field'}, badge)
+			]);
+			li.addEventListener('click', () => selectRow(row, li));
+			li.addEventListener('dblclick', () => {
+				selectRow(row, li);
+				dialog.close(dialog.confirmIndex);
+			});
+			row_elements.push(li);
+			list.append(li);
+		}
+		const hint = Interface.createElement('p', {
+			style: 'margin: 8px 2px 0; color: var(--color-subtle_text); font-size: 0.92em;'
+		}, inventory.remote_error ? tl('update.rollback_offline') : tl('update.rollback_hint'));
+
+		const dialog = new Dialog({
+			id: 'bb_rollback',
+			title: tl('update.rollback_title', [current || inventory.builtin]),
+			width: 640,
+			lines: [list, hint],
+			buttons: ['update.rollback_button', 'dialog.cancel'],
+			onConfirm: () => {
+				if (!selected) {
+					Blockbench.showQuickMessage('update.rollback_pick');
+					return false;
+				}
+				this.applyVersionRow(selected);
+			}
+		});
+		this.rollback_dialog = dialog;
+		dialog.show();
+	},
+	async applyVersionRow(row: VersionRow) {
+		if (!row.cached) {
+			this.installVersion(row.version as string);
+			return;
+		}
+		try {
+			await ipcRenderer.invoke('bb-update:activate', row.version);
+		} catch (err) {
+			const detail = err && err.message ? String(err.message) : String(err);
+			const message_key = detail.includes('payload_') ? 'update.rollback_cache_missing' : 'update.rollback_activate_failed';
+			console.error('[update] Failed to activate version', row.version, detail);
+			Blockbench.showMessageBox({
+				title: 'update.rollback_failed',
+				message: tl(message_key, [detail]),
+				icon: 'error'
+			});
+			return;
+		}
+		this.checkUnsavedAndReload();
+	},
+	/** Download a specific published version, then reload into it. */
+	installVersion(version: string) {
+		this.last_retry_notice = 0;
+		this.progress_dialog = new Dialog({
+			title: tl('update.download_title', [version]),
+			progress_bar: {},
+			cancel_on_click_outside: false,
+			buttons: ['dialog.cancel'],
+			onCancel: () => {
+				ipcRenderer.send('bb-update:cancel');
+			}
+		});
+		this.progress_dialog.show();
+		ipcRenderer.on('bb-update:progress', this.onProgress);
+		ipcRenderer.on('bb-update:done', this.onDone);
+		ipcRenderer.on('bb-update:error', this.onError);
+		ipcRenderer.send('bb-update:install', version);
 	},
 	getOtherWindows() {
 		return electron.BrowserWindow.getAllWindows().filter(win => !win.isDestroyed() && win.id != currentwindow.id);

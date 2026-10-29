@@ -40,6 +40,46 @@ function appliedMarkerPath() {
 }
 
 /**
+ * Number of previous payload versions kept on disk for instant rollback.
+ * Each extracted payload is ~33 MB, so the default trades ~100 MB of disk for
+ * three rollback targets that need no download.
+ */
+const KEEP_PREVIOUS_VERSIONS = 3;
+
+const RELEASES_API_URL = 'https://api.github.com/repos/TT432/blockbench/releases?per_page=100';
+const RELEASES_MAX_PAGES = 10;
+const VERSIONS_CACHE_TTL = 6 * 60 * 60 * 1000;
+
+/**
+ * Cache of payload directories already hash-verified against their manifest,
+ * so switching back to a cached version does not re-hash ~33 MB. Keyed by
+ * version, value is the sha512 of that version's payload-manifest.json.
+ */
+function verifiedCachePath() {
+	return path.join(payloadRoot(), 'verified.json');
+}
+function readVerifiedCache() {
+	try {
+		const data = JSON.parse(fs.readFileSync(verifiedCachePath(), 'utf-8'));
+		return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+	} catch (err) {
+		return {};
+	}
+}
+function recordVerified(version, manifest_sha) {
+	try {
+		const cache = readVerifiedCache();
+		cache[version] = manifest_sha;
+		writeJSONAtomic(verifiedCachePath(), cache);
+	} catch (err) {}
+}
+
+/** Cached result of the GitHub releases lookup (published payload versions). */
+function versionsCachePath() {
+	return path.join(payloadRoot(), 'versions-cache.json');
+}
+
+/**
  * Numeric semver-ish comparison. Returns -1, 0 or 1.
  */
 export function compareVersions(a, b) {
@@ -343,6 +383,7 @@ export async function resolvePayloadIndex(fallback_index) {
 			await verifyPayloadDir(dir);
 			writeJSONAtomic(pointerPath(), { version: pointer.version, verified: true, manifest_sha: current_manifest_sha });
 		}
+		recordVerified(pointer.version, current_manifest_sha);
 		const index_path = path.join(dir, 'index.html');
 		if (!fs.existsSync(index_path)) throw new Error('payload_missing_index');
 		return { index_path, source: 'payload', version: pointer.version };
@@ -377,15 +418,23 @@ function pruneOldVersions(keep_version) {
 			.filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== keep_version)
 			.map(e => ({ name: e.name, mtime: fs.statSync(path.join(root, e.name)).mtimeMs }))
 			.sort((a, b) => b.mtime - a.mtime);
-		// Keep the most recent previous version as an emergency copy
-		for (const old of versions.slice(1)) {
+		// Keep the most recent previous versions as rollback targets
+		for (const old of versions.slice(KEEP_PREVIOUS_VERSIONS)) {
 			fs.rmSync(path.join(root, old.name), { recursive: true, force: true });
+			try {
+				const cache = readVerifiedCache();
+				if (cache[old.name]) {
+					delete cache[old.name];
+					writeJSONAtomic(verifiedCachePath(), cache);
+				}
+			} catch (err) {}
 		}
 	} catch (err) {}
 }
 
 let last_manifest = null;
 let active_apply = null;
+let remote_versions = null;
 
 /**
  * Check the update manifest. Returns {type: 'none' | 'hot' | 'cold', ...}.
@@ -451,6 +500,7 @@ async function applyUpdate(manifest, onProgress, token) {
 		await moveDir(extract_dir, final_dir);
 
 		const manifest_file_sha = await sha512File(path.join(final_dir, 'payload-manifest.json'));
+		recordVerified(version, manifest_file_sha);
 		writeJSONAtomic(pointerPath(), { version, verified: true, manifest_sha: manifest_file_sha });
 		writeJSONAtomic(appliedMarkerPath(), { version, changelog: manifest.changelog || '', date: Date.now() });
 		pruneOldVersions(version);
@@ -471,8 +521,22 @@ export function startApply(onProgress) {
 	if (!last_manifest) {
 		return { promise: Promise.reject(new Error('no_update_checked')), cancel() {} };
 	}
+	return startApplyWithManifest(last_manifest, onProgress);
+}
+
+/**
+ * Apply an explicitly supplied manifest (used when installing a specific
+ * version, e.g. a rollback target), sharing the single in-flight operation
+ * with startApply so two downloads can never run at once.
+ */
+export function startApplyVersion(manifest, onProgress) {
+	return startApplyWithManifest(manifest, onProgress);
+}
+
+function startApplyWithManifest(manifest, onProgress) {
+	if (active_apply) return active_apply;
 	const token = { cancelled: false, request: null };
-	const promise = applyUpdate(last_manifest, onProgress, token);
+	const promise = applyUpdate(manifest, onProgress, token);
 	active_apply = {
 		promise,
 		cancel() {
@@ -483,6 +547,117 @@ export function startApply(onProgress) {
 	};
 	promise.finally(() => { active_apply = null; }).catch(() => {});
 	return active_apply;
+}
+
+/** Whether a download/install is currently running. */
+export function isBusy() {
+	return !!active_apply;
+}
+
+/**
+ * Payload versions cached on disk (verified or not), newest first.
+ */
+export function listLocalVersions() {
+	const versions = [];
+	try {
+		const root = payloadRoot();
+		for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+			if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+			const dir = path.join(root, entry.name);
+			if (!fs.existsSync(path.join(dir, 'payload-manifest.json'))) continue;
+			if (!fs.existsSync(path.join(dir, 'index.html'))) continue;
+			let mtime = 0;
+			try { mtime = fs.statSync(dir).mtimeMs; } catch (err) {}
+			versions.push({ version: entry.name, mtime });
+		}
+	} catch (err) {}
+	versions.sort((a, b) => compareVersions(b.version, a.version));
+	return versions;
+}
+
+/**
+ * Every published release that ships a hot-update payload, newest first.
+ * `date`/`notes`/`size` come from the GitHub releases API; the list is cached
+ * in memory and on disk because the unauthenticated API is rate limited.
+ */
+export async function listRemoteVersions(force = false) {
+	if (!force && remote_versions && Date.now() - remote_versions.time < VERSIONS_CACHE_TTL) {
+		return remote_versions.versions;
+	}
+	if (!force) {
+		try {
+			const cached = JSON.parse(fs.readFileSync(versionsCachePath(), 'utf-8'));
+			if (cached && Array.isArray(cached.versions) && Date.now() - cached.time < VERSIONS_CACHE_TTL) {
+				remote_versions = cached;
+				return cached.versions;
+			}
+		} catch (err) {}
+	}
+	const versions = [];
+	for (let page = 1; page <= RELEASES_MAX_PAGES; page++) {
+		const list = await fetchJSON(RELEASES_API_URL + '&page=' + page);
+		if (!Array.isArray(list)) throw new Error('releases_invalid');
+		for (const release of list) {
+			if (release.draft || release.prerelease) continue;
+			const tag = String(release.tag_name || '');
+			if (!tag.startsWith('v')) continue;
+			const version = tag.slice(1);
+			const assets = release.assets || [];
+			if (!assets.some(a => a.name === 'payload-' + version + '.zip')) continue;
+			if (!assets.some(a => a.name === 'update.json')) continue;
+			versions.push({
+				version,
+				date: release.published_at || release.created_at || '',
+				size: (assets.find(a => a.name === 'payload-' + version + '.zip') || {}).size || 0,
+				notes: typeof release.body == 'string' ? release.body.slice(0, 4000) : ''
+			});
+		}
+		if (list.length < 100) break;
+	}
+	versions.sort((a, b) => compareVersions(b.version, a.version));
+	remote_versions = { time: Date.now(), versions };
+	try {
+		fs.mkdirSync(payloadRoot(), { recursive: true });
+		writeJSONAtomic(versionsCachePath(), remote_versions);
+	} catch (err) {}
+	return versions;
+}
+
+/**
+ * Fetch the update manifest published with a specific release, so a rollback
+ * target is verified against the same sha512 the updater would have used.
+ */
+export async function fetchVersionManifest(version) {
+	if (!/^[0-9A-Za-z._-]+$/.test(String(version))) throw new Error('invalid_version');
+	const manifest = await fetchJSON(
+		'https://github.com/TT432/blockbench/releases/download/v' + version + '/update.json'
+	);
+	if (!manifest || String(manifest.version) !== String(version)) throw new Error('manifest_version_mismatch');
+	if (!manifest.payload || !manifest.payload.url || !manifest.payload.sha512) throw new Error('manifest_invalid');
+	if ((manifest.main_version ?? 1) > MAIN_VERSION) throw new Error('main_version_too_new');
+	return manifest;
+}
+
+/**
+ * Switch to a payload version that is already on disk: verify it once (cached
+ * in verified.json), then repoint current.json at it. The caller is
+ * responsible for reloading the windows.
+ */
+export async function activateVersion(version) {
+	if (!/^[0-9A-Za-z._-]+$/.test(String(version))) throw new Error('invalid_version');
+	const dir = path.join(payloadRoot(), version);
+	const index_path = path.join(dir, 'index.html');
+	const manifest_path = path.join(dir, 'payload-manifest.json');
+	if (!fs.existsSync(manifest_path)) throw new Error('payload_manifest_missing');
+	if (!fs.existsSync(index_path)) throw new Error('payload_missing_index');
+	const manifest_sha = await sha512File(manifest_path);
+	const cache = readVerifiedCache();
+	if (cache[version] !== manifest_sha) {
+		await verifyPayloadDir(dir);
+		recordVerified(version, manifest_sha);
+	}
+	writeJSONAtomic(pointerPath(), { version, verified: true, manifest_sha });
+	return { version, index_path };
 }
 
 /**

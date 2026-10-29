@@ -358,7 +358,11 @@ ipcMain.on('bb-update:start', (event) => {
 ipcMain.on('bb-update:cancel', () => {
 	if (active_apply) active_apply.cancel();
 })
-ipcMain.handle('bb-update:reload', async () => {
+/**
+ * Load the currently resolved entry point (payload or builtin) in every window.
+ * Shared by the update flow and by version activation (rollback).
+ */
+async function reloadWindows() {
 	let url_path = url.format({
 		pathname: current_index_path,
 		protocol: 'file:',
@@ -392,9 +396,94 @@ ipcMain.handle('bb-update:reload', async () => {
 		clearNavigationHistory(win);
 	}
 	return current_version;
-})
+}
+ipcMain.handle('bb-update:reload', () => reloadWindows())
 ipcMain.handle('bb-update:take-applied', () => {
 	return PayloadUpdater.takeAppliedUpdate();
+})
+
+/**
+ * Version inventory for the rollback dialog: payload versions cached on disk
+ * (instant switch) plus every published release with a payload (download).
+ */
+ipcMain.handle('bb-update:versions', async () => {
+	let remote = null;
+	let remote_error = null;
+	try {
+		remote = await PayloadUpdater.listRemoteVersions();
+	} catch (err) {
+		remote_error = err && err.message ? err.message : String(err);
+		console.warn('[update] Failed to list published versions:', remote_error);
+	}
+	return {
+		current: current_version,
+		builtin: app.getVersion(),
+		local: PayloadUpdater.listLocalVersions().map(entry => entry.version),
+		remote,
+		remote_error
+	};
+})
+
+/** Point the app at a cached payload version, or at the builtin copy (null). */
+ipcMain.handle('bb-update:activate', async (event, version) => {
+	if (PayloadUpdater.isBusy()) throw new Error('busy');
+	if (version) {
+		const result = await PayloadUpdater.activateVersion(String(version));
+		current_index_path = result.index_path;
+		current_version = result.version;
+		console.log('[update] Activated payload version', result.version);
+	} else {
+		PayloadUpdater.invalidatePayload();
+		current_index_path = path.join(__dirname, './../index.html');
+		current_version = null;
+		console.log('[update] Activated builtin version', app.getVersion());
+	}
+	const icon_path = getWindowIconPath();
+	for (const win of all_wins) {
+		if (win.isDestroyed()) continue;
+		try { win.setIcon(icon_path); } catch (err) {}
+	}
+	return {version: current_version, builtin: !version};
+})
+
+/**
+ * Download and install a specific published version (rollback target).
+ * Progress/done/error events use the same channels as bb-update:start, so the
+ * renderer can reuse its progress dialog and reload flow.
+ */
+ipcMain.on('bb-update:install', async (event, version) => {
+	if (active_apply) return;
+	const send = (channel, data) => {
+		if (!event.sender.isDestroyed()) event.sender.send(channel, data);
+	}
+	let op;
+	try {
+		const manifest = await PayloadUpdater.fetchVersionManifest(String(version));
+		op = PayloadUpdater.startApplyVersion(manifest, progress => send('bb-update:progress', progress));
+	} catch (err) {
+		console.error('[update] Failed to install version', version, ':', err && err.message);
+		send('bb-update:error', {message: err && err.message ? err.message : String(err)});
+		return;
+	}
+	active_apply = op;
+	op.promise.then(result => {
+		current_index_path = result.index_path;
+		current_version = result.version;
+		const icon_path = getWindowIconPath();
+		for (const win of all_wins) {
+			if (win.isDestroyed()) continue;
+			try { win.setIcon(icon_path); } catch (err) {}
+		}
+		console.log('[update] Installed version', result.version);
+		send('bb-update:done', {version: result.version});
+	}).catch(err => {
+		if (err.message !== 'cancelled') {
+			console.error('[update] Install failed:', err.message);
+			send('bb-update:error', {message: err.message});
+		}
+	}).finally(() => {
+		active_apply = null;
+	})
 })
 
 app.on('ready', async () => {
