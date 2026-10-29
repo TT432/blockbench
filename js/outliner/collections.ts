@@ -216,7 +216,11 @@ export class Collection {
 			elements = Outliner.elements.filter(e => !elements.includes(e));
 			groups = Group.all.filter(e => !groups.includes(e));
 		}
+		// 反馈#254：锁定节点（含所在祖先组锁定）不参与批量可见性改写
+		groups = groups.filter(node => !node.isEffectivelyLocked());
+		elements = elements.filter(node => !node.isEffectivelyLocked());
 		let all = groups.concat(elements);
+		if (!all.length) return;
 		let state = all[0]?.visibility != true;
 		Undo.initEdit({groups, elements, element_fields: ['visibility'], group_fields: ['visibility']});
 		all.forEach(node => {
@@ -238,8 +242,8 @@ export class Collection {
 	 */
 	isolateVisibility(): void {
 		let members = new Set(this.getAllChildren());
-		let groups = Group.all.filter(node => typeof node.visibility == 'boolean');
-		let elements = Outliner.elements.filter(node => typeof node.visibility == 'boolean');
+		let groups = Group.all.filter(node => typeof node.visibility == 'boolean' && !node.isEffectivelyLocked());
+		let elements = Outliner.elements.filter(node => typeof node.visibility == 'boolean' && !node.isEffectivelyLocked());
 		if (!groups.length && !elements.length) return;
 		let restore = this.isIsolated();
 		Undo.initEdit({groups, elements, element_fields: ['visibility'], group_fields: ['visibility']});

@@ -748,13 +748,16 @@ export const Vertexsnap = {
 		}
 
 		Vertexsnap.clearVertexGizmos()
+		// Update the exact nodes that transferOrigin may have rewritten (descendant
+		// elements and nested groups), not just the selection: descendant groups get
+		// new origins, so their mesh positions must be refreshed too.
 		let update_options = {
-			elements,
+			elements: transfer_undo_nodes.elements,
 			element_aspects: {transform: true, geometry: true},
 			selection: true
 		};
-		if (Vertexsnap.groups.length) {
-			update_options.groups = Vertexsnap.groups;
+		if (transfer_undo_nodes.groups.length) {
+			update_options.groups = transfer_undo_nodes.groups;
 			update_options.group_aspects = {transform: true};
 		}
 		Canvas.updateView(update_options);

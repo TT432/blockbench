@@ -382,6 +382,12 @@ function setupSettings() {
 
 	new Setting('community_group_outliner', {category: 'community', value: true, onChange: communityGroupOnChange('community_group_outliner')});
 	new Setting('community_animate_group_multi_select', {category: 'community', value: true, group: 'community_group_outliner'});
+	// 反馈#254：锁定元素是否免疫「祖先组隐藏」。开启（默认）时，隐藏组不会连带隐藏组内被锁定的
+	// 子元素——锁定语义取「完全保护」，元素自身的 visibility 标志与渲染可见性都不被祖先改写；
+	// 关闭则回到上游语义（祖先隐藏优先，锁定子元素随组一起消失）。生效点见 outliner.js updateVisibility。
+	new Setting('community_locked_ignore_ancestor_hide', {category: 'community', value: true, group: 'community_group_outliner', onChange() {
+		if (typeof Canvas !== 'undefined') Canvas.updateVisibility();
+	}});
 	// 反馈#154：组隐藏固定级联到全部后代（恢复上游行为），原先的「直属限定」模式已移除。
 	// #130：大纲常驻父子结构树线；关闭后回退为仅选中路径显示（#87 行为）
 	new Setting('community_outliner_tree_lines', {category: 'community', value: true, group: 'community_group_outliner', onChange(value) {

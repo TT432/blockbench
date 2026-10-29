@@ -159,7 +159,8 @@ export abstract class OutlinerNode {
 		return list;
 	}
 	showContextMenu(event) {
-		if (this.locked) return this;
+		// 反馈#254：锁定节点（自身或祖先组锁定）不给右键菜单，避免绕过选择限制
+		if (this.isEffectivelyLocked()) return this;
 		if (!this.selected) {
 			this.clickSelect(event)
 		}

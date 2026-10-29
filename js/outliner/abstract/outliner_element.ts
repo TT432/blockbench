@@ -60,7 +60,7 @@ export abstract class OutlinerElement extends OutlinerNode {
 		return this;
 	}
 	showContextMenu(event: MouseEvent) {
-		if (this.locked) return this;
+		if (this.isEffectivelyLocked()) return this;
 		if (!this.selected) {
 			this.clickSelect(event)
 		}

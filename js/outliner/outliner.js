@@ -429,7 +429,11 @@ export class NodePreviewController extends EventSystem {
 		// 反馈#154：隐藏组时大纲眼睛/可见性开关级联改写全部后代元素的 visibility 标志，
 		// 因此预览可见性只需读自身标志（与上游一致）。
 		// 反馈#254：锁定后代不再被级联改写标志，改由祖先可见性兜底（合批路径不经过场景图继承）。
-		element.mesh.visible = element.visibility && !element.isHiddenByAncestor();
+		// 反馈#254（二次）：设置「锁定元素不受父级隐藏影响」开启时，锁定元素连祖先隐藏也不继承——
+		// 锁定即完全保护；关闭则维持祖先隐藏优先。
+		let hidden_by_ancestor = element.isHiddenByAncestor()
+			&& !(element.isEffectivelyLocked() && settings.community_locked_ignore_ancestor_hide.value);
+		element.mesh.visible = element.visibility && !hidden_by_ancestor;
 
 		this.dispatchEvent('update_visibility', {element});
 	}
@@ -1430,7 +1434,8 @@ BARS.defineActions(function() {
 				})
 				delete Project.only_hidden_elements;
 			} else {
-				let affected = Project.elements.filter(el => typeof el.visibility == 'boolean' && !el.selected && el.visibility);
+				// 反馈#254：独显同样是批量可见性操作，锁定元素（含祖先组锁定）不参与
+				let affected = Project.elements.filter(el => typeof el.visibility == 'boolean' && !el.selected && el.visibility && !el.isEffectivelyLocked());
 				Undo.initEdit({elements: affected, element_fields: ['visibility']})
 				affected.forEach(el => {
 					el.visibility = false;
@@ -1707,8 +1712,10 @@ Interface.definePanels(function() {
 									// 与上游一致级联改写后代标志（后代仍可再单独打开）。
 									if (toggle_config.change_children != false) {
 										node.forEachChild(node => {
-											// 反馈#254：锁定后代不随组级联改写标志
-											if (node.buttons.find(b => b.id == key) && !node.isEffectivelyLocked()) new_affected.push(node)
+											// 反馈#254：锁定后代不随组级联改写标志。
+											// 反馈#260：锁定键必须例外——锁定组时会把 locked 写进全部后代，
+											// 解锁时若仍按「有效锁定」过滤，后代标志永远清不掉（只能逐个手动解锁）。
+											if (node.buttons.find(b => b.id == key) && (key == 'locked' || !node.isEffectivelyLocked())) new_affected.push(node)
 										});
 									}
 								} else if (node.selected && Outliner.selected.length > 1) {
