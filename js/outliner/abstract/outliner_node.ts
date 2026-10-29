@@ -380,6 +380,19 @@ export abstract class OutlinerNode {
 		}
 		return false;
 	}
+	/**
+	 * 祖先组是否已经隐藏了本节点（自身 visibility 标志保持 true）。
+	 * 反馈#254：锁定后代不再随父组级联改写 visibility 标志，预览可见性必须自行考虑祖先隐藏，
+	 * 否则隐藏组后锁定子块仍会渲染（合批路径不经过场景图父子继承）。
+	 */
+	isHiddenByAncestor(): boolean {
+		let parent: OutlinerNode | 'root' | undefined = this.parent;
+		while (parent instanceof OutlinerNode) {
+			if (parent.visibility === false) return true;
+			parent = parent.parent;
+		}
+		return false;
+	}
 	
 
 	get preview_controller(): NodePreviewController {

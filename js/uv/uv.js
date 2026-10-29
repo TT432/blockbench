@@ -365,9 +365,11 @@ export const UVEditor = {
 			let width = (max_x-min_x) / UVEditor.getUVWidth();
 			let height = (max_y-min_y) / UVEditor.getUVHeight();
 			let target_zoom = 1/Math.max(width, height);
-			if (UVEditor.isUVClamped()) {
-				target_zoom = Math.clamp(UVEditor.zoom, target_zoom_factor * 0.618, Math.max(1, target_zoom_factor * 0.84));
-			}
+			// Clamped (limited) textures are handled inside setZoom itself: it clamps
+			// against [min_zoom, max_zoom] and raises the minimum for 64px-clamped textures.
+			// The previous code path here referenced `target_zoom_factor`, a variable that
+			// never existed, so every focus attempt on a limited texture threw a
+			// ReferenceError and left both zoom and scroll untouched.
 			UVEditor.setZoom(target_zoom);
 			await new Promise(Vue.nextTick);
 		}
@@ -3213,9 +3215,15 @@ Interface.definePanels(function() {
 								if (face) texture = face.getTexture() || texture;
 								if (texture) break;
 							}
-						} else if (Modes.paint) {
-							texture = Texture.getDefault();
 						}
+					}
+					// Feedback #258: after an undo the selected elements can come back with empty or
+					// stale face texture references, so nothing resolves to a texture and the panel used
+					// to fall through to `this.texture = 0` — which throws away the texture the user was
+					// painting on. In paint mode always keep a real paint target when one exists. An
+					// explicit "no texture" face (`null`) keeps its meaning.
+					if (!texture && texture !== null && Modes.paint) {
+						texture = Texture.getDefault();
 					}
 					if (texture === null) {
 						this.texture = null;
@@ -3441,7 +3449,10 @@ Interface.definePanels(function() {
 						function dragMouseWheelStop(e) {
 							removeEventListeners(document, 'pointermove', dragMouseWheel);
 							removeEventListeners(document, 'pointerup', dragMouseWheelStop);
-							if (e.which == 3 && Math.pow(viewport.scrollLeft - original[0], 2) + Math.pow(viewport.scrollTop - original[1], 2) > 50) {
+							// Only suppress the context menu when the pointer actually dragged. Measuring the
+							// scroll offset is unreliable: it includes the frame margin offset, so a click with
+							// slight mouse jitter looks like a drag and swallows the context menu.
+							if (e.which == 3 && Math.pow(event.clientX - e.clientX, 2) + Math.pow(event.clientY - e.clientY, 2) > 25) {
 								preventContextMenu();
 							}
 						}

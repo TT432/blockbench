@@ -136,6 +136,8 @@ export class Group extends OutlinerNode {
 					let [from, to] = i1 < i2 ? [i1, i2] : [i2, i1];
 					siblings.slice(from, to + 1).forEach(node => {
 						if (node instanceof Group) {
+							// 反馈#254：锁定组不得被 range 选择直接写入选中态
+							if (node.isEffectivelyLocked()) return;
 							node.selected = true;
 							node.directly_selected = true;
 							Group.multi_selected.safePush(node);
