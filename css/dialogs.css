@@ -2385,6 +2385,48 @@
 		color: inherit;
 	}
 
+/* Version Rollback */
+	ul#bb_rollback_list {
+		margin: 6px 0 0;
+	}
+	ul#bb_rollback_list > li {
+		padding: 3px 6px;
+		cursor: pointer;
+		border: 2px solid transparent;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 8px;
+	}
+	ul#bb_rollback_list > li.current {
+		border-color: var(--color-accent);
+	}
+	ul#bb_rollback_list > li:hover {
+		color: var(--color-light);
+	}
+	ul#bb_rollback_list > li.selected {
+		background-color: var(--color-accent);
+		color: var(--color-accent_text);
+	}
+	#bb_rollback_list > li > span {
+		flex: 2;
+		font-weight: bold;
+	}
+	#bb_rollback_list .bb_rollback_field {
+		color: var(--color-subtle_text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		cursor: inherit;
+		text-align: right;
+	}
+	#bb_rollback_list .bb_rollback_field:nth-child(2) { flex: 2; }
+	#bb_rollback_list .bb_rollback_field:nth-child(3) { flex: 1; }
+	#bb_rollback_list .bb_rollback_field:nth-child(4) { flex: 1.2; }
+	ul#bb_rollback_list > li.selected .bb_rollback_field {
+		color: inherit;
+	}
+
 	ol.pagination_numbers {
 		display: flex;
 		gap: 3px;
