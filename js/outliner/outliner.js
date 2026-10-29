@@ -428,7 +428,8 @@ export class NodePreviewController extends EventSystem {
 	updateVisibility(element) {
 		// 反馈#154：隐藏组时大纲眼睛/可见性开关级联改写全部后代元素的 visibility 标志，
 		// 因此预览可见性只需读自身标志（与上游一致）。
-		element.mesh.visible = element.visibility;
+		// 反馈#254：锁定后代不再被级联改写标志，改由祖先可见性兜底（合批路径不经过场景图继承）。
+		element.mesh.visible = element.visibility && !element.isHiddenByAncestor();
 
 		this.dispatchEvent('update_visibility', {element});
 	}
@@ -822,7 +823,9 @@ export function toggleElementProperty(key) {
 	// 只统计元素会让快捷键「切换可见」对组不生效（组自身标志不变、大纲眼睛不翻转）。
 	let nodes = Outliner.selected.slice();
 	Group.multi_selected.forEach(group => { if (!nodes.includes(group)) nodes.push(group); });
-	let affected = nodes.filter(element => element[key] != undefined);
+	// 反馈#254：锁定节点（自身或祖先组锁定）不受批量属性切换影响。
+	// key = 'locked' 例外：否则锁定后无法再从工具栏解锁。
+	let affected = nodes.filter(element => element[key] != undefined && (key === 'locked' || !element.isEffectivelyLocked()));
 	if (!affected.length) return;
 	var state = affected[0][key];
 	if (typeof state === 'number') {
@@ -837,7 +840,8 @@ export function toggleElementProperty(key) {
 		affected.forEach(element => {
 			if (!(element instanceof Group)) return;
 			element.forEachChild(child => {
-				if (child.visibility != undefined && !affected.includes(child)) descendants.push(child);
+				// 反馈#254：锁定后代不参与级联改写（隐藏父组仍由 three.js 父级 visible 继承生效）
+				if (child.visibility != undefined && !affected.includes(child) && !child.isEffectivelyLocked()) descendants.push(child);
 			});
 		});
 		affected.push(...descendants);
@@ -1083,7 +1087,8 @@ SharedActions.add('select_all', {
 	priority: -2,
 	run() {
 		Undo.initSelection();
-		let selectable_elements = Outliner.elements.filter(element => !element.locked);
+		// 反馈#254：全选须按「有效锁定」（自身或祖先组锁定）排除
+		let selectable_elements = Outliner.elements.filter(element => !element.isEffectivelyLocked());
 		if (Outliner.selected.length < selectable_elements.length) {
 			for (let node of Outliner.root) {
 				if (node instanceof Group) {
@@ -1685,7 +1690,7 @@ Interface.definePanels(function() {
 						if (e2.target.classList.contains('outliner_toggle') && e2.target.getAttribute('toggle') == key) {
 							let [node] = eventTargetToNode(e2.target);
 							if (key == 'visibility' && (e2.altKey || Pressing.overrides.alt) && !affected.length) {
-								let new_affected = Outliner.elements.filter(node => !node.selected);
+								let new_affected = Outliner.elements.filter(node => !node.selected && !node.isEffectivelyLocked());
 								value = !(new_affected[0] && new_affected[0][key]);
 								new_affected.forEach(node => {
 									affected.push(node);
@@ -1695,19 +1700,20 @@ Interface.definePanels(function() {
 								// Update
 								Canvas.updateView({elements: affected, element_aspects: {visibility: true}});
 								
-							} else if (!affected.includes(node) && (!node.locked || key == 'locked' || key == 'visibility')) {
+							} else if (!affected.includes(node) && (!node.isEffectivelyLocked() || key == 'locked')) {
 								let new_affected = [node];
 								if (node.forEachChild) {
 									// 反馈#154：隐藏组必须把全部后代（子组/子块/定位器/骨骼标记…）一并隐藏，
 									// 与上游一致级联改写后代标志（后代仍可再单独打开）。
 									if (toggle_config.change_children != false) {
 										node.forEachChild(node => {
-											if (node.buttons.find(b => b.id == key)) new_affected.push(node)
+											// 反馈#254：锁定后代不随组级联改写标志
+											if (node.buttons.find(b => b.id == key) && !node.isEffectivelyLocked()) new_affected.push(node)
 										});
 									}
 								} else if (node.selected && Outliner.selected.length > 1) {
 									Outliner.selected.forEach(el => {
-										if (el.buttons.find(b => b.id == key)) new_affected.safePush(el);
+										if (el.buttons.find(b => b.id == key) && !el.isEffectivelyLocked()) new_affected.safePush(el);
 									})
 								}
 								new_affected.forEach(node => {
@@ -1718,6 +1724,8 @@ Interface.definePanels(function() {
 								})
 								// Update
 								if (key == 'visibility') {
+									// 锁定后代不在 affected 里，但 GroupPreviewController.updateVisibility
+									// 会 forEachChild 重算全部后代的 mesh 可见性，无需在此展开。
 									Canvas.updateView({elements: affected, element_aspects: {visibility: true}});
 								}
 								if (key == 'locked') updateSelection();
@@ -1762,7 +1770,7 @@ Interface.definePanels(function() {
 					}
 					
 					let [item] = eventTargetToNode(e1.target);
-					if (!item || item.locked || !Modes.edit) {
+					if (!item || item.isEffectivelyLocked() || !Modes.edit) {
 						function off(e2) {
 							removeEventListeners(document, 'mouseup touchend', off);
 							if (e1.target && e1.offsetX > e1.target.clientWidth) return;

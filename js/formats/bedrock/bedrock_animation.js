@@ -41,7 +41,8 @@ export const animation_codec = new AnimationCodec('bedrock', {
 			if (isApp && file.path) {
 				let is_already_loaded = false
 				for (var anim of is_controller ? AnimationController.all : Animation.all) {
-					if (anim.path == file.path && anim.name == key) {
+					// 反馈#257：内部名可能与文件键不同（内部名任意，键为合规导出名），按文件键判定已加载
+					if (anim.path == file.path && (anim.saved_name ?? anim.name) == key) {
 						is_already_loaded = true;
 						break;
 					}
@@ -147,7 +148,11 @@ export const animation_codec = new AnimationCodec('bedrock', {
 					start_delay: multilinify(a.start_delay),
 					loop_delay: multilinify(a.loop_delay),
 					length: a.animation_length
-				}).add()
+				})
+				// 反馈#257：文件键是导出名（可能被替换为合规 ASCII 名），内部名从工程记忆还原
+				let memory_name = Project.memory_animation_names?.find(entry => entry.path == path && entry.key == ani_name);
+				if (memory_name) animation.name = memory_name.name;
+				animation.add()
 				//Bones
 				if (a.bones) {
 					let existing_variables = [

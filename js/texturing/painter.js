@@ -294,6 +294,7 @@ export const Painter = {
 		//Called directly by startPaintToolCanvas and startBrushUV
 
 		delete Painter.paint_stroke_canceled;
+		delete Painter.paint_stroke_moved;
 		if (settings.paint_with_stylus_only.value && !(event.pointerType == 'pen' || event.touches?.[0]?.touchType == 'stylus')) {
 			Painter.paint_stroke_canceled = true;
 			return;
@@ -418,6 +419,10 @@ export const Painter = {
 		Painter.current.y = y;
 		Painter.current.client_mouse_x = event.clientX;
 		Painter.current.client_mouse_y = event.clientY;
+		let start_event = Painter.current.start_event;
+		if (start_event && Math.abs(event.clientX - start_event.clientX) + Math.abs(event.clientY - start_event.clientY) > 2) {
+			Painter.paint_stroke_moved = true;
+		}
 	},
 	stopPaintTool() {
 		PointerTarget.endTarget();
@@ -441,7 +446,8 @@ export const Painter = {
 		if (Toolbox.selected.id == 'gradient_tool' || Toolbox.selected.id == 'draw_shape_tool') {
 			Blockbench.setStatusBarText();
 		}
-		preventContextMenu();
+		if (Painter.paint_stroke_moved) preventContextMenu();
+		delete Painter.paint_stroke_moved;
 		delete Painter.current.alpha_matrix;
 		delete Painter.editing_area;
 		delete Painter.current.cached_canvases;

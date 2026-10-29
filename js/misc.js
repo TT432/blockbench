@@ -157,8 +157,9 @@ export function updateSelection(options = {}) {
 	if (Modes.pose && !Group.first_selected && Outliner.selected[0] && Outliner.selected[0].parent instanceof Group) {
 		Outliner.selected[0].parent.select();
 	}
-	for (let group of Group.multi_selected) {
-		if (group.locked) group.unselect()
+	// 反馈#254：锁定组（含所在祖先组锁定）不得停留在选中态
+	for (let group of Group.multi_selected.slice()) {
+		if (group.isEffectivelyLocked()) group.unselect()
 	}
 	UVEditor.vue._computedWatchers.mappable_elements.run();
 

@@ -76,7 +76,8 @@ export class AnimationControllerState {
 				} else if (typeof a == 'object' || typeof a == 'string') {
 					// Bedrock
 					let key = typeof a == 'object' ? Object.keys(a)[0] : a;
-					let anim_match = Animation.all.find(anim => anim.getShortName() == key);
+					// 反馈#257：内部名可任意、文件键为合规导出名，先按内部短名匹配，再按文件键兜底
+					let anim_match = Animation.all.find(anim => anim.getShortName() == key) ?? Animation.all.find(anim => anim.saved_name == key);
 					Object.assign(animation, {
 						key: key || '',
 						animation: anim_match ? anim_match.uuid : '',// UUID

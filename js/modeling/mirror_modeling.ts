@@ -344,7 +344,7 @@ Blockbench.on('finish_edit', ({aspects}) => {
 		let static_elements_copy = aspects.elements.slice();
 		static_elements_copy.forEach((element) => {
 			let cached_data = MirrorModeling.cached_elements[element.uuid]
-			if (element.allow_mirror_modeling && !element.locked) {
+			if (element.allow_mirror_modeling && !element.isEffectivelyLocked()) {
 				let is_centered = MirrorModeling.isCentered(element);
 
 				if (is_centered && MirrorModeling.element_types[element.type]?.createLocalSymmetry) {

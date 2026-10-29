@@ -165,6 +165,8 @@ export type RecentProjectData = {
 	textures?: string[]
 	texture_sets?: string[]
 	animation_files?: string[]
+	// 反馈#257：动画文件键（导出名）→ 编辑器内部名。导出名必须合规（ASCII），内部名可任意，重开时据此还原
+	animation_names?: {path: string, key: string, name: string}[]
 }
 export function updateRecentProjects() {
 	recent_projects.splice(Math.clamp(settings.recent_projects.value as number, 0, 512));
@@ -215,9 +217,14 @@ export function updateRecentProjectData() {
 
 	if (Format.animation_files) {
 		project.animation_files = [];
+		project.animation_names = [];
 		// @ts-expect-error
 		Animation.all.forEach(anim => {
 			if (anim.path) project.animation_files.safePush(anim.path);
+			// 反馈#257：内部名与文件键不一致时留存映射，供重开该工程时还原内部名
+			if (anim.path && anim.saved_name && anim.saved_name !== anim.name) {
+				project.animation_names.push({path: anim.path, key: anim.saved_name, name: anim.name});
+			}
 		})
 	}
 
@@ -337,7 +344,9 @@ export function loadDataFromModelMemory() {
 			})
 		})
 	}
-	if (project.animation_files && remember.includes('animation_files')) {
+	// 反馈#257：内部名映射（导出名 → 内部名），供加载动画文件时还原；不记忆动画文件时清空，避免跨工程串味
+	Project.memory_animation_names = remember.includes('animation_files') ? (project.animation_names ?? []) : [];
+	if (remember.includes('animation_files') && project.animation_files) {
 		Project.memory_animation_files_to_load = project.animation_files;
 	}
 	Blockbench.dispatchEvent('load_from_recent_project_data', {data: project});
