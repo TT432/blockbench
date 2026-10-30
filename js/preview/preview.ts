@@ -2792,16 +2792,27 @@ BARS.defineActions(function() {
 		click(event) {
 			if (!Project) return;
 			let zoom = this.keybind.additionalModifierTriggered(event, 'zoom');
+			// 反馈#268：绘画模式画笔命中的面（无 UV 面选区时用它代替元素级口径）
+			let focus_face = (Modes.paint && typeof (Painter as any).getFocusFace === 'function') ? (Painter as any).getFocusFace() : null;
 			if (uvEditorActive()) {
-				UVEditor.focusOnSelection(zoom)
+				UVEditor.focusOnSelection(zoom, focus_face)
 
 			} else {
 				let preview = Preview.selected;
 				if (!preview.controls.enabled) return;
 				let center = new THREE.Vector3();
+				let face_box = null;
 				if (!Modes.display) {
-					center.fromArray(getSelectionCenter());
-					center.add(scene.position);
+					let face_vertices = (focus_face && typeof focus_face.element.getFaceWorldVertices === 'function')
+						? focus_face.element.getFaceWorldVertices(focus_face.fkey) : null;
+					if (face_vertices) {
+						// 反馈#268：对焦到画笔所在面（含 inflate/stretch 与骨骼变换）
+						face_box = new THREE.Box3().setFromPoints(face_vertices.map(v => new THREE.Vector3(v[0], v[1], v[2])));
+						center.copy(face_box.getCenter(new THREE.Vector3()));
+					} else {
+						center.fromArray(getSelectionCenter());
+						center.add(scene.position);
+					}
 				} else {
 					Transformer.getWorldPosition(center)
 				}
@@ -2812,7 +2823,7 @@ BARS.defineActions(function() {
 				difference.divideScalar(6);
 
 				if (zoom) {
-					let bounds = Canvas.getSelectionBounds();
+					let bounds = face_box || Canvas.getSelectionBounds();
 					let radius = Math.max(
 						Math.abs(bounds.min.x-center.x), Math.abs(bounds.max.x-center.x),
 						Math.abs(bounds.min.z-center.z), Math.abs(bounds.max.z-center.z),

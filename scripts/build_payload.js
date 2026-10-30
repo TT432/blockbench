@@ -137,9 +137,19 @@ const zip_name = `payload-${version}.zip`;
 const zip_path = path.join(out_dir, zip_name);
 fs.writeFileSync(zip_path, zip);
 
+// 主进程协议版本必须与 electron/payload_updater.js 的 MAIN_VERSION 一致：
+// 写死会导致「payload 用了主进程新能力但清单声明可热更新」（反馈 #267）。
+const updater_source = fs.readFileSync(new URL('../electron/payload_updater.js', import.meta.url), 'utf-8');
+const main_version_match = updater_source.match(/export const MAIN_VERSION = (\d+);/);
+if (!main_version_match) {
+	console.error('[build_payload] cannot read MAIN_VERSION from electron/payload_updater.js');
+	process.exit(1);
+}
+const main_version = Number(main_version_match[1]);
+
 const update_json = {
 	version,
-	main_version: 1,
+	main_version,
 	min_app_version: '5.2.1',
 	changelog,
 	payload: {

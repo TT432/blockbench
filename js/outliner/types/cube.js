@@ -641,6 +641,23 @@ export class Cube extends OutlinerElement {
 			return vec.toArray();
 		})
 	}
+	/**
+	 * 反馈#268：单个面的世界坐标四顶点（含 inflate/stretch、缩放与骨骼变换）。
+	 * 供「选中对焦」在绘画模式下把焦点落到画笔所在面，而不是整块包围盒。
+	 */
+	getFaceWorldVertices(fkey) {
+		let mesh = this.mesh;
+		let face_index = Canvas.face_order.indexOf(fkey);
+		if (!mesh || !mesh.geometry || face_index < 0) return null;
+		let array = mesh.geometry.attributes.position.array;
+		let vec = new THREE.Vector3();
+		let vertices = [];
+		for (let i = face_index * 4; i < face_index * 4 + 4; i++) {
+			vec.set(array[i*3], array[i*3 + 1], array[i*3 + 2]).applyMatrix4(mesh.matrixWorld);
+			vertices.push(vec.toArray());
+		}
+		return vertices;
+	}
 	setUVMode(box_uv) {
 		if (this.box_uv == !!box_uv) return this;
 		this.box_uv = !!box_uv;
