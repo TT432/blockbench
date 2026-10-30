@@ -97,6 +97,20 @@ export const Painter = {
 	mirror_painting: false,
 	lock_alpha: false,
 	erase_mode: false,
+	/** 反馈#268：最近一次绘制命中的面 {element, fkey}，供「选中对焦」使用 */
+	last_painted_face: null,
+	/**
+	 * 反馈#268：绘画模式下「选中对焦」的目标面。返回 null 表示回退到原有元素级口径。
+	 * 只在「命中面仍属于当前选中的元素」时生效，避免切换选择后对焦到旧面。
+	 */
+	getFocusFace() {
+		let focus = this.last_painted_face;
+		if (!focus || !focus.element || !focus.fkey) return null;
+		let {element, fkey} = focus;
+		if (!Project || !Outliner.elements.includes(element)) return null;
+		if (!element.selected || !element.faces || !element.faces[fkey]) return null;
+		return focus;
+	},
 	edit(texture, callback, options) {
 		if (!options.no_undo && !options.no_undo_init) {
 			Undo.initEdit({textures: [texture], bitmap: true})
@@ -211,6 +225,9 @@ export const Painter = {
 		}
 		let [x, y] = Painter.getCanvasToolPixelCoords(data.intersects[0].uv, texture);
 		UVEditor.vue.texture = texture;
+		// 反馈#268：记下本次绘制命中的面。绘画模式不写 UV 面选区（preview.ts 有意跳过），
+		// 「选中对焦」据此把焦点落到画笔所在面，而不是整块/整张 UV 布局。
+		Painter.last_painted_face = {element: data.element, fkey: data.face};
 		Painter.current.control_scale = Preview.selected.calculateControlScale(data.intersects[0].point);
 
 		Painter.startPaintTool(texture, x, y, data.element.faces[data.face].uv, e, data)

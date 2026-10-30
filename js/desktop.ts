@@ -943,6 +943,9 @@ export const UpdateManager = {
 		let detail = err.message || 'unknown';
 		if (detail == 'hash_mismatch') {
 			message_key = 'update.failed.hash_mismatch';
+		} else if (detail == 'main_version_too_new') {
+			// 反馈#267：清单要求更新的主进程，热更新无法补齐，必须安装完整安装包。
+			message_key = 'update.failed.main_version';
 		} else if (detail.startsWith('download_') || detail.startsWith('manifest_http_')) {
 			message_key = 'update.failed.network';
 		} else if (detail.startsWith('extract_failed') || detail.startsWith('payload_')) {
@@ -966,6 +969,22 @@ export const UpdateManager = {
 			inventory = await ipcRenderer.invoke('bb-update:versions');
 		} catch (err) {
 			console.error('[update] Failed to read the version list', err);
+			let detail = String(err instanceof Error ? err.message : err);
+			// 反馈#267：payload 热更新只替换渲染层。旧安装包的主进程没有回滚 IPC，
+			// 此时 invoke 直接报 No handler registered —— 必须引导用户装完整安装包，
+			// 而不是给出「无法读取版本列表」这种无解提示。
+			if (detail.includes('No handler registered')) {
+				Blockbench.showMessageBox({
+					title: 'update.rollback_failed',
+					message: 'update.rollback_needs_installer',
+					icon: 'info',
+					buttons: ['update.download_latest', 'dialog.cancel'],
+					cancel: 1
+				}, (button: number) => {
+					if (button == 0) shell.openExternal('https://github.com/TT432/blockbench/releases/latest');
+				});
+				return;
+			}
 			Blockbench.showMessageBox({
 				title: 'update.rollback_failed',
 				message: 'update.rollback_list_failed',

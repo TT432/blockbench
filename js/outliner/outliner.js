@@ -431,8 +431,12 @@ export class NodePreviewController extends EventSystem {
 		// 反馈#254：锁定后代不再被级联改写标志，改由祖先可见性兜底（合批路径不经过场景图继承）。
 		// 反馈#254（二次）：设置「锁定元素不受父级隐藏影响」开启时，锁定元素连祖先隐藏也不继承——
 		// 锁定即完全保护；关闭则维持祖先隐藏优先。
-		let hidden_by_ancestor = element.isHiddenByAncestor()
-			&& !(element.isEffectivelyLocked() && settings.community_locked_ignore_ancestor_hide.value);
+		// 反馈#265：祖先隐藏判定只对「级联被跳过」的锁定元素兜底。未锁定节点的标志一定被级联
+		// 改写，可见性只能由自身标志决定——否则隐藏父组后再单独打开子节点眼睛永远不生效
+		// （上游语义：打开眼睛的元素即使父级隐藏也可显示）。
+		let hidden_by_ancestor = element.isEffectivelyLocked()
+			&& element.isHiddenByAncestor()
+			&& !settings.community_locked_ignore_ancestor_hide.value;
 		element.mesh.visible = element.visibility && !hidden_by_ancestor;
 
 		this.dispatchEvent('update_visibility', {element});

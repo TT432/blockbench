@@ -20,8 +20,12 @@ import zlib from 'node:zlib'
 /**
  * Version of the main-process update protocol. Manifests requiring a higher
  * main_version cannot be applied as hot updates and fall back to a full install.
+ *
+ * 2 — v5.3.73 增加版本回滚：bb-update:versions / bb-update:activate / bb-update:install
+ *     与 bb-update:reload 的载荷切换都只在主进程里，payload 热更新无法补齐
+ *     （反馈 #267：5.3.72 安装包 + 新渲染层 payload 时回滚入口必然报「无法读取版本列表」）。
  */
-export const MAIN_VERSION = 1;
+export const MAIN_VERSION = 2;
 
 export const DEFAULT_MANIFEST_URL = 'https://github.com/TT432/blockbench/releases/latest/download/update.json';
 export const RELEASES_PAGE_URL = 'https://github.com/TT432/blockbench/releases/latest';

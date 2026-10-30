@@ -1007,9 +1007,37 @@ Blockbench.on('finish_edit', event => {
 })
 
 
+/**
+ * 反馈#266：动画剪贴板内容必须能在**另一个工程**里还原。
+ * getUndoCopy 的 animators 以骨骼/元素的 uuid 作键，跨工程时 uuid 全部失配（粘贴出的
+ * 动画没有任何关键帧绑定）；这里把键换成可移植的骨骼/元素名（粘贴时 Animation.extend
+ * 会按名字回查目标工程的节点），并去掉本工程专有的身份与文件路径。
+ */
+Animation.getPortableCopy = function(animation) {
+	let copy = animation.getUndoCopy();
+	delete copy.uuid;
+	delete copy.path;
+	delete copy.saved;
+	if (copy.animators) {
+		let portable_animators = {};
+		for (let key in copy.animators) {
+			let animator_blueprint = copy.animators[key];
+			let target = null;
+			if (key != 'effects') {
+				target = Group.all.find(group => group.uuid == key) || Outliner.elements.find(element => element.uuid == key);
+			}
+			portable_animators[target ? target.name : key] = animator_blueprint;
+		}
+		copy.animators = portable_animators;
+	}
+	return copy;
+}
 Clipbench.setAnimation = function() {
 	if (!Animation.selected && !AnimationController.selected) return;
-	Clipbench.animation = AnimationItem.selected.getUndoCopy();
+	// 反馈#266：动画走可移植序列化（getUndoCopy 里没有 type 字段，不能靠 type 判定）。
+	Clipbench.animation = AnimationItem.selected instanceof Animation
+		? Animation.getPortableCopy(AnimationItem.selected)
+		: AnimationItem.selected.getUndoCopy();
 
 	if (isApp) {
 		clipboard.writeHTML(JSON.stringify({type: 'animation', content: Clipbench.animation}));

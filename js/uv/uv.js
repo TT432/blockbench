@@ -355,11 +355,13 @@ export const UVEditor = {
 		}
 		this.vue.selection_outline = outline;
 	},
-	async focusOnSelection(zoom) {
+	async focusOnSelection(zoom, focus_face = null) {
 		if (zoom instanceof Event) {
 			zoom = BarItems.focus_on_selection.keybind.additionalModifierTriggered(zoom, 'zoom');
 		}
-		let [min_x, min_y, max_x, max_y] = this.vue.getSelectedUVBoundingBox(true);
+		// 反馈#268：绘画模式没有 UV 面选区，画笔所在面由调用方通过 focus_face 传入，
+		// 否则会退化成「整块全部面」（box_uv/多岛模型上焦点跑到别处）。
+		let [min_x, min_y, max_x, max_y] = this.vue.getSelectedUVBoundingBox(true, focus_face);
 		if (min_x == Infinity) return;
 		if (zoom) {
 			let width = (max_x-min_x) / UVEditor.getUVWidth();
@@ -4512,13 +4514,16 @@ Interface.definePanels(function() {
 						return this.mappable_elements[0].getSelectedFaces().length > 0;
 					}
 				},
-				getSelectedUVBoundingBox(all_faces) {
+				getSelectedUVBoundingBox(all_faces, focus_face) {
 					if (!Project) return [0, 0, 0, 0];
 					let min = [Infinity, Infinity];
 					let max = [-Infinity, -Infinity];
 					this.mappable_elements.forEach(element => {
 						let faces = UVEditor.getSelectedFaces(element);
-						if ((element instanceof Cube && element.box_uv) || (all_faces && !faces.length)) {
+						if (focus_face && focus_face.element === element && !(element instanceof Cube && element.box_uv)) {
+							// 反馈#268：绘画模式按画笔命中的面取包围盒（box_uv 方块整块共用 UV，保持整块口径）
+							faces = [focus_face.fkey];
+						} else if ((element instanceof Cube && element.box_uv) || (all_faces && !faces.length)) {
 							faces = Object.keys(element.faces);
 						}
 						faces.forEach(fkey => {
