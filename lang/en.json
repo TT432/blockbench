@@ -1204,6 +1204,8 @@
 	"settings.community_group_outliner.desc": "Master switch for community outliner features. When off, all features in this group are temporarily disabled (each member's own toggle state is preserved and restored when re-enabled).",
 	"settings.community_animate_group_multi_select": "Multi-Select Groups in Animate Mode",
 	"settings.community_animate_group_multi_select.desc": "Allows Ctrl/Shift multi-selection of groups in animate mode and same-level shift range selection. When off, clicking a group in animate mode always single-selects (stock behavior).",
+	"settings.community_locked_ignore_ancestor_hide": "Locked Elements Ignore Group Hiding",
+	"settings.community_locked_ignore_ancestor_hide.desc": "When a group is hidden, locked elements inside it stay visible (lock means full protection). When off, reverts to stock behavior: the hidden ancestor wins and locked elements disappear with the group.",
 	"settings.community_outliner_tree_lines": "Always Show Tree Lines",
 	"settings.community_outliner_tree_lines.desc": "Entries with children always show a hierarchy guide line in the outliner. When off, lines only show along the selected path (stock behavior).",
 	"settings.community_group_animations": "Animations",
