@@ -369,7 +369,10 @@ export const Clipbench = {
 		} else if (Outliner.selected[0]) {
 			target = Outliner.selected[0]
 		}
-		Outliner.selected.length = 0
+		// 反馈#262：只清 Outliner.selected（元素数组）不足以取消选中——组的选中由
+		// Group.multi_selected 与各节点的 selected 标记维护，残留会让粘贴后旧选中的组
+		// 仍显示为选中。走正规的取消选中流程（同时重置 selected/UV 面选中）。
+		unselectAllElements()
 		if (isApp) {
 			let raw = clipboard.readHTML()
 			try {

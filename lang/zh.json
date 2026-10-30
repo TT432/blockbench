@@ -222,6 +222,8 @@
 	"settings.community_group_outliner.desc": "大纲相关社区版功能的总开关。关闭时组内功能全部临时失效（各成员自身的开关状态保留，重新开启后恢复）。",
 	"settings.community_animate_group_multi_select": "动画模式组多选",
 	"settings.community_animate_group_multi_select.desc": "允许在动画模式下 Ctrl/Shift 多选组，以及同层级 Shift 范围选择。关闭后动画模式点击组始终单选（原版行为）。",
+	"settings.community_locked_ignore_ancestor_hide": "锁定元素免疫组隐藏",
+	"settings.community_locked_ignore_ancestor_hide.desc": "隐藏组时，组内被锁定的元素仍保持可见（锁定取完全保护语义）。关闭后回到原版行为：隐藏的祖先组优先生效，锁定元素随组一起消失。",
 	"settings.community_outliner_tree_lines": "常驻父子结构树线",
 	"settings.community_outliner_tree_lines.desc": "大纲中所有带子级的条目常驻显示层级竖线。关闭后仅选中路径显示（原版行为）。",
 	"settings.community_group_animations": "动画",
