@@ -1031,18 +1031,29 @@ export class Texture {
 	uvAreaHasTranslucency(u0, v0, u1, v1) {
 		if (this.render_mode == 'additive') return true;
 		let {data, width, height} = this.getAlphaData();
-		// UV units map to texels isotropically; for flipbook strips this covers the
-		// first frame only (later frames unscanned -> conservative default behavior).
-		let factor = width / (this.uv_width || width);
-		let x0 = Math.max(0, Math.floor(Math.min(u0, u1) * factor));
-		let x1 = Math.min(width, Math.ceil(Math.max(u0, u1) * factor));
-		let y0 = Math.max(0, Math.floor(Math.min(v0, v1) * factor));
-		let y1 = Math.min(height, Math.ceil(Math.max(v0, v1) * factor));
-		for (let y = y0; y < y1; y++) {
-			let row = y * width;
-			for (let x = x0; x < x1; x++) {
-				let a = data[row + x];
-				if (a > 0 && a < 255) return true;
+		// UV 单位按各自轴映射到 texel：u 按 uv_width、v 按单帧高度。
+		// flipbook 贴图是「多帧竖直堆叠」，面 uv 是帧局部坐标，必须逐帧平移后再扫；
+		// 这里扫全部帧取并集——判定与当前播放帧无关，任一帧含半透明即算半透明。
+		// （反馈#243：只扫第 0 帧会把「帧0 不透明、后续帧半透明」的方块判成不透明，
+		// 被合批进 transparent:false 批次后透明区域整片变成不透明。）
+		let frames = Math.max(1, this.frameCount || 1);
+		let frame_height = height / frames;
+		let factor_x = width / (this.uv_width || width);
+		let factor_y = frame_height / (this.uv_height || frame_height);
+		let x0 = Math.max(0, Math.floor(Math.min(u0, u1) * factor_x));
+		let x1 = Math.min(width, Math.ceil(Math.max(u0, u1) * factor_x));
+		let vy0 = Math.max(0, Math.floor(Math.min(v0, v1) * factor_y));
+		let vy1 = Math.min(frame_height, Math.ceil(Math.max(v0, v1) * factor_y));
+		if (x1 <= x0 || vy1 <= vy0) return false;
+		for (let frame = 0; frame < frames; frame++) {
+			let y0 = Math.max(0, Math.floor(frame * frame_height + vy0));
+			let y1 = Math.min(height, Math.ceil(frame * frame_height + vy1));
+			for (let y = y0; y < y1; y++) {
+				let row = y * width;
+				for (let x = x0; x < x1; x++) {
+					let a = data[row + x];
+					if (a > 0 && a < 255) return true;
+				}
 			}
 		}
 		return false;
