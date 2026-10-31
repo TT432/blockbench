@@ -388,6 +388,13 @@ function setupSettings() {
 	new Setting('community_locked_ignore_ancestor_hide', {category: 'community', value: true, group: 'community_group_outliner', onChange() {
 		if (typeof Canvas !== 'undefined') Canvas.updateVisibility();
 	}});
+	// 反馈#265（二次）：锁定是否冻结可见性操作。开启（默认，#254 语义）时，被锁定（含祖先组锁定）的
+	// 元素不受大纲眼睛、可见性快捷键、集合显隐切换影响——锁定即完全保护；关闭后锁定只阻止选择与
+	// 变换，可见性操作照常作用到锁定元素（上游语义）。生效点：outliner.js toggleElementProperty /
+	// dragToggle / updateVisibility，collections.ts toggleVisibility / isolateVisibility。
+	new Setting('community_lock_blocks_visibility', {category: 'community', value: true, group: 'community_group_outliner', onChange() {
+		if (typeof Canvas !== 'undefined') Canvas.updateVisibility();
+	}});
 	// 反馈#154：组隐藏固定级联到全部后代（恢复上游行为），原先的「直属限定」模式已移除。
 	// #130：大纲常驻父子结构树线；关闭后回退为仅选中路径显示（#87 行为）
 	new Setting('community_outliner_tree_lines', {category: 'community', value: true, group: 'community_group_outliner', onChange(value) {
@@ -424,6 +431,9 @@ function setupSettings() {
 	}});
 
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
+	// 反馈#271：基岩版导出时把不合规名称自动换成合规名称（骨骼/定位器/动画/动画控制器），
+	// 关闭后按原名称导出、不弹名称报告。生效点见 export_names.js buildBedrockExportNames()。
+	new Setting('community_bedrock_export_rename', {category: 'community', value: true});
 	// 反馈#193/#200：工具栏六个「旋转 X/Y/Z 轴 90°」按钮以什么为枢轴。
 	// 关闭（默认，上游行为）= 居中网格格式绕世界原点、骨架构架绕首个选中组枢轴、其余绕首个选中元素枢轴；
 	// 开启 = 每个被旋转的子树绕自身枢轴自转（选组绕该组枢轴、选单个方块绕该方块 origin）。

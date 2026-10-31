@@ -21,6 +21,7 @@ import { loadModelFile } from "../io/io";
 import { OutlinerElement } from "./abstract/outliner_element";
 import { OutlinerNode } from "./abstract/outliner_node";
 import { ScopeColors } from "../multi_file_editing";
+import { settings } from "../interface/settings";
 
 export interface CollectionOptions {
 	children?: string[]
@@ -217,8 +218,11 @@ export class Collection {
 			groups = Group.all.filter(e => !groups.includes(e));
 		}
 		// 反馈#254：锁定节点（含所在祖先组锁定）不参与批量可见性改写
-		groups = groups.filter(node => !node.isEffectivelyLocked());
-		elements = elements.filter(node => !node.isEffectivelyLocked());
+		// 反馈#265（二次）：关闭「锁定冻结可见性」后，锁定节点重新参与集合显隐改写
+		if (settings.community_lock_blocks_visibility.value) {
+			groups = groups.filter(node => !node.isEffectivelyLocked());
+			elements = elements.filter(node => !node.isEffectivelyLocked());
+		}
 		let all = groups.concat(elements);
 		if (!all.length) return;
 		let state = all[0]?.visibility != true;
@@ -242,8 +246,9 @@ export class Collection {
 	 */
 	isolateVisibility(): void {
 		let members = new Set(this.getAllChildren());
-		let groups = Group.all.filter(node => typeof node.visibility == 'boolean' && !node.isEffectivelyLocked());
-		let elements = Outliner.elements.filter(node => typeof node.visibility == 'boolean' && !node.isEffectivelyLocked());
+		let include_locked = !settings.community_lock_blocks_visibility.value;
+		let groups = Group.all.filter(node => typeof node.visibility == 'boolean' && (include_locked || !node.isEffectivelyLocked()));
+		let elements = Outliner.elements.filter(node => typeof node.visibility == 'boolean' && (include_locked || !node.isEffectivelyLocked()));
 		if (!groups.length && !elements.length) return;
 		let restore = this.isIsolated();
 		Undo.initEdit({groups, elements, element_fields: ['visibility'], group_fields: ['visibility']});

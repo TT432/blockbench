@@ -543,7 +543,13 @@ export const Canvas = {
 			})
 		}
 		if (options.groups) {
-			Canvas.updateAllBones(options.groups)
+			// 反馈#270：仅可见性变化时不重算骨骼变换。updateAllBones 会把 mesh 的位置/旋转/缩放
+			// 按元素自身的 origin/rotation/scale 重写，而动画姿态只存在于 mesh 上（不回写元素数据），
+			// 于是被更新的组会掉回基础姿态——动画模式下一帧就会重放姿态所以看不出来，从动画模式
+			// 进入绘画模式后再切换集合显隐就会表现为「集合内组的动画姿态归零」。
+			let group_aspects = options.group_aspects;
+			let needs_transform = !group_aspects || Object.keys(group_aspects).some(key => key != 'visibility' && group_aspects[key]);
+			if (needs_transform) Canvas.updateAllBones(options.groups)
 			for (let group of options.groups) {
 				group.preview_controller.updateVisibility(group);
 			}

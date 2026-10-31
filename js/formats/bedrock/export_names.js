@@ -73,12 +73,34 @@ function collectNodes(getter) {
 	}
 }
 
-function createDomain(nodes, domain_label, fallback) {
+function createDomain(nodes, domain_label, fallback, auto_rename = true) {
 	const used = new Set();
 	const map = new Map();
 	const byName = new Map();
 	const renamed = [];
 	const sorted = nodes.slice().sort(sortByUuid);
+
+	if (!auto_rename) {
+		// 反馈#271：关闭自动规范化时按原名称导出——不做合规替换，也不做唯一性消解
+		for (let node of sorted) {
+			map.set(node.uuid, node.name);
+			if (!byName.has(node.name)) byName.set(node.name, node.name);
+			used.add(node.name);
+		}
+		return {
+			map,
+			byName,
+			used,
+			renamed,
+			get(uuid, internal_name) {
+				if (map.has(uuid)) return map.get(uuid);
+				return typeof internal_name == 'string' ? internal_name : fallback;
+			},
+			byInternalName(internal_name) {
+				return typeof internal_name == 'string' ? internal_name : fallback;
+			},
+		};
+	}
 
 	// 第一轮：已合规的名称原样保留（避免因为别人的改名而被动改名）
 	for (let node of sorted) {
@@ -131,16 +153,19 @@ function shortNameOf(exported_full_name, fallback) {
  * 构建一次导出使用的完整名称映射
  */
 export function buildBedrockExportNames() {
-	const bones = createDomain(collectNodes(() => Group.all), 'bone', 'bone');
+	// 反馈#271：设置「基岩版导出：自动规范化名称」关闭时，四类名称全部按原样导出（不做不合规替换，
+	// 也不产生改名报告）。短名称表仍按实际导出名计算。
+	const auto_rename = typeof settings == 'undefined' || settings.community_bedrock_export_rename?.value !== false;
+	const bones = createDomain(collectNodes(() => Group.all), 'bone', 'bone', auto_rename);
 	const locators = createDomain(collectNodes(() => {
 		let list = [...(typeof Locator != 'undefined' ? Locator.all : [])];
 		if (typeof NullObject != 'undefined') list.push(...NullObject.all);
 		return list;
-	}), 'locator', 'locator');
-	const animations = createDomain(collectNodes(() => Animation.all), 'animation', 'animation');
+	}), 'locator', 'locator', auto_rename);
+	const animations = createDomain(collectNodes(() => Animation.all), 'animation', 'animation', auto_rename);
 	const controllers = createDomain(collectNodes(() => {
 		return typeof AnimationController != 'undefined' ? AnimationController.all : [];
-	}), 'controller', 'controller');
+	}), 'controller', 'controller', auto_rename);
 
 	const animation_short_by_name = new Map();
 	const animation_short_by_uuid = new Map();

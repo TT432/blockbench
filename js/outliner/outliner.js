@@ -436,7 +436,9 @@ export class NodePreviewController extends EventSystem {
 		// （上游语义：打开眼睛的元素即使父级隐藏也可显示）。
 		let hidden_by_ancestor = element.isEffectivelyLocked()
 			&& element.isHiddenByAncestor()
-			&& !settings.community_locked_ignore_ancestor_hide.value;
+			&& !settings.community_locked_ignore_ancestor_hide.value
+			// 反馈#265（二次）：关闭「锁定冻结可见性」后，锁定元素的标志重新参与级联，自身标志即权威
+			&& settings.community_lock_blocks_visibility.value;
 		element.mesh.visible = element.visibility && !hidden_by_ancestor;
 
 		this.dispatchEvent('update_visibility', {element});
@@ -826,6 +828,15 @@ export function stopRenameOutliner(save) {
 		Outliner.search_filter_snapshot = null;
 	}
 }
+/**
+ * 反馈#265（二次）：锁定是否冻结可见性操作（设置 community_lock_blocks_visibility）。
+ * 开启（默认，#254 语义）时锁定元素（含祖先组锁定）不受大纲眼睛 / 可见性快捷键 / 集合显隐影响；
+ * 关闭后锁定只阻止选择与变换，可见性操作照常生效（上游语义）。locked 键本身永远可操作，
+ * 否则锁定后无法解锁。
+ */
+function lockedEditable(key) {
+	return key === 'locked' || (key === 'visibility' && !settings.community_lock_blocks_visibility.value);
+}
 export function toggleElementProperty(key) {
 	// 反馈#167：Outliner.selected 只含元素，组在 Group.multi_selected 中；
 	// 只统计元素会让快捷键「切换可见」对组不生效（组自身标志不变、大纲眼睛不翻转）。
@@ -833,7 +844,7 @@ export function toggleElementProperty(key) {
 	Group.multi_selected.forEach(group => { if (!nodes.includes(group)) nodes.push(group); });
 	// 反馈#254：锁定节点（自身或祖先组锁定）不受批量属性切换影响。
 	// key = 'locked' 例外：否则锁定后无法再从工具栏解锁。
-	let affected = nodes.filter(element => element[key] != undefined && (key === 'locked' || !element.isEffectivelyLocked()));
+	let affected = nodes.filter(element => element[key] != undefined && (!element.isEffectivelyLocked() || lockedEditable(key)));
 	if (!affected.length) return;
 	var state = affected[0][key];
 	if (typeof state === 'number') {
@@ -849,7 +860,8 @@ export function toggleElementProperty(key) {
 			if (!(element instanceof Group)) return;
 			element.forEachChild(child => {
 				// 反馈#254：锁定后代不参与级联改写（隐藏父组仍由 three.js 父级 visible 继承生效）
-				if (child.visibility != undefined && !affected.includes(child) && !child.isEffectivelyLocked()) descendants.push(child);
+				// 反馈#265（二次）：关闭「锁定冻结可见性」后，锁定后代重新参与级联。
+				if (child.visibility != undefined && !affected.includes(child) && (!child.isEffectivelyLocked() || lockedEditable(key))) descendants.push(child);
 			});
 		});
 		affected.push(...descendants);
@@ -1699,7 +1711,7 @@ Interface.definePanels(function() {
 						if (e2.target.classList.contains('outliner_toggle') && e2.target.getAttribute('toggle') == key) {
 							let [node] = eventTargetToNode(e2.target);
 							if (key == 'visibility' && (e2.altKey || Pressing.overrides.alt) && !affected.length) {
-								let new_affected = Outliner.elements.filter(node => !node.selected && !node.isEffectivelyLocked());
+								let new_affected = Outliner.elements.filter(node => !node.selected && (!node.isEffectivelyLocked() || lockedEditable(key)));
 								value = !(new_affected[0] && new_affected[0][key]);
 								new_affected.forEach(node => {
 									affected.push(node);
@@ -1709,7 +1721,7 @@ Interface.definePanels(function() {
 								// Update
 								Canvas.updateView({elements: affected, element_aspects: {visibility: true}});
 								
-							} else if (!affected.includes(node) && (!node.isEffectivelyLocked() || key == 'locked')) {
+							} else if (!affected.includes(node) && (!node.isEffectivelyLocked() || lockedEditable(key))) {
 								let new_affected = [node];
 								if (node.forEachChild) {
 									// 反馈#154：隐藏组必须把全部后代（子组/子块/定位器/骨骼标记…）一并隐藏，
@@ -1719,12 +1731,12 @@ Interface.definePanels(function() {
 											// 反馈#254：锁定后代不随组级联改写标志。
 											// 反馈#260：锁定键必须例外——锁定组时会把 locked 写进全部后代，
 											// 解锁时若仍按「有效锁定」过滤，后代标志永远清不掉（只能逐个手动解锁）。
-											if (node.buttons.find(b => b.id == key) && (key == 'locked' || !node.isEffectivelyLocked())) new_affected.push(node)
+											if (node.buttons.find(b => b.id == key) && (!node.isEffectivelyLocked() || lockedEditable(key))) new_affected.push(node)
 										});
 									}
 								} else if (node.selected && Outliner.selected.length > 1) {
 									Outliner.selected.forEach(el => {
-										if (el.buttons.find(b => b.id == key) && !el.isEffectivelyLocked()) new_affected.safePush(el);
+										if (el.buttons.find(b => b.id == key) && (!el.isEffectivelyLocked() || lockedEditable(key))) new_affected.safePush(el);
 									})
 								}
 								new_affected.forEach(node => {

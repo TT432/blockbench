@@ -967,6 +967,10 @@ export const BBAnimation = Animation;
 			Blockbench.read([id], {}, files => {
 				AnimationCodec.getCodec()?.importFile(files[0]);
 			})
+		}},
+		// 反馈#269：整组复制（组内全部动画 + 动画控制器），可在另一个工程里用粘贴还原
+		{name: 'menu.animation_file.copy_group', icon: 'content_copy', click(id) {
+			Clipbench.setAnimationGroup(id, 'file');
 		}}
 	])
 	Animation.prototype.group_menu = new Menu([
@@ -981,6 +985,10 @@ export const BBAnimation = Animation;
 				animation.group_name = new_group_name;
 			})
 			Undo.finishEdit('Unload animation file', {animations: []});
+		}},
+		// 反馈#269：整组复制（自定义分组的全部动画），可在另一个工程里用粘贴还原
+		{name: 'menu.animation_group.copy_group', icon: 'content_copy', click(group_name) {
+			Clipbench.setAnimationGroup(group_name, 'custom');
 		}}
 	])
 	new Property(Animation, 'boolean', 'saved', {default: true, condition: () => Format.animation_files})
@@ -1043,17 +1051,87 @@ Clipbench.setAnimation = function() {
 		clipboard.writeHTML(JSON.stringify({type: 'animation', content: Clipbench.animation}));
 	}
 }
+/**
+ * 反馈#269：整组复制。按文件分组时 key = 动画文件路径（动画 + 控制器），按自定义分组时
+ * key = group_name（控制器没有自定义分组，仍按文件归组）。载荷里每个动画都是可移植副本。
+ */
+Animation.getPortableGroup = function(group_key, group_kind) {
+	group_key = group_key || '';
+	let is_file_group = group_kind == 'file';
+	let animations = Animation.all
+		.filter(animation => (is_file_group ? (animation.path || '') : (animation.group_name || '')) == group_key)
+		.map(animation => Animation.getPortableCopy(animation));
+	let animation_controllers = [];
+	if (is_file_group) {
+		AnimationController.all.filter(controller => (controller.path || '') == group_key).forEach(controller => {
+			// 与动画同样处理：去掉本工程的身份与文件路径，粘贴时落到目标工程的「未保存」组
+			let copy = controller.getUndoCopy();
+			delete copy.uuid;
+			delete copy.path;
+			delete copy.saved;
+			animation_controllers.push(copy);
+		});
+	}
+	if (!animations.length && !animation_controllers.length) return null;
+	let label;
+	if (is_file_group) {
+		let file_name = group_key.split(/[\\/]/).last() || '';
+		label = file_name.replace(/\.(animation|animation_controllers)\.json$/i, '') || 'Unsaved';
+	} else {
+		label = group_key || 'Unsaved';
+	}
+	return {
+		type: 'animation_group',
+		group_kind: group_kind,
+		group_name: label,
+		animations,
+		animation_controllers,
+	};
+}
+Clipbench.setAnimationGroup = function(group_key, group_kind) {
+	let payload = Animation.getPortableGroup(group_key, group_kind);
+	if (!payload) return;
+	Clipbench.last_copied = Clipbench.types.animation;
+	Clipbench.animation = payload;
+	if (isApp) {
+		clipboard.writeHTML(JSON.stringify({type: 'animation_group', content: payload}));
+	}
+}
 Clipbench.pasteAnimation = function() {
 	if (isApp) {
 		var raw = clipboard.readHTML()
 		try {
 			var data = JSON.parse(raw)
-			if (data.type === 'animation' && data.content) {
+			if ((data.type === 'animation' || data.type === 'animation_group') && data.content) {
 				Clipbench.animation = data.content
 			}
 		} catch (err) {}
 	}
 	if (!Clipbench.animation || !Format.animation_mode) return;
+
+	// 反馈#269：整组粘贴——目标工程按自定义分组时沿用原组名，按文件分组时落到「未保存」组，
+	// 由用户决定存成哪个动画文件。
+	if (Clipbench.animation.type == 'animation_group') {
+		let payload = Clipbench.animation;
+		let animations = [];
+		let animation_controllers = [];
+		let is_custom_group = Format.animation_grouping == 'custom' && payload.group_kind != 'file';
+		Undo.initEdit({animations, animation_controllers});
+		(payload.animations || []).forEach(data => {
+			let animation = new Animation(data).add(false);
+			if (is_custom_group) animation.group_name = payload.group_name;
+			if (Format.animation_files) animation.saved = false;
+			animation.createUniqueName();
+			animations.push(animation);
+		});
+		(payload.animation_controllers || []).forEach(data => {
+			let animation_controller = new AnimationController(data).add(false);
+			if (Format.animation_files) animation_controller.saved = false;
+			animation_controllers.push(animation_controller);
+		});
+		Undo.finishEdit('Paste animation group');
+		return;
+	}
 
 	if (Clipbench.animation.type == 'animation_controller') {
 		let animation_controllers = [];
