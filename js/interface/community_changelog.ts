@@ -10,6 +10,13 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.3.79',
+		date: '2026-11-01',
+		changes: [
+			'移除帮助菜单中的「社区版新功能追加」入口：该入口打开的功能表格与「社区版功能」手册重复，后续功能说明统一看「社区版功能」与「社区版更新日志」',
+		],
+	},
+	{
 		version: '5.3.78',
 		date: '2026-11-01',
 		changes: [
