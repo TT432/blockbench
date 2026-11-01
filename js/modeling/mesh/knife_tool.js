@@ -583,6 +583,39 @@ export class KnifeToolCubeContext {
 	get axis_letter() {
 		return getAxisLetter(this.axis);
 	}
+	/**
+	 * 反馈#273：方块贴图网格在模型单位下的步长（每个纹素一格）。
+	 * 返回按局部空间轴索引的步长数组；取不到贴图或 UV 信息时返回 null（退回画布网格）。
+	 */
+	getTextureGridSteps(face_key) {
+		let face = this.cube.faces[face_key];
+		if (!face || !face.uv) return null;
+		let texture = face.getTexture() || Texture.getDefault();
+		if (!texture || !texture.width) return null;
+		let uv_width = Project.getUVWidth(texture);
+		let uv_height = Project.getUVHeight(texture) || uv_width;
+		if (!uv_width || !uv_height) return null;
+		// 1 uv 单位对应的纹理像素数（纹素 = 1 像素）
+		let pixels_per_u = texture.width / uv_width;
+		let pixels_per_v = (texture.display_height || texture.height || texture.width) / uv_height;
+		let u = (face.uv[0] + face.uv[2]) / 2;
+		let v = (face.uv[1] + face.uv[3]) / 2;
+		let base = face.UVToLocal([u, v]);
+		if (!base) return null;
+		let steps = [0, 0, 0];
+		[[face.UVToLocal([u + 1, v]).sub(base), pixels_per_u],
+		 [face.UVToLocal([u, v + 1]).sub(base), pixels_per_v]].forEach(([step, pixels_per_uv]) => {
+			if (!step || !(pixels_per_uv > 0)) return;
+			let length = step.length() / pixels_per_uv;
+			if (!(length > 1e-6)) return;
+			let axis = 0;
+			let abs = [Math.abs(step.x), Math.abs(step.y), Math.abs(step.z)];
+			if (abs[1] > abs[axis]) axis = 1;
+			if (abs[2] > abs[axis]) axis = 2;
+			steps[axis] = length;
+		});
+		return steps.some(step => step > 0) ? steps : null;
+	}
 	hover(data) {
 		if (!data || data.element instanceof Cube == false) {
 			if (this.cross_mesh.parent) {
@@ -602,8 +635,14 @@ export class KnifeToolCubeContext {
 			let snap = canvasGridSize(data.event?.shiftKey || Pressing.overrides.shift, data.event?.ctrlOrCmd || Pressing.overrides.ctrl);
 			let modified_from = this.cube.from.slice().V3_subtract(this.cube.inflate).V3_subtract(this.cube.origin);
 
-			this.first_point[getAxisLetter(off_axes[0])] = Math.round((this.first_point[getAxisLetter(off_axes[0])] - modified_from[off_axes[0]]) / snap) * snap + modified_from[off_axes[0]];
-			this.first_point[getAxisLetter(off_axes[1])] = Math.round((this.first_point[getAxisLetter(off_axes[1])] - modified_from[off_axes[1]]) / snap) * snap + modified_from[off_axes[1]];
+			// 反馈#273：默认按方块自身贴图网格吸附（每个纹素一格，原点取方块几何边而非枢轴）。
+			// 按住 Shift 时仍用画布网格（旧行为）对齐。
+			let texture_steps = (data.event?.shiftKey || Pressing.overrides.shift) ? null : this.getTextureGridSteps(this.face);
+			off_axes.forEach(axis => {
+				let letter = getAxisLetter(axis);
+				let step = (texture_steps && texture_steps[axis] > 0) ? texture_steps[axis] : snap;
+				this.first_point[letter] = Math.round((this.first_point[letter] - modified_from[axis]) / step) * step + modified_from[axis];
+			});
 
 		} else if (this.cube) {
 			this.mesh_3d.add(this.preview_mesh);

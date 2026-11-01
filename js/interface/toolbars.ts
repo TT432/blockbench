@@ -21,6 +21,7 @@ export interface ToolbarRegistry {
 	element_stretch: Toolbar
 	element_origin: Toolbar
 	element_rotation: Toolbar
+	flip_plane: Toolbar
 	brush: Toolbar
 	vertex_snap: Toolbar
 	seam_tool: Toolbar
@@ -578,6 +579,18 @@ export const BARS = {
 				'slider_rotation_z',
 				'fixed_world_position',
 				'rotation_slider_local_axis_lock',
+			]
+		})
+		// 反馈#276：翻转轴面偏移（默认 0 = 画布中心）+ 以块中心为翻转轴面
+		Toolbars.flip_plane = new Toolbar({
+			id: 'flip_plane',
+			name: 'panel.element.flip_plane',
+			label: true,
+			children: [
+				'slider_flip_plane_x',
+				'slider_flip_plane_y',
+				'slider_flip_plane_z',
+				'flip_plane_to_center',
 			]
 		})
 		if (Blockbench.isMobile) {

@@ -608,6 +608,7 @@ Group.addBehaviorOverride({
 		'add_all_to_timeline',
 		'add_locator',
 		new MenuSeparator('manage'),
+		'setup_smart_mirror_group',
 		'create_smart_object',
 		'edit_smart_object',
 		'demote_smart_object',

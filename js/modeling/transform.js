@@ -1,7 +1,33 @@
 import { Canvas } from "../preview/canvas";
+import { gizmo_colors } from "../preview/preview";
 import { autoFixMeshEdit } from "./mesh/auto_fix";
 import { getEditTransformSpace } from "./transform/edit_transform";
+import { FollowSpace, FOLLOW_SPACE } from "./follow_space";
 import { rotateEulerBy90 } from "../util/math_util";
+
+/**
+ * 反馈#276：翻转/镜像轴面。
+ * 工具栏「翻转 X/Y/Z」原本固定绕画布中心镜像（`Format.centered_grid ? 0 : 8`）。这里给每条轴
+ * 加一个偏移滑条（默认 0 = 画布中心），滑条改动时视口画出对应的轴面，翻转动作按移动后的轴面镜像。
+ * 偏移值就是相对画布中心的模型坐标距离。
+ */
+export const FlipPlane = {
+	offset: [0, 0, 0],
+	/** 元素数据空间里该轴镜像面的坐标（与 mirrorSelected 传给 flip() 的 center 同空间） */
+	position(axis) {
+		return (Format.centered_grid ? 0 : 8) + this.offset[axis];
+	},
+	/**
+	 * 场景坐标。非居中网格下模型的 X/Z 原点在场景 (8, 0, 8)、Y 直接等于模型坐标，
+	 * 因此 X/Z 轴的轴面场景坐标就是偏移本身，Y 轴还要加上画布中心。
+	 */
+	scenePosition(axis) {
+		return axis === 1 ? this.position(1) : this.offset[axis];
+	},
+	reset() {
+		this.offset[0] = this.offset[1] = this.offset[2] = 0;
+	},
+}
 
 //Actions
 export function getSelectionCenter(all = false) {
@@ -450,13 +476,15 @@ export function mirrorSelected(axis) {
 			outliner: Format.bone_rig || Group.first_selected,
 			selection: true
 		});
-		let center = Format.centered_grid ? 0 : 8;
+		// 反馈#276：镜像面取滑条偏移后的翻转轴面（偏移为 0 时就是原来的画布中心）
+		let center = FlipPlane.position(axis);
 		if (Format.bone_rig) {
 			for (let group of Group.multi_selected) {
 				function flipGroup(group) {
 					for (let i = 0; i < 3; i++) {
 						if (i === axis) {
-							group.origin[i] *= -1
+							// 骨骼格式的原点坐标本来就是居中的（画布中心 = 0），轴面偏移直接叠加
+							group.origin[i] = FlipPlane.offset[axis] * 2 - group.origin[i]
 						} else {
 							group.rotation[i] *= -1
 						}
@@ -1243,6 +1271,18 @@ export function rotateOnAxis(modify, axis, slider, lock_local_axis = false) {
 			lock_local_axis = false;
 		}
 	}
+	// 反馈#275：跟随空间——旋转轴取跟随源的自身轴（与自身轴锁定同一套换算，只是参考元素换成源）。
+	// 滑条输入的读数是所选元素自己的分量，无法换算成绕源的转角，因此只接管 gizmo 拖动。
+	if (!slider && BarItems.rotation_space?.value == 'follow') {
+		let reference = FollowSpace.getReference();
+		if (reference) {
+			let old_value = reference.rotation[axis];
+			let angle = modify(old_value) - old_value;
+			axis = getLocalAxisInWorld(reference, axis);
+			modify = () => angle;
+			slider = false;
+		}
+	}
 	var axis_letter = getAxisLetter(axis)
 	var origin = things[0].origin
 	things.forEach(function(obj, i) {
@@ -1450,22 +1490,27 @@ BARS.defineActions(function() {
 			global: true,
 			parent: true,
 			local: true,
+			// 反馈#275：第四种空间「跟随」——轴向取 Ctrl 选定的跟随源（见 FollowSpace）
+			follow: {condition: {modes: ['edit']}, name: true},
 			normal: {condition: () => Mesh.selected.length || SplineMesh.selected.length, name: true}
 		},
 		onChange() {
+			FollowSpace.syncHint();
 			updateSelection();
 		}
 	})
 	new BarSelect('rotation_space', {
-		condition: {modes: ['edit', 'animate', 'pose'], tools: ['rotate_tool']},
+		condition: {modes: ['edit', 'animate'], tools: ['rotate_tool']},
 		category: 'transform',
 		value: 'local',
 		options: {
 			global: 'action.transform_space.global',
 			parent: 'action.transform_space.parent',
-			local: 'action.transform_space.local'
+			local: 'action.transform_space.local',
+			follow: {condition: {modes: ['edit']}, name: true}
 		},
 		onChange() {
+			FollowSpace.syncHint();
 			updateSelection();
 		}
 	})
@@ -2005,6 +2050,16 @@ BARS.defineActions(function() {
 	slider_vector_stretch.forEach(slider => slider.slider_vector = slider_vector_stretch);
 
 	//Rotation
+	/**
+	 * 反馈#280：旋转滑条的绝对赋值（复制/粘贴向量、重置向量）。
+	 * 滑条的 `change` 传的是增量函数，自身轴锁定与局部空间会把它解释成「绕当前自身轴再转 N 度」，
+	 * 三个轴依次转还会各自绕当时的局部轴，粘贴出来的姿态与粘贴值不符。
+	 * 绝对赋值走 rotateOnAxis 的直写分支（slider = true、不传锁定），把该轴欧拉值直接设为 N。
+	 */
+	function setRotationComponentAbsolute(axis, value) {
+		rotateOnAxis(() => value, axis, true, false)
+		Canvas.updatePositions()
+	}
 	new NumSlider('slider_rotation_x', {
 		name: tl('action.slider_rotation', ['X']),
 		description: tl('action.slider_rotation.desc', ['X']),
@@ -2023,6 +2078,9 @@ BARS.defineActions(function() {
 		change: function(modify) {
 			rotateOnAxis(modify, 0, true, toggle_rotation_axis_lock.value)
 			Canvas.updatePositions()
+		},
+		setAbsolute: function(value) {
+			setRotationComponentAbsolute(0, value)
 		},
 		onBefore: function() {
 			// 编号68：固定世界位置打开时 undo 范围扩展到被补偿的后代（getRotationUndoAspects）
@@ -2053,6 +2111,9 @@ BARS.defineActions(function() {
 			rotateOnAxis(modify, 1, true, toggle_rotation_axis_lock.value)
 			Canvas.updatePositions()
 		},
+		setAbsolute: function(value) {
+			setRotationComponentAbsolute(1, value)
+		},
 		onBefore: function() {
 			// 编号68：固定世界位置打开时 undo 范围扩展到被补偿的后代（getRotationUndoAspects）
 			Undo.initEdit(getRotationUndoAspects())
@@ -2082,6 +2143,9 @@ BARS.defineActions(function() {
 			rotateOnAxis(modify, 2, true, toggle_rotation_axis_lock.value)
 			Canvas.updatePositions()
 		},
+		setAbsolute: function(value) {
+			setRotationComponentAbsolute(2, value)
+		},
 		onBefore: function() {
 			// 编号68：固定世界位置打开时 undo 范围扩展到被补偿的后代（getRotationUndoAspects）
 			Undo.initEdit(getRotationUndoAspects())
@@ -2100,6 +2164,98 @@ BARS.defineActions(function() {
 		default: false,
 		category: 'transform',
 		condition: () => ((Modes.edit || Modes.pose) && getRotationObjects()),
+	})
+
+	// 反馈#276：翻转轴面偏移滑条 + 轴面可视化 + 「以块中心为翻转轴面」
+	let flip_plane_group = null;
+	let flip_plane_grids = [];
+	function updateFlipPlaneVisual() {
+		if (!Canvas.scene) return;
+		if (!flip_plane_group) {
+			let size = 16 * 16;
+			let colors = [gizmo_colors.r, gizmo_colors.g, gizmo_colors.b];
+			// X/Z 轴的轴面与绘画镜像的提示面同款（GridHelper 默认躺在 XZ 平面）
+			flip_plane_grids = colors.map((color, axis) => {
+				let grid = new THREE.GridHelper(size, 32, new THREE.LineBasicMaterial({
+					color,
+					transparent: true,
+					opacity: 0.45,
+					depthWrite: false,
+				}));
+				if (axis === 0) grid.rotation.z = Math.PI / 2;
+				if (axis === 2) grid.rotation.x = Math.PI / 2;
+				grid.visible = false;
+				return grid;
+			});
+			flip_plane_group = new THREE.Group();
+			flip_plane_group.name = 'flip_plane';
+			flip_plane_grids.forEach(grid => flip_plane_group.add(grid));
+			Canvas.scene.add(flip_plane_group);
+			Canvas.gizmos.push(flip_plane_group);
+		}
+		flip_plane_grids.forEach((grid, axis) => {
+			// 偏移为 0（画布中心）时不画，避免默认视角被三个面糊住；改过数值才出现并跟随移动
+			let visible = FlipPlane.offset[axis] != 0;
+			grid.visible = visible;
+			if (!visible) return;
+			grid.position.set(0, 0, 0);
+			grid.position.setComponent(axis, FlipPlane.scenePosition(axis));
+		});
+	}
+	function updateFlipPlaneSliders() {
+		['slider_flip_plane_x', 'slider_flip_plane_y', 'slider_flip_plane_z'].forEach(id => {
+			if (BarItems[id]) BarItems[id].update();
+		});
+	}
+	function setFlipPlaneOffset(axis, value) {
+		FlipPlane.offset[axis] = value;
+		updateFlipPlaneVisual();
+	}
+	let flip_plane_sliders = [0, 1, 2].map(axis => new NumSlider('slider_flip_plane_' + 'xyz'[axis], {
+		name: tl('action.slider_flip_plane', ['XYZ'[axis]]),
+		description: 'action.slider_flip_plane.desc',
+		color: 'xyz'[axis],
+		category: 'transform',
+		condition: () => Modes.edit,
+		get: function() {
+			return FlipPlane.offset[axis];
+		},
+		change: function(modify) {
+			setFlipPlaneOffset(axis, modify(FlipPlane.offset[axis]));
+			updateFlipPlaneVisual();
+		},
+		setAbsolute: function(value) {
+			setFlipPlaneOffset(axis, value);
+			updateFlipPlaneVisual();
+		},
+	}));
+	flip_plane_sliders.forEach(slider => slider.slider_vector = flip_plane_sliders);
+
+	new Action('flip_plane_to_center', {
+		name: 'action.flip_plane_to_center',
+		description: 'action.flip_plane_to_center.desc',
+		icon: 'filter_center_focus',
+		category: 'transform',
+		condition: {modes: ['edit'], method: () => !!(Outliner.selected.length || Group.first_selected)},
+		click() {
+			let nodes = Outliner.selected.slice();
+			if (Group.first_selected) nodes.push(Group.first_selected);
+			// 多轴旋转过的元素没有确定的镜像面：翻转只按欧拉分量取反，绕自身中心镜像会得到歪斜结果
+			let multi_axis = nodes.find(node => node.rotation && node.rotation.filter(n => Math.abs(n) > 1e-6).length > 1);
+			if (multi_axis) {
+				Blockbench.showQuickMessage(tl('message.flip_plane_center.multi_axis'), 2500);
+				return;
+			}
+			let center = getSelectionCenter();
+			if (!center) return;
+			let base = Format.centered_grid ? 0 : 8;
+			for (let axis = 0; axis < 3; axis++) {
+				FlipPlane.offset[axis] = Math.round((center[axis] - base) * 1000) / 1000;
+			}
+			updateFlipPlaneVisual();
+			updateFlipPlaneSliders();
+			Blockbench.showQuickMessage(tl('message.flip_plane_center.set'));
+		}
 	})
 
 	// 编号68：固定世界位置——打开后旋转组时，内部块/组的世界位置保持不变（旋转值相应吸收逆旋转）
@@ -2839,6 +2995,7 @@ Object.assign(window, {
 	rotateSelected,
 	flipNameOnAxis,
 	mirrorSelected,
+	FlipPlane,
 	centerElements,
 	moveElementsInSpace,
 	changeNodeLocalPosition,

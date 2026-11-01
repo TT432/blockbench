@@ -41,6 +41,9 @@ Interface.definePanels(function() {
 			attached_index: 1,
 			sidebar_index: 2,
 		},
+		toolbars: [
+			Toolbars.flip_plane,
+		],
 		form: new InputForm({})
 	})
 	function updateElementForm() {

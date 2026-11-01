@@ -41,6 +41,10 @@ constructor ( object, preview ) {
 	this.autoRotate = false;
 	this.autoRotateSpeed = 2.0; // 30 seconds per round when fps is 60
 	this.enableKeys = true;
+	// #278：导航（旋转/平移/缩放）进行中标志。相机正在被拖动时，光标下的悬停目标会随相机
+	// 变化立即失效，逐次射线拾取 + 全量高亮刷新（大模型上各 10ms 量级、且 Mesh 每次重传
+	// highlight 属性）没有意义却会挤占帧时间，表现为拖拽视角时高频掉帧。
+	this.navigating = false;
 	// The four arrow keys
 	this.keys = { LEFT: 37, UP: 38, RIGHT: 39, BOTTOM: 40 };
 	// Mouse buttons
@@ -629,6 +633,7 @@ constructor ( object, preview ) {
 
 		if ( state !== STATE.NONE ) {
 
+			scope.navigating = true;
 			document.addEventListener( 'mousemove', onMouseMove, false );
 			document.addEventListener( 'mouseup', onMouseUp, false );
 			scope.dispatchEvent( startEvent );
@@ -671,6 +676,7 @@ constructor ( object, preview ) {
 
 		document.removeEventListener( 'mousemove', onMouseMove, false );
 		document.removeEventListener( 'mouseup', onMouseUp, false );
+		scope.navigating = false;
 		scope.dispatchEvent( endEvent );
 		state = STATE.NONE;
 
@@ -744,6 +750,7 @@ constructor ( object, preview ) {
 
 		if ( state !== STATE.NONE ) {
 
+			scope.navigating = true;
 			scope.dispatchEvent( startEvent );
 
 		}
@@ -789,6 +796,7 @@ constructor ( object, preview ) {
 	function onTouchEnd( event ) {
 
 		if ( scope.isEnabled() === false ) return;
+		scope.navigating = false;
 		scope.dispatchEvent( endEvent );
 		state = STATE.NONE;
 		scope.hasMoved = false;

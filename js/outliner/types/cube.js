@@ -1484,9 +1484,10 @@ new NodePreviewController(Cube, {
 		if (mesh.geometry.attributes.highlight.array[0] != highlighted) {
 			mesh.geometry.attributes.highlight.array.set(Array(mesh.geometry.attributes.highlight.count).fill(highlighted));
 			mesh.geometry.attributes.highlight.needsUpdate = true;
+			// #278：只在悬停/选中状态真的变化时才派发。每次 mousemove 对全部元素无条件派发
+			// 会为每个元素分配一次事件对象，大模型（数千元素）上既耗时不菲又制造 GC 压力。
+			this.dispatchEvent('update_highlight', {element});
 		}
-
-		this.dispatchEvent('update_highlight', {element});
 	},
 	updatePixelGrid(cube) {
 		var mesh = cube.mesh;

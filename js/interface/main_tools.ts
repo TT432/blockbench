@@ -2,6 +2,7 @@ import { resizeWindow, setZoomLevel } from "./interface";
 import { Filesystem } from "../file_system";
 import { currentwindow, ipcRenderer } from "../native_apis";
 import { BARS } from './toolbars'
+import { FollowSpace } from "../modeling/follow_space";
 
 
 BARS.defineActions(() => {
@@ -67,6 +68,12 @@ BARS.defineActions(() => {
 		alt_tool: 'resize_tool',
 		modes: ['edit', 'display', 'animate', 'pose'],
 		keybind: new Keybind({key: 'v'}),
+		onSelect() {
+			FollowSpace.syncHint();
+		},
+		onUnselect() {
+			Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.set_follow_source');
+		},
 	})
 	new Tool('resize_tool', {
 		icon: 'open_with',
@@ -104,6 +111,12 @@ BARS.defineActions(() => {
 		alt_tool: 'pivot_tool',
 		modes: ['edit', 'display', 'animate', 'pose'],
 		keybind: new Keybind({key: 'r'}),
+		onSelect() {
+			FollowSpace.syncHint();
+		},
+		onUnselect() {
+			Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.set_follow_source');
+		},
 	})
 	new Tool('pivot_tool', {
 		icon: 'gps_fixed',

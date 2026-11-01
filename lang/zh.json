@@ -3281,5 +3281,20 @@
 	"start_screen.bluesky.text": "在 Bluesky 关注 Blockbench，获取最新资讯与社区优秀模型！[@blockbench.net](https://bsky.app/profile/blockbench.net)",
 	"start_screen.discord.title": "Discord 服务器",
 	"start_screen.discord.text": "需要建模帮助，或想聊聊 Blockbench？加入官方 [Blockbench Discord](https://discord.gg/WVHg5kH)！",
-	"bounding_box.function": "功能"
+	"bounding_box.function": "功能",
+	"action.slider_flip_plane": "翻转轴面 %0",
+	"action.slider_flip_plane.desc": "翻转/镜像使用的轴面位置（相对画布中心的偏移），0 表示画布中心",
+	"action.flip_plane_to_center": "轴面对齐所选中心",
+	"action.flip_plane_to_center.desc": "把三个翻转轴面移动到所选内容的中心（多轴旋转过的块没有确定的镜像面，会被拒绝）",
+	"message.flip_plane_center.multi_axis": "所选内容中有多轴旋转过的块，无法确定镜像面",
+	"message.flip_plane_center.set": "已把翻转轴面移动到所选中心",
+	"panel.element.flip_plane": "翻转轴面",
+	"action.smart_mirror": "设为智能镜像组",
+	"message.smart_mirror.already_set": "该组已经是智能镜像组",
+	"message.smart_mirror.name_suffix": "%0（镜像）",
+	"message.smart_mirror.created": "已创建镜像组：%0",
+	"action.transform_space.follow": "跟随",
+	"modifier_actions.set_follow_source": "设置跟随源",
+	"message.follow.source_set": "跟随源：%0",
+	"message.follow.source_locked": "跟随源不可移动或旋转，请先取消选择跟随源"
 }

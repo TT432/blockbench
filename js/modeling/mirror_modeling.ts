@@ -32,9 +32,13 @@ export const MirrorModeling = {
 	createClone(original: OutlinerElement, undo_aspects: UndoAspects) {
 		// Create or update clone
 		let options = BarItems.mirror_modeling.tool_config.options;
-		let mirror_uv = options.mirror_uv;
+		// 反馈#274：智能镜像组要求两侧共用同一块 UV 纹理——固定不镜像 UV，且 UV 编辑
+		// 从源元素同步（而不是保留副本自己编辑前的 UV）。
+		let cached_data = MirrorModeling.cached_elements[original.uuid];
+		let keep_uv_from_source = cached_data?.keep_uv_from_source === true;
+		let mirror_uv = keep_uv_from_source ? false : options.mirror_uv;
 		let center = Format.centered_grid ? 0 : 8;
-		let mirror_element = MirrorModeling.cached_elements[original.uuid]?.counterpart;
+		let mirror_element = cached_data?.counterpart;
 		let element_type_options = MirrorModeling.element_types[original.type];
 		let element_before_snapshot;
 
@@ -52,7 +56,7 @@ export const MirrorModeling = {
 				color: element_before_snapshot.color
 			});
 			if (!mirror_uv && element_type_options.maintainUV) {
-				element_type_options.maintainUV(mirror_element, element_before_snapshot)
+				element_type_options.maintainUV(mirror_element, keep_uv_from_source ? original : element_before_snapshot)
 			}
 			if (element_type_options.updateCounterpart) {
 				element_type_options.updateCounterpart(original, mirror_element, {
@@ -344,8 +348,11 @@ Blockbench.on('finish_edit', ({aspects}) => {
 		let static_elements_copy = aspects.elements.slice();
 		static_elements_copy.forEach((element) => {
 			let cached_data = MirrorModeling.cached_elements[element.uuid]
+			// 反馈#274：智能镜像组的配对由 SmartMirrorGroup 统一同步，这里跳过避免翻两次
+			if (cached_data?.smart_pair) return;
 			if (element.allow_mirror_modeling && !element.isEffectivelyLocked()) {
-				let is_centered = MirrorModeling.isCentered(element);
+				// 缓存里已有配对（智能镜像组 / 本次编辑开始时判定过）时以缓存为准
+				let is_centered = cached_data ? cached_data.is_centered : MirrorModeling.isCentered(element);
 
 				if (is_centered && MirrorModeling.element_types[element.type]?.createLocalSymmetry) {
 					// Complete other side of mesh
@@ -376,7 +383,10 @@ Blockbench.on('finish_edit', ({aspects}) => {
 		let selected_groups = aspects.groups ?? [aspects.group];
 
 		selected_groups.forEach(group => {
-			let mirror_group = MirrorModeling.cached_elements[group.uuid]?.counterpart;
+			let cached_data = MirrorModeling.cached_elements[group.uuid];
+			// 反馈#274：智能镜像组的组级同步由 SmartMirrorGroup.finishEdit 处理
+			if (cached_data?.smart_pair) return;
+			let mirror_group = cached_data?.counterpart;
 			if (mirror_group && Group.all.includes(mirror_group)) {
 				let before_snapshot = mirror_group.getChildlessCopy();
 				before_snapshot.uuid = mirror_group.uuid;

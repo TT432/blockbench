@@ -593,9 +593,9 @@ new NodePreviewController(Billboard, {
 		if (mesh.geometry.attributes.highlight.array[0] != highlighted) {
 			mesh.geometry.attributes.highlight.array.set(Array(mesh.geometry.attributes.highlight.count).fill(highlighted));
 			mesh.geometry.attributes.highlight.needsUpdate = true;
+			// #278：仅在状态变化时派发（见 Cube.preview_controller.updateHighlight）
+			this.dispatchEvent('update_highlight', {element});
 		}
-
-		this.dispatchEvent('update_highlight', {element});
 	},
 	updatePaintingGrid(cube) {
 		return;

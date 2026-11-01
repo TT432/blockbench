@@ -3499,5 +3499,20 @@
 	"start_screen.bluesky.text": "Follow Blockbench on Bluesky for the latest news & cool models from the community! [@blockbench.net](https://bsky.app/profile/blockbench.net)",
 	"start_screen.discord.title": "Discord Server",
 	"start_screen.discord.text": "You need help with modeling or you want to chat about Blockbench? Join the official [Blockbench Discord](https://discord.gg/WVHg5kH)!",
-	"bounding_box.function": "Function"
+	"bounding_box.function": "Function",
+	"action.slider_flip_plane": "Flip Plane %0",
+	"action.slider_flip_plane.desc": "Position of the flip/mirror plane (offset from the canvas center), 0 is the canvas center",
+	"action.flip_plane_to_center": "Align Flip Planes to Selection",
+	"action.flip_plane_to_center.desc": "Move the three flip planes to the center of the selection (rejected for elements rotated on multiple axes)",
+	"message.flip_plane_center.multi_axis": "The selection contains elements rotated on multiple axes, so the mirror plane is ambiguous",
+	"message.flip_plane_center.set": "Flip planes moved to the selection center",
+	"panel.element.flip_plane": "Flip Planes",
+	"action.smart_mirror": "Set Up Smart Mirror Group",
+	"message.smart_mirror.already_set": "This group is already a smart mirror group",
+	"message.smart_mirror.name_suffix": "%0 (mirror)",
+	"message.smart_mirror.created": "Created mirror group: %0",
+	"action.transform_space.follow": "Follow",
+	"modifier_actions.set_follow_source": "Set Follow Source",
+	"message.follow.source_set": "Follow source: %0",
+	"message.follow.source_locked": "The follow source cannot be moved or rotated. Deselect it first"
 }

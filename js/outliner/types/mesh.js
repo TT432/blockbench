@@ -1693,31 +1693,39 @@ new NodePreviewController(Mesh, {
 			!force_off
 		) ? 1 : 0;
 
-		let array = new Array(mesh.geometry.attributes.highlight.count).fill(highlighted);
+		// #278：直接写入既有属性数组并逐项比较，未变化时不上传缓冲、不派发事件。
+		// 原实现对每个 Mesh 每次 mousemove 都新建等长数组（getSelectedFaces 也每次都调）
+		// 并重传 highlight 属性；自由模型常有上万顶点，会持续制造 GPU 上传与 GC 压力。
+		let attribute = mesh.geometry.attributes.highlight;
+		let array = attribute.array;
+		let changed = false;
+		let mark_selected = !force_off && element.selected && Modes.edit;
 		let selection_mode = BarItems.selection_mode.value;
-		let selected_faces = element.getSelectedFaces();
-		
-		if (!force_off && element.selected && Modes.edit) {
-			let i = 0;
-			let faces = element.faces;
-			for (let fkey in faces) {
-				let face = faces[fkey];
-				if (face.vertices.length < 3) continue;
-				if (selected_faces.indexOf(fkey) != -1 && (selection_mode == 'face' || selection_mode == 'cluster')) {
-					for (let j = 0; j < face.vertices.length; j++) {
-						array[i] = 2;
-						i++;
-					}
-				} else {
-					i += face.vertices.length;
+		let selected_faces = mark_selected ? element.getSelectedFaces() : null;
+		let i = 0;
+		for (let fkey in element.faces) {
+			let face = element.faces[fkey];
+			if (face.vertices.length < 3) continue;
+			let face_value = (selected_faces && (selection_mode == 'face' || selection_mode == 'cluster') && selected_faces.indexOf(fkey) != -1) ? 2 : highlighted;
+			for (let j = 0; j < face.vertices.length; j++) {
+				if (array[i] !== face_value) {
+					array[i] = face_value;
+					changed = true;
 				}
+				i++;
+			}
+		}
+		for (; i < array.length; i++) {
+			if (array[i] !== highlighted) {
+				array[i] = highlighted;
+				changed = true;
 			}
 		}
 
-		mesh.geometry.attributes.highlight.array.set(array);
-		mesh.geometry.attributes.highlight.needsUpdate = true;
-
-		this.dispatchEvent('update_highlight', {element});
+		if (changed) {
+			attribute.needsUpdate = true;
+			this.dispatchEvent('update_highlight', {element});
+		}
 	},
 	updatePixelGrid(element) {
 		var mesh = element.mesh;

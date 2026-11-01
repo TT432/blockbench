@@ -9,6 +9,7 @@ import { CSS3DRenderer } from '../lib/CSS3DRenderer';
 import { PointerTarget } from '../interface/pointer_target';
 import { unselectInterface } from '../interface/interface';
 import { sameMeshEdge } from '../modeling/mesh/util';
+import { FollowSpace } from '../modeling/follow_space';
 
 const background_scene = new THREE.Scene();
 const background_camera = new THREE.PerspectiveCamera(45, 1, 1, 10);
@@ -1062,6 +1063,8 @@ export class Preview {
 		let is_canvas_click = Keybinds.extra.preview_select.keybind.key == event.which || event.button === 0 || (Modes.paint && Keybinds.extra.paint_secondary_color.keybind.isTriggered(event));
 
 		let _data = is_canvas_click && this.raycast(event);
+		// 反馈#275：跟随空间下 Ctrl+点击设置跟随源（不再当作选择处理）
+		if (_data && FollowSpace.pickSource(event as MouseEvent, _data)) return true;
 		if (_data) {
 			let data = _data as RaycastResult;
 			this.selection.click_target = data;
@@ -1486,6 +1489,11 @@ export class Preview {
 		}
 	}
 	mousemove(event: MouseEvent) {
+		// #278：相机导航（旋转/平移/缩放）进行中不做悬停拾取与高亮刷新。拖拽视角时光标下
+		// 的目标随相机每帧变化，结果用完即失效；而大模型（自由模型常有上万顶点的 Mesh）
+		// 上逐次射线拾取与全量 highlight 属性重传会挤占帧时间，表现为高频短掉帧。
+		// 松手后的下一次 mousemove 会立刻恢复正常的悬停反馈。
+		if (this.controls.navigating) return;
 		let data = this.raycast(event);
 		if (Settings.get('highlight_cubes')) {
 			Canvas.updateCubeHighlights(data && data.element);

@@ -1,5 +1,6 @@
 import { TransformerModule } from "./transform_modules";
 import { getParentTransformSpace, getPivotObjects, getRotationObjects, getSelectedMovingElements, getGroupTransferOriginUndoNodes, getRotationUndoAspects, moveElementsInSpace, getSmartInstanceTransformGroup, scaleSmartInstance, getAxisLockReference, getLocalAxisInWorld, moveSelectionInWorldAxis } from "../transform";
+import { FollowSpace, FOLLOW_SPACE } from "../follow_space";
 
 function getSmartScaleBasis(group) {
 	let min = [Infinity, Infinity, Infinity];
@@ -65,6 +66,10 @@ export function getEditTransformSpace() {
 	if (input_space === 'normal' && (Mesh.selected.length || SplineMesh.selected.length)) {
 		// Local Space
 		return 3;
+	}
+	if (input_space === 'follow') {
+		// 反馈#275：跟随空间——有源时按源的自身轴向变换（FOLLOW_SPACE），没有源时退回全局空间
+		return FollowSpace.getReference() ? FOLLOW_SPACE : 0;
 	}
 	if (input_space === 'parent' || (input_space !== 'global' && Format.bone_rig)) {
 		// Parent Space (also resolves outside bone_rig formats)
@@ -171,7 +176,10 @@ new TransformerModule('edit', {
 		// 只影响 gizmo 的朝向；实际位移/旋转的轴向由 onMove 里的锁分支决定，不改变不可见路径的空间判定。
 		const axis_lock_reference = getAxisLockReference(Toolbox.selected.id);
 		//Rotation
-		if (space >= 2 || Toolbox.selected.id == 'resize_tool' || Toolbox.selected.id == 'stretch_tool') {
+		if (space === FOLLOW_SPACE) {
+			// 反馈#275：跟随空间——gizmo 三轴取跟随源的自身轴向
+			Transformer.rotation_ref = FollowSpace.getReference()?.mesh;
+		} else if (space >= 2 || Toolbox.selected.id == 'resize_tool' || Toolbox.selected.id == 'stretch_tool') {
 			Transformer.rotation_ref = rotation_object.mesh;
 			if (space === 3 && Mesh.selected[0]) {
 				let rotation = Mesh.selected[0].getSelectionRotation();
@@ -249,6 +257,10 @@ new TransformerModule('edit', {
 	},
 	onStart(context) {
 		let tool_id = Toolbox.selected.id;
+		// 反馈#275：跟随源本身不可移动/旋转
+		if ((tool_id === 'move_tool' || tool_id === 'rotate_tool') && FollowSpace.selectionIncludesSource()) {
+			Blockbench.showQuickMessage(tl('message.follow.source_locked'), 2500);
+		}
 		const smart_group = getSmartInstanceTransformGroup();
 		if (tool_id === 'resize_tool' && smart_group) {
 			smart_group.temp_data.old_smart_scale = smart_group.smart_object_scale.slice();
@@ -310,11 +322,26 @@ new TransformerModule('edit', {
 	onMove(context) {
 		let {axis, axis_number, value, second_axis, second_axis_number} = context;
 		let tool_id = Toolbox.selected.id;
+		// 反馈#275：跟随源不可移动/旋转
+		if ((tool_id === 'move_tool' || tool_id === 'rotate_tool') && FollowSpace.selectionIncludesSource()) return;
 		const smart_group = getSmartInstanceTransformGroup();
 		var difference = value - (this.previous_value||0)
 		
 		if (tool_id === 'move_tool') {
 			var overlapping = false
+			// 反馈#275：跟随空间——沿跟随源的自身轴位移（参考元素换成源，换算与自身轴锁定一致）
+			let follow_reference = FollowSpace.getReference();
+			if (follow_reference && axis_number !== undefined) {
+				let world_axis = getLocalAxisInWorld(follow_reference, axis_number);
+				displayDistance(value);
+				if (smart_group) {
+					moveElementsInSpace(difference, world_axis, 0);
+				} else {
+					moveSelectionInWorldAxis(difference, world_axis);
+				}
+				updateSelection();
+				return;
+			}
 			// #220：锁定自身轴时，gizmo 的 X/Y/Z 拖动统一沿首个所选元素的世界轴向移动（多选不再各走各的轴）
 			let move_lock_reference = getAxisLockReference('move_tool');
 			if (move_lock_reference && axis_number !== undefined) {

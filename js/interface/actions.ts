@@ -1051,6 +1051,11 @@ export type NumSliderOptions = WidgetOptions & {
 
 	getInterval?(event: Event): number
 	change?(value: (n: number) => number): void
+	/**
+	 * 反馈#280：绝对赋值（复制/粘贴向量、重置向量）。滑块默认的 `change` 传递的是增量函数，
+	 * 带自身轴锁定或局部空间时会被当成「绕当前轴转 N 度」；需要「把该轴设为 N」的入口走这里。
+	 */
+	setAbsolute?(value: number): void
 	get?(): number
 	onChange?: (value: number, event?: Event) => void
 	onBefore?(): void
@@ -1070,6 +1075,7 @@ export class NumSlider extends Widget {
 	onBefore?: () => void
 	onChange?: (value: number, event?: Event) => void
 	onAfter?: (difference?: number) => void
+	setAbsolute?: (value: number) => void
 	uv?: boolean
 	/**
 	 * @private
@@ -1107,6 +1113,7 @@ export class NumSlider extends Widget {
 		this.onBefore = data.onBefore;
 		this.onChange = data.onChange;
 		this.onAfter = data.onAfter;
+		if (typeof data.setAbsolute === 'function') this.setAbsolute = data.setAbsolute;
 		if (typeof data.change === 'function') {
 			this.change = (modify, ...args) => {
 				data.change(modify)
@@ -1345,7 +1352,12 @@ export class NumSlider extends Widget {
 						}
 						for (let slider of this.slider_vector) {
 							let value = slider.settings?.default ?? 0;
-							slider.change(n => value);
+							// 反馈#280：重置同样是绝对赋值，避免被增量语义解释成「转 0 度」
+							if (typeof slider.setAbsolute === 'function') {
+								slider.setAbsolute(value);
+							} else {
+								slider.change(n => value);
+							}
 							slider.update();
 						}
 						if (typeof this.onAfter === 'function') {
@@ -1438,14 +1450,20 @@ export class NumSlider extends Widget {
 					if (isNaN(number)) {
 						number = 0;
 					}
-					slider.change(val => number);
-
-					this.jq_inner.removeClass('editing')
-					this.jq_inner.attr('contenteditable', 'false')
-					this.update()
+					// 反馈#280：粘贴向量是「把该轴设为 N」，必须走绝对赋值。
+					// 用 change(val => number) 时增量语义会把它当成「绕当前轴转 N 度」，
+					// 开启自身轴锁定后更是逐轴各绕一次当前局部轴，结果与粘贴值不一致。
+					if (typeof slider.setAbsolute === 'function') {
+						slider.setAbsolute(number);
+					} else {
+						slider.change(val => number);
+					}
+					slider.update();
 				})
-
-				this.onAfter()
+				this.jq_inner.removeClass('editing')
+				this.jq_inner.attr('contenteditable', 'false')
+				this.update()
+				if (typeof this.onAfter === 'function') this.onAfter()
 				return;
 			}
 

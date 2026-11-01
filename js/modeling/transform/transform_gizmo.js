@@ -1291,7 +1291,7 @@ import { RotateAngleIndicator } from "./rotate_indicator";
 			 * X/Y/Z 是局部轴经 worldRotation 转到世界后的向量，E（自由旋转）是相机视线方向——
 			 * 与 onPointerMove 里 rotate_normal 的取法一致。
 			 */
-			function updateRotateIndicator() {
+			function updateRotateIndicator(module) {
 				if (!rotate_indicator) {
 					rotate_indicator = new RotateAngleIndicator();
 					Canvas.gizmos.push(rotate_indicator.group);
@@ -1321,11 +1321,33 @@ import { RotateAngleIndicator } from "./rotate_indicator";
 					: axis_key === 'Z' ? gizmo_colors.b
 					: gizmo_colors.outline
 				);
+				// 反馈#277：扇形角度取吸附后的实际旋转量，而不是光标原始方向。
+				// 旋转量由模块按 getRotationInterval 吸附，光标方向是连续值，直接用光标画扇形会出现
+				// 「扇形连续转、模型一格一格跳」的割裂。这里用模块已应用的角度（previous_value - initial_value）
+				// 作为扇面张角，正负沿用光标相对起始方向的绕轴转向（normal 的右手定则）。
+				let start_dir = rotate_start_world.clone();
+				let current_dir = rotate_current_world.clone();
+				let applied_deg = null;
+				if (module && typeof module.previous_value === 'number' && typeof module.initial_value === 'number') {
+					applied_deg = module.previous_value - module.initial_value;
+				}
+				if (applied_deg !== null) {
+					let normal_unit = normal.clone().normalize();
+					let plane_x = start_dir.clone().projectOnPlane(normal_unit);
+					let plane_current = current_dir.clone().projectOnPlane(normal_unit);
+					let sign = 0;
+					if (plane_x.lengthSq() > 1e-8 && plane_current.lengthSq() > 1e-8) {
+						let plane_y = new THREE.Vector3().crossVectors(normal_unit, plane_x.normalize());
+						sign = Math.sign(Math.atan2(plane_current.normalize().dot(plane_y), plane_current.dot(plane_x)));
+					}
+					if (!sign) sign = Math.sign(applied_deg) || 1;
+					current_dir = start_dir.clone().applyAxisAngle(normal_unit, THREE.MathUtils.degToRad(sign * Math.abs(applied_deg)));
+				}
 				rotate_indicator.update({
 					origin: worldPosition,
 					normal,
-					start_dir: rotate_start_world.clone(),
-					current_dir: rotate_current_world.clone(),
+					start_dir,
+					current_dir,
 					radius: Transformer.scale.x * 1.5,
 				});
 			}
@@ -1490,8 +1512,6 @@ import { RotateAngleIndicator } from "./rotate_indicator";
 						rotate_start_world.copy(rotate_current_world);
 						rotate_start_ready = true;
 					}
-					// 反馈#252：拖拽过程中显示旋转角度扇形
-					updateRotateIndicator();
 				}
 
 				if (module) {
@@ -1507,7 +1527,11 @@ import { RotateAngleIndicator } from "./rotate_indicator";
 						angle
 					});
 				}
-				
+				// 反馈#277：扇形必须在 dispatchMove 之后更新，才能读到吸附后的实际旋转量
+				if (Toolbox.selected.transformerMode === 'rotate') {
+					updateRotateIndicator(module);
+				}
+
 				scope.dispatchEvent( changeEvent );
 				scope.dispatchEvent( objectChangeEvent );
 			}
