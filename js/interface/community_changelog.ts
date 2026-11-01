@@ -494,4 +494,3 @@ BARS.defineActions(() => {
 		}
 	});
 });
-
