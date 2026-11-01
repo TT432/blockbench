@@ -55,8 +55,8 @@ interface BatchSlot {
 	// 缓存引用/版本
 	matRef: THREE.Material
 	// 合批资格依赖的镂空贴图（材质 transparent:true 但内容仅不透明/镂空）；
-	// 非镂空合批（材质本身不透明）为 null。alpha 缓存失效（_has_translucency
-	// 被 refreshTranslucency 删除）时 watcher 标脏重建以重跑资格判定。
+	// 非镂空合批（材质本身不透明）为 null。贴图 alpha 缓存失效（Texture.refreshTranslucency）
+	// 会让全部 cube 的半透明判定过期，watcher 用全局版本号 translucencyEpoch 统一判脏重建。
 	cutoutTex: Texture | null
 	geoRef: THREE.BufferGeometry
 	geoPosRef: THREE.BufferAttribute
@@ -137,6 +137,7 @@ export const CubeBatcher = {
 	_last_cube_count: -1,
 	_frame_no: 0,
 	_group_cache: new Map<string, Float64Array>(), // 组 mesh uuid -> 局部矩阵缓存（内容对比用）
+	_texture_epoch: new Array<string | number>(), // 贴图 uuid/判定版本快照（见 translucencyEpochChanged）
 	_transform_dirty: new Set<string>(), // update_transform 事件标记的 cube uuid
 	_matrices_tracked: false, // 本帧矩阵由合批遍历更新（可精确追踪重组）；否则用矩阵对比兜底
 	element_animated: new Set<string>(),
@@ -186,6 +187,33 @@ export const CubeBatcher = {
 	markStructuralDirty() {
 		if (!Project) return;
 		this.structural_dirty = true;
+	},
+
+	// 半透明判定过期的全局信号：任一贴图的 alpha 缓存刷新（贴图载入、像素编辑、
+	// 材质参数变化 → Texture.refreshTranslucency）都会递增它的 translucencyRevision。
+	// 不能只看「槽位自己的贴图」——纹理载入前被判为半透明、因此没有槽位的 cube
+	// 也可能在新像素下变得可合批，必须整表重建重跑资格判定（反馈#243：模型打开后
+	// 贴图真正的像素比 16x16 占位画布晚到，批次永久停在「全部不透明」的旧分类上）。
+	// 贴图新增/删除同样算变化（新贴图 = 新批次材质）。快照按「uuid, revision」平铺成定长数组，
+	// 与当前贴图表逐项比较：不用 Map 记历史，否则切工程后旧贴图 uuid 残留在表里，
+	// 「表大小 ≠ 贴图数」会恒成立、每帧都判脏重建（实测切工程后 120 次/秒全量重建）。
+	translucencyEpochChanged(): boolean {
+		if (typeof Texture === 'undefined' || !Texture.all) return false;
+		let all = Texture.all;
+		let prev = this._texture_epoch;
+		let changed = prev.length !== all.length * 2;
+		let next = changed ? new Array<string | number>(all.length * 2) : prev;
+		for (let i = 0; i < all.length; i++) {
+			let tex = all[i];
+			let rev = tex.translucencyRevision();
+			if (!changed && (prev[i * 2] !== tex.uuid || prev[i * 2 + 1] !== rev)) changed = true;
+			if (changed) {
+				next[i * 2] = tex.uuid;
+				next[i * 2 + 1] = rev;
+			}
+		}
+		if (changed) this._texture_epoch = next;
+		return changed;
 	},
 
 	// 合批用材质解析：不透明材质原样返回；BB 贴图材质恒为 transparent:true
@@ -664,6 +692,9 @@ export const CubeBatcher = {
 		let t0 = performance.now();
 		this.resetUpdateRanges();
 
+		// 贴图 alpha 缓存刷新 → 全部分类结果过期（必须在早退之前：此时可能还没有任何批次）
+		if (this.translucencyEpochChanged()) this.markStructuralDirty();
+
 		if (this.structural_dirty) {
 			this.structural_dirty = false;
 			this.rebuild();
@@ -699,12 +730,12 @@ export const CubeBatcher = {
 			let mesh = slot.mesh;
 			let composed = slot.composedFrame;
 			slot.composedFrame = false;
-			// 材质引用变化（updateFaces / 视图模式切换）、材质失去合批资格
-			// （贴图 alpha 缓存失效 = 像素已编辑，需重跑半透明判定）或失去资格：帧末全量重建
+			// 材质引用变化（updateFaces / 视图模式切换）或失去资格：帧末全量重建。
+			// 「贴图像素变了导致判定过期」不在这里判——watch 入口的 translucencyEpochChanged
+			// 已在此之前整表重建，且缺槽位的 cube 也一并覆盖。
 			let material = mesh.material;
 			let render_order = slot.cube.render_order;
 			if (material !== slot.matRef || Array.isArray(material)
-				|| (material.transparent === true && (!slot.cutoutTex || slot.cutoutTex._has_translucency === undefined))
 				|| (render_order !== undefined && render_order !== 'default')) {
 				this.structural_dirty = true;
 				continue;

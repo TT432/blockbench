@@ -999,7 +999,9 @@ export class Texture {
 		mesh.material = materials.length == 1 ? materials[0] : materials;
 	}
 	getAlphaData() {
-		if (!this._alpha_data) {
+		// 画布尺寸会随贴图载入/分辨率变更而变，旧缓存的行宽与新画布不一致时按旧尺寸取样会读错 texel
+		let cached = this._alpha_data;
+		if (!cached || cached.width !== this.canvas.width || cached.height !== this.canvas.height) {
 			let image_data = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
 			let plane = new Uint8Array(this.canvas.width * this.canvas.height);
 			for (let i = 0, j = 3; j < image_data.data.length; i++, j += 4) {
@@ -1008,6 +1010,37 @@ export class Texture {
 			this._alpha_data = {data: plane, width: this.canvas.width, height: this.canvas.height};
 		}
 		return this._alpha_data;
+	}
+	getUVTexelScale() {
+		// 「一个 UV 单位对应多少 texel」必须与 updateUV 完全同口径，否则扫描窗口会落到别的
+		// texel 区域（反馈#243 复报：心月狐II 的贴图是 4096px、文件里记录 uv_width=512，
+		// 而实际 UV 空间是 Project.texture_width=2048——按 uv_width 缩放得到 8 倍而真实是
+		// 2 倍，2318 个采样到半透明 texel 的方块里只有 2 个被认出来，其余被合批进不透明批次，
+		// 半透明区域整片渲染成不透明）。
+		// Cube.updateUV / Mesh.updateUV 的口径：view_mode !== 'uv' 用 tex.getUVWidth()
+		// （内部按 Format.per_texture_uv_size 在 uv_width 与 Project.texture_width 之间选择），
+		// 否则用工程分辨率。v 轴再按 flipbook 帧数折成单帧高度。
+		let canvas = this.canvas;
+		let frames = Math.max(1, this.frameCount || 1);
+		let frame_height = canvas.height / frames;
+		let uv_width, uv_height;
+		if (typeof Project !== 'undefined' && Project) {
+			if (Project.view_mode !== 'uv') {
+				uv_width = this.getUVWidth();
+				uv_height = this.getUVHeight();
+			} else {
+				uv_width = Project.texture_width;
+				uv_height = Project.texture_height;
+			}
+		}
+		if (!uv_width) uv_width = this.uv_width || canvas.width;
+		if (!uv_height) uv_height = this.uv_height || frame_height;
+		return {
+			frames,
+			frame_height,
+			factor_x: canvas.width / uv_width,
+			factor_y: frame_height / uv_height,
+		};
 	}
 	hasTranslucency() {
 		if (this._has_translucency === undefined) {
@@ -1031,15 +1064,11 @@ export class Texture {
 	uvAreaHasTranslucency(u0, v0, u1, v1) {
 		if (this.render_mode == 'additive') return true;
 		let {data, width, height} = this.getAlphaData();
-		// UV 单位按各自轴映射到 texel：u 按 uv_width、v 按单帧高度。
+		let {frames, frame_height, factor_x, factor_y} = this.getUVTexelScale();
 		// flipbook 贴图是「多帧竖直堆叠」，面 uv 是帧局部坐标，必须逐帧平移后再扫；
 		// 这里扫全部帧取并集——判定与当前播放帧无关，任一帧含半透明即算半透明。
 		// （反馈#243：只扫第 0 帧会把「帧0 不透明、后续帧半透明」的方块判成不透明，
 		// 被合批进 transparent:false 批次后透明区域整片变成不透明。）
-		let frames = Math.max(1, this.frameCount || 1);
-		let frame_height = height / frames;
-		let factor_x = width / (this.uv_width || width);
-		let factor_y = frame_height / (this.uv_height || frame_height);
 		let x0 = Math.max(0, Math.floor(Math.min(u0, u1) * factor_x));
 		let x1 = Math.min(width, Math.ceil(Math.max(u0, u1) * factor_x));
 		let vy0 = Math.max(0, Math.floor(Math.min(v0, v1) * factor_y));
@@ -1087,12 +1116,22 @@ export class Texture {
 		// Faces with an unknown uv structure fall back to the texture-level decision
 		return scanned_face ? false : this.hasTranslucency();
 	}
+	translucencyRevision() {
+		// 半透明判定的版本号：alpha 数据缓存失效（贴图载入、像素编辑、材质参数变化）时递增。
+		// CubeBatcher 以它判定「缓存里的分类结果已过期」，见 refreshTranslucency 里的说明。
+		return this._translucency_revision || 0;
+	}
 	refreshTranslucency() {
 		// Texture pixels changed: drop cached alpha data and reassign the materials of
 		// render-order elements using this texture, since their translucency
 		// classification (and therefore their depth behavior) may have flipped.
 		delete this._alpha_data;
 		delete this._has_translucency;
+		// 判定版本号：CubeBatcher 据此发现「这一类方块需要重跑资格判定」。
+		// 不能用 _has_translucency === undefined 当失效信号——下面 render-order 变体的
+		// updateFaces 会立刻把它重新填回（任意一次 elementHasTranslucency 调用都会），
+		// 批次于是永久停在旧分类上（反馈#243：贴图载入后 2316 个半透明方块仍留在不透明批次）。
+		this._translucency_revision = (this._translucency_revision || 0) + 1;
 		if (!this._used_with_render_order || typeof Outliner == 'undefined') return;
 		Outliner.elements.forEach(element => {
 			if (!element.faces || element.render_order === undefined || element.render_order === 'default') return;
