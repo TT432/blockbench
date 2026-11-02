@@ -6,8 +6,8 @@
  * 此后任一节点的编辑都会镜像同步到对方（位移/旋转/缩放/几何/UV），即「常态镜像对称」。
  *
  * 镜像面 = 画布中心平面（`Format.centered_grid ? 0 : 8`，X 轴，与镜像建模同一约定），
- * 两个组绕模型中心左右对称。共用同一块 UV 纹理：副本不镜像 UV，且此后源侧的 UV 编辑
- * 直接同步到副本（`keep_uv_from_source`），两侧始终读同一块纹理区域。
+ * 两个组绕模型中心左右对称。两侧读同一块 UV 纹理区域，但 UV 随几何一起镜像（取样方向
+ * 相反），所以贴图也呈镜像关系；此后对任一侧的 UV 编辑都按镜像同步到另一侧（反馈#288）。
  *
  * 同步复用镜像建模引擎（`MirrorModeling.createClone` 的更新路径）：`init_edit` 时把配对
  * 关系注入 `MirrorModeling.cached_elements` 并登记 undo 前快照，`finish_edit` 由本模块
@@ -163,10 +163,9 @@ export const SmartMirrorGroup = {
 			// 先挂到场景里（flip 会访问 mesh），再镜像
 			clone.addTo(parent);
 			clone.init();
+			// 反馈#288：UV 随几何一起镜像（两侧读同一块纹理区域、取样方向相反），
+			// 不再把源 UV 原样补回——那样镜像侧只是块翻转、贴图不翻转。
 			clone.flip(0, mirrorCenter());
-			let maintain_uv = MirrorModeling.element_types[node.type]?.maintainUV;
-			// 共用同一块 UV 纹理：镜像翻转后把源元素的 UV 原样补回
-			if (maintain_uv) maintain_uv(clone as OutlinerElement, node);
 			clone.name = node.name;
 			return clone;
 		}
@@ -179,8 +178,10 @@ export const SmartMirrorGroup = {
 			Blockbench.showQuickMessage(tl('message.smart_mirror.already_set'), 2000);
 			return;
 		}
-		// 反馈#288：post 快照里要有新建的镜像组（撤销才能把它删掉），源组与副本都进快照
-		Undo.initEdit({outliner: true, groups: [group]});
+		// 反馈#288：post 快照要包含新建的镜像子树（元素+组），撤销才能整棵删掉；
+		// pre 侧显式给空的 elements —— 缺这个字段时 undo 里「post 有、pre 没有 → 删除」整段被
+		// `if (this.elements)` 跳过，镜像组被删掉而子元素只被摘掉 parent、掉回场景根部（用户看到的「散开」）。
+		Undo.initEdit({outliner: true, elements: [], groups: [group]});
 		let counterpart = this.cloneMirrored(group, group.parent) as Group;
 		insertAfter(counterpart, group);
 		counterpart.name = tl('message.smart_mirror.name_suffix', [group.name]);
@@ -189,7 +190,12 @@ export const SmartMirrorGroup = {
 		setMirrorLink(group, counterpart.uuid);
 		setMirrorLink(counterpart, group.uuid);
 		Canvas.updateAll();
-		Undo.finishEdit('Set up smart mirror group', {outliner: true, groups: [group, counterpart]});
+		let subtree = this.collectSubtree(counterpart);
+		Undo.finishEdit('Set up smart mirror group', {
+			outliner: true,
+			elements: subtree.filter(node => node instanceof OutlinerElement),
+			groups: [group, ...subtree.filter(node => node instanceof Group)],
+		});
 		Blockbench.showQuickMessage(tl('message.smart_mirror.created', [counterpart.name]), 3000);
 	},
 
@@ -250,7 +256,6 @@ export const SmartMirrorGroup = {
 				cached.is_copy = false;
 				cached.edit_side = 0;
 				cached.smart_pair = true;
-				cached.keep_uv_from_source = true;
 				MirrorModeling.insertElementIntoUndo(counterpart, aspects, counterpart.getUndoCopy(aspects));
 			}
 		}
@@ -339,7 +344,6 @@ interface MirrorModelingCachedData {
 	is_copy?: boolean
 	edit_side?: number
 	smart_pair?: boolean
-	keep_uv_from_source?: boolean
 }
 
 Blockbench.on('init_edit', ({aspects}) => {

@@ -70,9 +70,28 @@ export const FollowSpace = {
 
 	/** 当前工具的空间选择是否处于「跟随」 */
 	isFollowSelected(): boolean {
-		if (typeof BarItems == 'undefined') return false;
-		if (Toolbox.selected?.id === 'rotate_tool') return BarItems.rotation_space?.value === 'follow';
-		return BarItems.transform_space?.value === 'follow';
+		if (typeof BarItems == 'undefined' || typeof Toolbox == 'undefined') return false;
+		let tool = Toolbox.selected?.id;
+		// 反馈#298：跟随只属于「位移」和「旋转」两个工具。其它工具（缩放、顶点捕捉等）读的是
+		// 同一个 transform_space，此前会被误判成跟随态，红框与源的轴向一直挂着。
+		if (tool === 'rotate_tool') return BarItems.rotation_space?.value === 'follow';
+		if (tool === 'move_tool') return BarItems.transform_space?.value === 'follow';
+		return false;
+	},
+
+	/**
+	 * 反馈#298：从位移/旋转切到别的工具时立刻取消跟随源（红框随之消失）。
+	 * 切到缩放、顶点捕捉这些工具后「跟随」不再生效，源也就不该继续挂着——否则它们的轴向、
+	 * 红框会一直被源的朝向牵着走。
+	 */
+	onToolSelect(current: Tool, previous?: Tool) {
+		if (!previous) return;
+		let was_transform_tool = previous.id === 'move_tool' || previous.id === 'rotate_tool';
+		let is_transform_tool = current.id === 'move_tool' || current.id === 'rotate_tool';
+		if (was_transform_tool && !is_transform_tool) {
+			this.clearSource();
+		}
+		this.syncHint();
 	},
 
 	/** 跟随空间生效的参考节点；未设置源或不在跟随空间时返回 undefined */
@@ -93,12 +112,14 @@ export const FollowSpace = {
 		if (!node || !node.mesh) return;
 		this.source = node;
 		this.updateHighlight();
+		this.syncHint();
 		Blockbench.showQuickMessage(tl('message.follow.source_set', [node.name]), 2000);
 	},
 
 	clearSource() {
 		this.source = null;
 		this.updateHighlight();
+		this.syncHint();
 	},
 
 	selectionIncludesSource(): boolean {
@@ -108,15 +129,25 @@ export const FollowSpace = {
 		return Group.multi_selected.includes(source as Group) || Group.multi_selected.some(group => source?.isChildOf?.(group, 128));
 	},
 
-	/** 底部状态栏的 Ctrl「设置跟随源」提示只在跟随空间下出现 */
+	/**
+	 * 底部状态栏提示：跟随空间下 Ctrl「设置跟随源」；已有源时再补一条右键「取消跟随源」
+	 * （反馈#294，右键取消是 #290 引入的入口）。
+	 */
 	syncHint() {
 		// 状态栏 Vue 在进入工程后才挂载（onVueSetup），启动期调用会取不到 $data
 		if (!Interface?.status_bar?.vue) return;
-		let text = 'modifier_actions.set_follow_source';
+		let set_text = 'modifier_actions.set_follow_source';
+		let clear_text = 'modifier_actions.clear_follow_source';
 		if (this.isFollowSelected()) {
-			Interface.addSuggestedModifierKey('ctrl', text);
+			Interface.addSuggestedModifierKey('ctrl', set_text);
+			if (this.getReference()) {
+				Interface.addSuggestedModifierKey('mouse', clear_text);
+			} else {
+				Interface.removeSuggestedModifierKey('mouse', clear_text);
+			}
 		} else {
-			Interface.removeSuggestedModifierKey('ctrl', text);
+			Interface.removeSuggestedModifierKey('ctrl', set_text);
+			Interface.removeSuggestedModifierKey('mouse', clear_text);
 		}
 	},
 
@@ -200,7 +231,22 @@ export const FollowSpace = {
 	},
 };
 
+/** 已挂过监听的工具 id（反馈#298：工具切换没有全局事件，只能逐个 Tool 订阅） */
+const watched_tools = new Set<string>();
+function watchTools() {
+	if (typeof Tool == 'undefined') return;
+	for (let tool of Tool.all) {
+		if (watched_tools.has(tool.id)) continue;
+		watched_tools.add(tool.id);
+		tool.on('select', (event: {previous_tool?: Tool}) => {
+			FollowSpace.onToolSelect(tool, event?.previous_tool);
+		});
+	}
+}
+
 Blockbench.on('update_view', () => {
+	// update_view 是启动/加载后必到的点：在这里补挂新出现的工具监听
+	watchTools();
 	FollowSpace.updateHighlight();
 });
 Blockbench.on('finish_edit', () => {

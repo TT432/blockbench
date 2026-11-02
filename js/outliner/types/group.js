@@ -1118,14 +1118,32 @@ BARS.defineActions(function() {
 		category: 'edit',
 		condition: {modes: ['edit', 'paint'], method: () => Group.all.some(g => g.selected && !g.children.length)},
 		click() {
-			let empty_groups = Group.all.filter(g => g.selected && !g.children.length);
-			if (!empty_groups.length) return;
+			if (!Group.all.some(g => g.selected && !g.children.length)) return;
+			// 反馈#293：嵌套的空分组要一次删干净。先按「子级全部会一起被删」求闭包——最内层
+			// 空组被删后外层也就空了，逐层收敛到没有新的空组为止（按 Group.all 顺序，外层在前，
+			// 与共享删除动作一致，撤销才能按父级挂回子树）。
+			let doomed = [];
+			let changed = true;
+			while (changed) {
+				changed = false;
+				for (let group of Group.all) {
+					if (!group.selected || doomed.includes(group)) continue;
+					if (group.children.length == 0 || group.children.every(child => child instanceof Group && doomed.includes(child))) {
+						doomed.push(group);
+						changed = true;
+					}
+				}
+			}
+			if (!doomed.length) return;
+			doomed = Group.all.filter(g => doomed.includes(g));
 			// 对齐 SharedActions delete 的写法：initEdit 传引用、finishEdit 前 empty() 标记删除后状态
-			Undo.initEdit({outliner: true, groups: empty_groups, selection: true});
-			for (let group of empty_groups.slice()) {
+			Undo.initEdit({outliner: true, groups: doomed, selection: true});
+			for (let group of doomed.slice()) {
+				// 子孙随最外层一起离开，不逐个 remove（逐个删会让撤销时挂不回父子关系）
+				if (group.parent instanceof Group && doomed.includes(group.parent)) continue;
 				group.remove(false);
 			}
-			empty_groups.empty();
+			doomed.empty();
 			Undo.finishEdit('Delete empty groups');
 			updateSelection();
 		}

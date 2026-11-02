@@ -180,13 +180,13 @@ declare namespace Interface {
 	 * @param key Modifier key
 	 * @param text Translation key of the hint
 	 */
-	function addSuggestedModifierKey(key: 'ctrl' | 'shift' | 'alt', text: string): void
+	function addSuggestedModifierKey(key: 'ctrl' | 'shift' | 'alt' | 'mouse', text: string): void
 	/**
 	 * Removes a hint for a modifier key from the status bar.
 	 * @param key Modifier key
 	 * @param text Translation key of the hint
 	 */
-	function removeSuggestedModifierKey(key: 'ctrl' | 'shift' | 'alt', text: string): void
+	function removeSuggestedModifierKey(key: 'ctrl' | 'shift' | 'alt' | 'mouse', text: string): void
 
 	/**
 	 * Registers a callback that defines panels. The callback runs while the interface is set up.

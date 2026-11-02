@@ -32,11 +32,10 @@ export const MirrorModeling = {
 	createClone(original: OutlinerElement, undo_aspects: UndoAspects) {
 		// Create or update clone
 		let options = BarItems.mirror_modeling.tool_config.options;
-		// 反馈#274：智能镜像组要求两侧共用同一块 UV 纹理——固定不镜像 UV，且 UV 编辑
-		// 从源元素同步（而不是保留副本自己编辑前的 UV）。
+		// 反馈#288：智能镜像组两侧要镜像对称，UV 必须跟几何一起镜像（两侧仍读同一块纹理区域，
+		// 只是取样方向相反）。所以固定开启，不受镜像建模里的 UV 开关影响。
 		let cached_data = MirrorModeling.cached_elements[original.uuid];
-		let keep_uv_from_source = cached_data?.keep_uv_from_source === true;
-		let mirror_uv = keep_uv_from_source ? false : options.mirror_uv;
+		let mirror_uv = cached_data?.smart_pair ? true : options.mirror_uv;
 		let center = Format.centered_grid ? 0 : 8;
 		let mirror_element = cached_data?.counterpart;
 		let element_type_options = MirrorModeling.element_types[original.type];
@@ -56,7 +55,7 @@ export const MirrorModeling = {
 				color: element_before_snapshot.color
 			});
 			if (!mirror_uv && element_type_options.maintainUV) {
-				element_type_options.maintainUV(mirror_element, keep_uv_from_source ? original : element_before_snapshot)
+				element_type_options.maintainUV(mirror_element, element_before_snapshot)
 			}
 			if (element_type_options.updateCounterpart) {
 				element_type_options.updateCounterpart(original, mirror_element, {

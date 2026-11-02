@@ -17,7 +17,9 @@ onVueSetup(function() {
 			modifier_keys: {
 				ctrl: [],
 				shift: [],
-				alt: []
+				alt: [],
+				// 反馈#294：鼠标操作提示（如跟随空间的右键取消跟随源）也占一个提示位
+				mouse: []
 			},
 			modifiers: Blockbench.isTouch && !Blockbench.isMobile && Pressing.overrides,
 			keyboard_menu_in_status_bar: Blockbench.isTouch && !Blockbench.isMobile
@@ -127,6 +129,10 @@ onVueSetup(function() {
 					<div class="status_bar_modifier_key" v-if="modifier_keys.alt.length" @click="clickModifiers()">
 						<kbd>${tl(isMac ? 'keys.option' : 'keys.alt')}</kbd>
 						<span>{{ tl(modifier_keys.alt.last()) }}</span>
+					</div>
+					<div class="status_bar_modifier_key" v-if="modifier_keys.mouse.length" @click="clickModifiers()">
+						<kbd>${tl('keys.rightclick')}</kbd>
+						<span>{{ tl(modifier_keys.mouse.last()) }}</span>
 					</div>
 				</template>
 
