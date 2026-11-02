@@ -70,9 +70,11 @@ BARS.defineActions(() => {
 		keybind: new Keybind({key: 'v'}),
 		onSelect() {
 			FollowSpace.syncHint();
+			FollowSpace.updateHighlight();
 		},
 		onUnselect() {
 			Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.set_follow_source');
+			FollowSpace.updateHighlight();
 		},
 	})
 	new Tool('resize_tool', {
@@ -113,9 +115,11 @@ BARS.defineActions(() => {
 		keybind: new Keybind({key: 'r'}),
 		onSelect() {
 			FollowSpace.syncHint();
+			FollowSpace.updateHighlight();
 		},
 		onUnselect() {
 			Interface.removeSuggestedModifierKey('ctrl', 'modifier_actions.set_follow_source');
+			FollowSpace.updateHighlight();
 		},
 	})
 	new Tool('pivot_tool', {

@@ -480,9 +480,14 @@ function selectOverlappingCubes(cubes) {
 function deleteOverlappingCubes(cubes) {
 	cubes = cubes.filter(cube => Cube.all.includes(cube));
 	if (!cubes.length) return;
-	Undo.initEdit({elements: cubes, selection: true, outliner: true});
+	// 反馈#292：post 快照不能再包含被删方块（否则 redo 不触发反向删除，组子节点被清空后
+	// 方块落到根目录、组旋转失效）；与正规删除（outliner.js 删除后 recursive_list.empty()）一致。
+	// 注意必须清空传给 initEdit 的同一个数组对象——post 快照读的是它。
+	let aspects = {elements: cubes.slice(), selection: true, outliner: true};
+	Undo.initEdit(aspects);
 	cubes.forEach(cube => cube.remove(false));
-	Undo.finishEdit('Delete overlapping cubes');
+	aspects.elements.length = 0;
+	Undo.finishEdit('Delete overlapping cubes', aspects);
 	updateSelection();
 }
 

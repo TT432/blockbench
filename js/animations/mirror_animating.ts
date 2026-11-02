@@ -123,6 +123,22 @@ function flipCopyKeyframes(options: FlipCopyKeyframesOptions):
 	}
 }
 
+/**
+ * 反馈#287：按 left/right（axis 0）或 front/back（axis 2）求对侧组的名字。
+ * flipNameOnAxis 的 check 返回 false 时只算出候选名、不改 node.name。
+ */
+function oppositeGroupName(name: string): {name: string, axis: number} | undefined {
+	for (let axis of [0, 2]) {
+		let candidate: string | undefined;
+		flipNameOnAxis({name}, axis, (flipped: string) => {
+			candidate = flipped;
+			return false;
+		}, name);
+		if (candidate) return {name: candidate, axis};
+	}
+	return;
+}
+
 let initial_keyframes: TKeyframe[] | undefined;
 Blockbench.on('init_edit', (args) => {
 	initial_keyframes = undefined;
@@ -216,6 +232,66 @@ BARS.defineActions(function() {
 	})
 
 
+	// 反馈#287：一键镜像组动画 —— 成对命名的组（left/right、front/back）里，
+	// 一侧有该通道关键帧而另一侧没有时，按镜像数学把关键帧补到另一侧（两侧都有关键帧则忽略）
+	new Action('mirror_group_animation', {
+		name: 'action.mirror_group_animation',
+		description: 'action.mirror_group_animation.desc',
+		icon: 'compare_arrows',
+		category: 'animation',
+		condition: {modes: ['animate'], method: () => !!Animation.selected},
+		click() {
+			let animation = Animation.selected;
+			if (!animation) {
+				Blockbench.showQuickMessage(tl('message.no_animation_selected'));
+				return;
+			}
+			let added: BBKeyframe[] = [];
+			let channels = ['rotation', 'position', 'scale'];
+			let visited = new Set<string>();
+			Undo.initEdit({keyframes: added});
+
+			for (let uuid in animation.animators) {
+				let animator = animation.animators[uuid];
+				if (!(animator instanceof BoneAnimator) || !animator.group) continue;
+				let opposite = oppositeGroupName(animator.group.name);
+				if (!opposite) continue;
+				let target_group = Group.all.find(group => group.name == opposite.name);
+				if (!target_group || target_group == animator.group) continue;
+				let pair_key = [animator.group.uuid, target_group.uuid].sort().join('|');
+				if (visited.has(pair_key)) continue;
+				visited.add(pair_key);
+				let target = animation.getBoneAnimator(target_group);
+				if (!target) continue;
+				let copied = false;
+				for (let channel of channels) {
+					let source_frames = animator[channel] as BBKeyframe[];
+					if (!source_frames?.length) continue;
+					// 对侧该通道已有关键帧时忽略这一侧，避免互相覆盖
+					if ((target[channel] as BBKeyframe[])?.length) continue;
+					for (let source_keyframe of source_frames.slice()) {
+						let new_keyframe = target.createKeyframe(source_keyframe, source_keyframe.time, channel, false, false);
+						if (!new_keyframe) continue;
+						new_keyframe.flip(opposite.axis);
+						added.push(new_keyframe);
+						copied = true;
+					}
+				}
+				if (copied) target.addToTimeline();
+			}
+
+			if (added.length) {
+				Undo.finishEdit('Mirror group animation');
+				updateKeyframeSelection();
+				Animator.preview();
+				Blockbench.showQuickMessage(tl('message.mirror_group_animation.done', [added.length]), 2500);
+			} else {
+				Undo.cancelEdit();
+				Blockbench.showQuickMessage(tl('message.mirror_group_animation.none'), 2500);
+			}
+		}
+	})
+
 	new Action('flip_animation', {
 		icon: 'transfer_within_a_station',
 		category: 'animation',
@@ -270,5 +346,6 @@ declare global {
 	interface BarItemRegistry {
 		mirror_animating: Toggle
 		flip_animation: Action
+		mirror_group_animation: Action
 	}
 }

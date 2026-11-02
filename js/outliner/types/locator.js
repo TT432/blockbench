@@ -141,7 +141,7 @@ new NodePreviewController(Locator, {
 		mesh.sprite.material.color.set(element.selected ? gizmo_colors.outline : CustomTheme.data.colors.text);
 		mesh.sprite.material.depthTest = !element.selected;
 		mesh.renderOrder = element.selected ? 100 : 0;
-		mesh.sprite.visible = !!Canvas.show_element_markers;
+		mesh.sprite.visible = !!Canvas.show_element_markers && !!settings.show_locator_markers.value;
 
 		this.dispatchEvent('update_selection', {element});
 	},

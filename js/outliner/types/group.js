@@ -609,6 +609,7 @@ Group.addBehaviorOverride({
 		'add_locator',
 		new MenuSeparator('manage'),
 		'setup_smart_mirror_group',
+		'remove_smart_mirror',
 		'create_smart_object',
 		'edit_smart_object',
 		'demote_smart_object',

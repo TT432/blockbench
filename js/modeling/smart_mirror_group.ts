@@ -70,6 +70,8 @@ export const SmartMirrorGroup = {
 	/** init_edit 时用户实际编辑的元素/组（不含为 undo 注入的镜像副本） */
 	edited: null as Set<UUID> | null,
 	edited_groups: null as Set<UUID> | null,
+	/** 反馈#288：「取消智能镜像组」这类整体删除动作不走同步管线，置位后两个钩子直接跳过 */
+	suspended: false,
 
 	pairs(): [Group, Group][] {
 		let result: [Group, Group][] = [];
@@ -84,6 +86,37 @@ export const SmartMirrorGroup = {
 			result.push([group, counterpart]);
 		}
 		return result;
+	},
+
+	/** 子树里的全部节点（含自身），供整体删除登记 undo 用 */
+	collectSubtree(node: OutlinerNode): OutlinerNode[] {
+		let list: OutlinerNode[] = [node];
+		if (node instanceof Group) {
+			node.forEachChild(child => list.push(child));
+		}
+		return list;
+	},
+
+	/**
+	 * 反馈#288/F3：把镜像副本连同子树登记进本条 undo 后删除。
+	 * pre 里留快照（含结构 outliner），post 不记录被删节点 —— 与正规删除（outliner.js 删后
+	 * 清空 recursive_list）一致，redo 才能重新删除、undo 才能整棵子树还原。
+	 */
+	removeSubtreeWithUndo(counterpart: Group, aspects: UndoAspects) {
+		let removed = this.collectSubtree(counterpart);
+		for (let node of removed) {
+			if (node instanceof Group) {
+				// 快照必须带真 uuid，否则撤销时会按野 uuid 重建垃圾组、并把真组当多余节点删掉
+				let before = node.getChildlessCopy();
+				before.uuid = node.uuid;
+				MirrorModeling.insertGroupIntoUndo(node, aspects, before);
+			} else if (node instanceof OutlinerElement) {
+				MirrorModeling.insertElementIntoUndo(node, aspects, node.getUndoCopy(aspects));
+			}
+		}
+		counterpart.remove();
+		if (aspects.elements) aspects.elements = aspects.elements.filter(node => !removed.includes(node));
+		if (aspects.groups) aspects.groups = aspects.groups.filter(node => !removed.includes(node));
 	},
 
 	/** 建立配对映射：两个子树按同构顺序配对（组/元素按类型与名称，再退回位置） */
@@ -146,7 +179,8 @@ export const SmartMirrorGroup = {
 			Blockbench.showQuickMessage(tl('message.smart_mirror.already_set'), 2000);
 			return;
 		}
-		Undo.initEdit({outliner: true});
+		// 反馈#288：post 快照里要有新建的镜像组（撤销才能把它删掉），源组与副本都进快照
+		Undo.initEdit({outliner: true, groups: [group]});
 		let counterpart = this.cloneMirrored(group, group.parent) as Group;
 		insertAfter(counterpart, group);
 		counterpart.name = tl('message.smart_mirror.name_suffix', [group.name]);
@@ -155,11 +189,43 @@ export const SmartMirrorGroup = {
 		setMirrorLink(group, counterpart.uuid);
 		setMirrorLink(counterpart, group.uuid);
 		Canvas.updateAll();
-		Undo.finishEdit('Set up smart mirror group');
+		Undo.finishEdit('Set up smart mirror group', {outliner: true, groups: [group, counterpart]});
 		Blockbench.showQuickMessage(tl('message.smart_mirror.created', [counterpart.name]), 3000);
 	},
 
+	/** 右键「取消智能镜像组」：直接删除镜像副本并清掉两侧配对 */
+	remove(group: Group) {
+		let counterpart = counterpartGroup(group);
+		if (!counterpart) return;
+		// 本次动作自己登记 undo，不走同步管线（否则会把刚删的副本又推回 post 快照）
+		this.suspended = true;
+		let removed = this.collectSubtree(counterpart);
+		let aspects: UndoAspects = {
+			outliner: true,
+			elements: removed.filter(node => node instanceof OutlinerElement),
+			groups: [group, ...removed.filter(node => node instanceof Group)],
+		};
+		Undo.initEdit(aspects);
+		counterpart.remove();
+		setMirrorLink(group, '');
+		// post 不记录被删节点（与正规删除一致），redo 才会重新删除、undo 才整棵还原
+		aspects.elements = aspects.elements.filter(node => !removed.includes(node));
+		aspects.groups = aspects.groups.filter(node => !removed.includes(node));
+		Undo.finishEdit('Remove smart mirror group', aspects);
+		this.suspended = false;
+		Canvas.updateAll();
+		updateSelection();
+		Blockbench.showQuickMessage(tl('message.smart_mirror.removed', [counterpart.name]), 2500);
+	},
+
 	initEdit(aspects: UndoAspects) {
+		// 反馈#288：整体删除类动作自行登记 undo，跳过同步管线
+		if (this.suspended) {
+			this.map = null;
+			this.edited = null;
+			this.edited_groups = null;
+			return;
+		}
 		if (typeof Group == 'undefined' || !Group.all.length) return;
 		// 清掉上一次编辑留下的智能镜像组标记，避免跨编辑误跳过/误同步
 		for (let uuid in MirrorModeling.cached_elements) {
@@ -170,6 +236,9 @@ export const SmartMirrorGroup = {
 		this.edited_groups = new Set((aspects.groups ?? []).map(group => group.uuid));
 		let map = this.map = this.buildMap();
 		if (!map.size) return;
+		// 反馈#288：本条编辑可能连带删除镜像副本，先把「编辑前」的树补进 pre 快照，
+		// 否则撤销时 Outliner.loadJSON 没有位置挂回被删子树（pre 保存已在 init_edit 派发前物化）
+		Undo.current_save.outliner ??= Outliner.toJSON();
 
 		if (aspects.elements) {
 			for (let element of aspects.elements.slice()) {
@@ -192,7 +261,11 @@ export const SmartMirrorGroup = {
 				let cached = MirrorModeling.cached_elements[group.uuid] ??= {} as MirrorModelingCachedData;
 				cached.counterpart = counterpart;
 				cached.smart_pair = true;
-				MirrorModeling.insertGroupIntoUndo(counterpart, aspects, counterpart.getChildlessCopy());
+				// 反馈#288：快照必须写回真 uuid，否则 insertGroupIntoUndo 的按 uuid 去重永远不命中，
+				// 撤销时野 uuid 快照被当成新组重建、真镜像组被当多余节点删掉
+				let before = counterpart.getChildlessCopy();
+				before.uuid = counterpart.uuid;
+				MirrorModeling.insertGroupIntoUndo(counterpart, aspects, before);
 			}
 		}
 	},
@@ -204,7 +277,7 @@ export const SmartMirrorGroup = {
 		this.map = null;
 		this.edited = null;
 		this.edited_groups = null;
-		if (!map || !map.size) return;
+		if (this.suspended || !map || !map.size) return;
 		let changed = false;
 
 		if (aspects.elements) {
@@ -216,6 +289,8 @@ export const SmartMirrorGroup = {
 					if (Outliner.elements.includes(counterpart)) {
 						MirrorModeling.insertElementIntoUndo(counterpart, aspects, counterpart.getUndoCopy(aspects));
 						counterpart.remove();
+						// post 快照不记录被删副本，否则 redo 不会重新删除它
+						aspects.elements = aspects.elements.filter(node => node !== counterpart);
 						changed = true;
 					}
 					continue;
@@ -234,14 +309,16 @@ export const SmartMirrorGroup = {
 				if (!(counterpart instanceof Group)) continue;
 				if (!Group.all.includes(group)) {
 					if (Group.all.includes(counterpart)) {
-						MirrorModeling.insertGroupIntoUndo(counterpart, aspects);
-						counterpart.remove();
+						// 反馈#288：整棵子树连同结构登记进 undo，撤销才能还原、redo 才能再删
+						this.removeSubtreeWithUndo(counterpart, aspects);
 						changed = true;
 					}
 					continue;
 				}
 				if (edited_groups.has(counterpart.uuid)) continue;
-				MirrorModeling.insertGroupIntoUndo(counterpart, aspects, counterpart.getChildlessCopy());
+				let before = counterpart.getChildlessCopy();
+				before.uuid = counterpart.uuid;
+				MirrorModeling.insertGroupIntoUndo(counterpart, aspects, before);
 				mirrorGroupTransform(group, counterpart);
 				aspects.groups.safePush(counterpart);
 				changed = true;
@@ -283,6 +360,22 @@ BARS.defineActions(() => {
 		click() {
 			let group = Group.first_selected || Group.multi_selected[0];
 			if (group) SmartMirrorGroup.setup(group);
+		},
+	});
+	// 反馈#288：取消智能镜像组（= 直接删除镜像副本）
+	new Action('remove_smart_mirror', {
+		name: 'action.remove_smart_mirror',
+		description: 'action.remove_smart_mirror.desc',
+		icon: 'flip_camera_android',
+		category: 'edit',
+		condition: () => {
+			if (!Modes.edit || Group.multi_selected.length != 1) return false;
+			let group = Group.first_selected || Group.multi_selected[0];
+			return !!(group && mirrorLink(group));
+		},
+		click() {
+			let group = Group.first_selected || Group.multi_selected[0];
+			if (group) SmartMirrorGroup.remove(group);
 		},
 	});
 });

@@ -120,6 +120,8 @@ function setupSettings() {
 		if (typeof Canvas !== 'undefined') Canvas.updateAllFaces();
 	}});
 	new Setting('constant_outlines', 		{category: 'preview', value: false, onChange() { updateSelection() }});
+	// 反馈#285：仅隐藏定位器在空间预览中的船锚图标（不影响定位器可见性与导出），同时在视图菜单/快捷键设置中暴露
+	new Setting('show_locator_markers', 	{category: 'preview', value: true, onChange() { updateSelection() }});
 	new Setting('tone_mapping', 			{category: 'preview', value: 'none', type: 'select', options: {
 		none: tl('generic.none'),
 		linear: 'Linear',

@@ -346,13 +346,20 @@ export function rotateSelected(axis, steps) {
 	}
 	let base_quaternion = getRollQuaternion(axis, steps);
 	let legacy_turn = {axis, steps};
+	// 反馈#286：自身空间 + 旋转轴锁定开启时，「变换 → 旋转」的六个 90° 按钮共用
+	// 「首个所选组/元素」的自身坐标帧，避免多选时每个块绕各自的局部轴转而出现轴向冲突
+	let local_lock_frame = null;
+	if (space === 'local' && BarItems.rotation_slider_local_axis_lock?.value) {
+		let reference = getLocalAxisLockReference();
+		if (reference?.mesh) local_lock_frame = getNodeRotationQuaternion(reference);
+	}
 	// 每个选中子树一份计划：枢轴（自身枢轴=子树根的 origin）+ 该坐标系下的等效模型轴旋转
 	let plans = new Map();
 	let getPlan = node => {
 		let root = getRotateSubtreeRoot(node);
 		let cached = plans.get(root);
 		if (cached) return cached;
-		let frame = getRotateFrameQuaternion(root, space);
+		let frame = local_lock_frame ?? getRotateFrameQuaternion(root, space);
 		let pivot = own_pivot ? root.origin.slice() : legacy_origin;
 		let quarter_turn = frame.clone().multiply(base_quaternion).multiply(frame.clone().invert());
 		let plan = {
@@ -1496,6 +1503,8 @@ BARS.defineActions(function() {
 		},
 		onChange() {
 			FollowSpace.syncHint();
+			// 反馈#283：切空间时立刻清/显跟随源红框（该路径不派发 update_view）
+			FollowSpace.updateHighlight();
 			updateSelection();
 		}
 	})
@@ -1507,10 +1516,12 @@ BARS.defineActions(function() {
 			global: 'action.transform_space.global',
 			parent: 'action.transform_space.parent',
 			local: 'action.transform_space.local',
-			follow: {condition: {modes: ['edit']}, name: true}
+			// 反馈#281：复用移动空间的翻译键，避免下拉显示 action.rotation_space.follow 原文
+			follow: {condition: {modes: ['edit']}, name: 'action.transform_space.follow'}
 		},
 		onChange() {
 			FollowSpace.syncHint();
+			FollowSpace.updateHighlight();
 			updateSelection();
 		}
 	})
@@ -2207,7 +2218,59 @@ BARS.defineActions(function() {
 			if (BarItems[id]) BarItems[id].update();
 		});
 	}
+
+	// 反馈#284：每条轴一个锁定按钮（排在数值右侧），锁定后该轴的轴面数值不再变化
+	let flip_plane_locks = ['x', 'y', 'z'].map((key, axis) => new Toggle('flip_plane_lock_' + key, {
+		name: tl('action.flip_plane_lock', ['XYZ'[axis]]),
+		description: 'action.flip_plane_lock.desc',
+		icon: 'fas.fa-lock-open',
+		default: false,
+		category: 'transform',
+		condition: () => Modes.edit,
+		onChange() {
+			let toggle = BarItems['flip_plane_lock_' + 'xyz'[axis]];
+			toggle.setIcon(toggle.value ? 'fas.fa-lock' : 'fas.fa-lock-open');
+			toggle.updateEnabledState();
+			updateFlipPlaneSliders();
+		},
+	}));
+	function isFlipPlaneLocked(axis) {
+		let toggle = BarItems['flip_plane_lock_' + 'xyz'[axis]];
+		return !!toggle && toggle.value;
+	}
+
+	// 反馈#284：轴面偏移进 Undo（纯运行时状态，用现有 save 钩子挂字段，避免 undo.js 反向依赖）
+	Blockbench.on('create_undo_save', ({save, aspects}) => {
+		if (!aspects.flip_plane) return;
+		save.flip_plane = FlipPlane.offset.slice();
+	});
+	Blockbench.on('load_undo_save', ({save}) => {
+		// 只回读「本条记录自己存的」快照：没存过轴面的记录（几何编辑等）不改动当前轴面
+		if (!Array.isArray(save.flip_plane)) return;
+		for (let axis = 0; axis < 3; axis++) FlipPlane.offset[axis] = save.flip_plane[axis] ?? 0;
+		updateFlipPlaneVisual();
+		updateFlipPlaneSliders();
+	});
+	// 一次滑动 = 一条 undo；锁定轴不产生空记录
+	let flip_plane_undo_skip = [false, false, false];
+	function beginFlipPlaneEdit(axis) {
+		flip_plane_undo_skip[axis] = isFlipPlaneLocked(axis);
+		if (flip_plane_undo_skip[axis]) return;
+		Undo.initEdit({flip_plane: true, keep_saved: true});
+	}
+	function endFlipPlaneEdit(axis) {
+		if (flip_plane_undo_skip[axis]) {
+			flip_plane_undo_skip[axis] = false;
+			return;
+		}
+		Undo.finishEdit('Flip plane offset', {flip_plane: true, keep_saved: true});
+	}
+
 	function setFlipPlaneOffset(axis, value) {
+		if (isFlipPlaneLocked(axis)) {
+			updateFlipPlaneSliders();
+			return;
+		}
 		FlipPlane.offset[axis] = value;
 		updateFlipPlaneVisual();
 	}
@@ -2227,6 +2290,12 @@ BARS.defineActions(function() {
 		setAbsolute: function(value) {
 			setFlipPlaneOffset(axis, value);
 			updateFlipPlaneVisual();
+		},
+		onBefore() {
+			beginFlipPlaneEdit(axis);
+		},
+		onAfter() {
+			endFlipPlaneEdit(axis);
 		},
 	}));
 	flip_plane_sliders.forEach(slider => slider.slider_vector = flip_plane_sliders);
@@ -2249,11 +2318,20 @@ BARS.defineActions(function() {
 			let center = getSelectionCenter();
 			if (!center) return;
 			let base = Format.centered_grid ? 0 : 8;
+			// 反馈#284：锁定的轴跳过，整次对齐进 Undo
+			let locked = [0, 1, 2].filter(axis => isFlipPlaneLocked(axis));
+			if (locked.length == 3) {
+				Blockbench.showQuickMessage(tl('message.flip_plane_center.all_locked'), 2500);
+				return;
+			}
+			Undo.initEdit({flip_plane: true, keep_saved: true});
 			for (let axis = 0; axis < 3; axis++) {
+				if (isFlipPlaneLocked(axis)) continue;
 				FlipPlane.offset[axis] = Math.round((center[axis] - base) * 1000) / 1000;
 			}
 			updateFlipPlaneVisual();
 			updateFlipPlaneSliders();
+			Undo.finishEdit('Move flip planes to selection center', {flip_plane: true, keep_saved: true});
 			Blockbench.showQuickMessage(tl('message.flip_plane_center.set'));
 		}
 	})

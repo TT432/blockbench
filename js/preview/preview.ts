@@ -1720,6 +1720,12 @@ export class Preview {
 		if (this.static_rclick && (event.which === 3 || (event.type == 'touchend' && this.rclick_cooldown == true))) {
 			var data = this.raycast(event)
 			if (data) this.selection.click_target = data;
+			// 反馈#290：跟随空间下右键只取消跟随源，不弹上下文菜单
+			if (FollowSpace.clearSourceOnRightClick()) {
+				clearTimeout(this.rclick_cooldown);
+				delete this.rclick_cooldown;
+				return this;
+			}
 			
 			let click_result;
 			if (typeof Toolbox.selected.onCanvasRightClick === 'function') {
@@ -2742,6 +2748,16 @@ BARS.defineActions(function() {
 		icon: 'icon-format_free',
 		category: 'view',
 		linked_setting: 'ground_plane'
+	})
+	// 反馈#285：视图菜单里的「隐藏定位器船锚图标」开关
+	new Toggle('toggle_locator_markers', {
+		name: tl('settings.show_locator_markers'),
+		description: tl('settings.show_locator_markers.desc'),
+		icon: 'anchor',
+		category: 'view',
+		linked_setting: 'show_locator_markers',
+		keybind: new Keybind({key: 'l', shift: true}),
+		condition: () => Format.locators
 	})
 	new Toggle('toggle_motion_trails', {
 		name: tl('settings.motion_trails'),

@@ -389,7 +389,9 @@ export const Clipbench = {
 			} catch (err) {}
 		}
 		// #85：先导入剪贴板携带的贴图，元素创建时面贴图 uuid 才能解析
-		if (settings.community_paste_with_textures.value && Clipbench.textures instanceof Array) {
+		// 反馈#289：bedrock 实体等单贴图格式（Format.single_texture）只有一个默认贴图，
+		// 粘进来的外来贴图只能手删，因此这类目标格式下不导入剪贴板贴图（面贴图由 face.ts 兜底成默认贴图）
+		if (!Format.single_texture && settings.community_paste_with_textures.value && Clipbench.textures instanceof Array) {
 			Clipbench.textures.forEach(saved => {
 				if (!saved || typeof saved.uuid !== 'string' || typeof saved.source !== 'string' || !saved.source) return;
 				if (Texture.all.find(t => t.uuid == saved.uuid)) return;

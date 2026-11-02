@@ -588,8 +588,11 @@ export const BARS = {
 			label: true,
 			children: [
 				'slider_flip_plane_x',
+				'flip_plane_lock_x',
 				'slider_flip_plane_y',
+				'flip_plane_lock_y',
 				'slider_flip_plane_z',
+				'flip_plane_lock_z',
 				'flip_plane_to_center',
 			]
 		})
