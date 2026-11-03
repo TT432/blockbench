@@ -121,6 +121,11 @@ interface BlockbenchEventMap {
 		/** The plugin that was loaded. */
 		plugin: BBPlugin
 	}
+	/** Fires when an installed plugin is held back because a declared dependency is unavailable. Not the same as disabling a plugin. */
+	plugin_dependency_blocked: {
+		/** The plugin that was not loaded. */
+		plugin: BBPlugin
+	}
 	/** Fires after a plugin has been unloaded. */
 	unloaded_plugin: {
 		/** The plugin that was unloaded. */

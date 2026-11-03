@@ -93,6 +93,41 @@ export const Plugins = {
 		}
 	},
 	/**
+	 * Execute the source of an installed plugin again. Used when a plugin that was held back
+	 * by missing dependencies becomes loadable, because its code never ran before.
+	 */
+	async reloadPluginSource(plugin: Plugin) {
+		if (plugin.source == 'file' && plugin.path) {
+			if (isApp) {
+				await plugin.loadFromFile({path: plugin.path, name: plugin.path, content: ''}, false);
+			} else {
+				await plugin.loadFromCache('file', plugin.path);
+			}
+		} else if (plugin.source == 'url' && plugin.path) {
+			await plugin.loadFromURL(plugin.path, false);
+		} else {
+			await plugin.load(false);
+		}
+	},
+	/**
+	 * Re-evaluate every plugin that is held back because of the given dependency (or all of them).
+	 * Plugins whose dependencies are satisfied again are loaded without user interaction.
+	 */
+	async loadBlockedDependents(dependency_id?: string) {
+		let candidates = Plugins.all.filter(plugin => plugin.dependency_blocked);
+		for (let plugin of candidates) {
+			if (dependency_id && !plugin.missing_dependencies.includes(dependency_id)) continue;
+			if (!plugin.checkDependencies()) continue;
+			plugin.dependency_blocked = false;
+			try {
+				await this.reloadPluginSource(plugin);
+				Blockbench.showQuickMessage(tl('message.plugin_dependency_enabled', [plugin.title || plugin.id]));
+			} catch (err) {
+				console.error(`Could not enable plugin "${plugin.id}" after its dependencies became available`, err);
+			}
+		}
+	},
+	/**
 	 * Dev reload all side-loaded plugins
 	 */
 	devReload() {
@@ -193,6 +228,11 @@ interface PluginOptions {
 	 * Plugin tags that will show up in the plugin store. You can provide up to 3 tags.
 	 */
 	tags?: [string, string?, string?]
+	/**
+	 * IDs of other plugins that must be installed and enabled before this plugin can load.
+	 * When a dependency is unavailable, this plugin stays installed but is held back instead of being disabled.
+	 */
+	dependencies?: string[]
 	/**
 	 * Where the plugin can be installed. Desktop refers to the electron app, web refers to the web app and PWA
 	 */
@@ -309,6 +349,15 @@ export class Plugin {
 	changelog_fetched: boolean = false;
 	update_available: false | string = false;
 	disabled: boolean = false;
+	/**
+	 * The plugin is installed but was not loaded because a declared dependency is unavailable.
+	 * This is distinct from `disabled`, which records the user's own choice.
+	 */
+	dependency_blocked: boolean = false;
+	/**
+	 * IDs of the declared dependencies that currently keep this plugin from loading.
+	 */
+	missing_dependencies: string[] = [];
 	new_repository_format: boolean = false;
 	cache_version: number = 0;
 	menu: Menu
@@ -409,7 +458,9 @@ export class Plugin {
 			}, resolve))
 		}
 		try {
-			return await this.download(true);
+			let result = await this.download(true);
+			await Plugins.loadBlockedDependents(this.id);
+			return result;
 		} catch (err) {
 			console.error(err);
 			Blockbench.showQuickMessage(`Error installing plugin ${this.id}`);
@@ -436,6 +487,7 @@ export class Plugin {
 					Blockbench.dispatchEvent('installed_plugin', {plugin: scope});
 					Blockbench.showQuickMessage(tl('message.installed_plugin', [this.title]));
 				}
+				Plugins.loadBlockedDependents(scope.id);
 				resolve()
 			}).catch((error) => {
 				if (isApp) {
@@ -456,6 +508,80 @@ export class Plugin {
 		this.onload();
 		Plugins.currently_loading = '';
 		Blockbench.dispatchEvent('loaded_plugin', {plugin: this});
+	}
+	/**
+	 * Classify each declared dependency into the reason it can not be used right now.
+	 * A dependency is unusable when it is not installed, when the user disabled it,
+	 * or when it is itself held back by its own unavailable dependencies.
+	 */
+	getDependencyIssues(): {missing: string[], disabled: string[], blocked: string[]} {
+		let missing: string[] = [];
+		let disabled: string[] = [];
+		let blocked: string[] = [];
+		for (let id of this.dependencies) {
+			let installation = Plugins.installed.find(entry => entry.id == id);
+			if (!installation) {
+				missing.push(id);
+			} else if (installation.disabled) {
+				disabled.push(id);
+			} else if (Plugins.all.find(plugin => plugin.id == id)?.dependency_blocked) {
+				blocked.push(id);
+			}
+		}
+		return {missing, disabled, blocked};
+	}
+	/**
+	 * Refresh `missing_dependencies` from the current installation state.
+	 * Returns true when every declared dependency is installed, enabled and loaded.
+	 */
+	checkDependencies(): boolean {
+		let issues = this.getDependencyIssues();
+		this.missing_dependencies = issues.missing.concat(issues.disabled, issues.blocked);
+		return this.missing_dependencies.length == 0;
+	}
+	/**
+	 * Display name of a dependency ID, falling back to the raw ID when the plugin is unknown (e.g. offline).
+	 */
+	getDependencyTitle(id: string): string {
+		let plugin = Plugins.all.find(plugin => plugin.id == id);
+		return plugin?.title || id;
+	}
+	/**
+	 * Human readable list of the dependencies that keep this plugin from loading, including the reason.
+	 */
+	describeMissingDependencies(): string {
+		let issues = this.getDependencyIssues();
+		let describe = (ids: string[], suffix: string) => ids.map(id => `${this.getDependencyTitle(id)}${suffix}`);
+		let parts = describe(issues.missing, tl('dialog.plugins.dependency_not_installed'));
+		parts = parts.concat(
+			describe(issues.disabled, tl('dialog.plugins.dependency_disabled')),
+			describe(issues.blocked, tl('dialog.plugins.dependency_blocked_by'))
+		);
+		return parts.join(', ');
+	}
+	/**
+	 * Install every declared dependency that is not installed yet, then let the loader retry this plugin.
+	 */
+	async installMissingDependencies() {
+		let pending = this.dependencies.filter(id => {
+			let installation = Plugins.installed.find(entry => entry.id == id);
+			return !installation || installation.disabled;
+		});
+		for (let id of pending) {
+			let dependency = Plugins.all.find(plugin => plugin.id == id);
+			if (!dependency) {
+				Blockbench.showMessageBox({
+					title: 'message.plugin_dependencies.title',
+					message: tl('message.plugin_dependencies.unknown', [id]),
+				});
+				continue;
+			}
+			if (dependency.installed && dependency.disabled) {
+				dependency.enable();
+				continue;
+			}
+			await dependency.install();
+		}
 	}
 	async installDependencies(first) {
 		let required_dependencies = [];
@@ -637,6 +763,7 @@ export class Plugin {
 		this.installed = true;
 		this.#remember();
 		Plugins.sort();
+		Plugins.loadBlockedDependents(this.id);
 	}
 	async loadFromCache(source: PluginSource, path = '') {
 		let cached = await Plugins.source_cache.get(this.id);
@@ -654,6 +781,7 @@ export class Plugin {
 		this.installed = true;
 		this.#remember();
 		Plugins.sort();
+		Plugins.loadBlockedDependents(this.id);
 		return this;
 	}
 	async loadFromURL(url: string, first: boolean = false) {
@@ -706,6 +834,7 @@ export class Plugin {
 				}
 			}
 		}
+		Plugins.loadBlockedDependents(this.id);
 		return this;
 	}
 	#remember(id = this.id, path = this.path) {
@@ -866,19 +995,42 @@ export class Plugin {
 			console.error(err);
 		}
 	}
-	toggleDisabled() {
-		if (!this.disabled) {
-			this.disabled = true;
+	disable() {
+		this.disabled = true;
+		try {
+			this.unload();
+		} catch (err) {
+			console.error(err);
+		}
+		this.#remember();
+	}
+	async enable() {
+		this.disabled = false;
+		if (this.dependency_blocked) {
+			// The plugin code never ran while it was held back, so it has to be executed from its source.
+			if (!this.checkDependencies()) {
+				this.dependency_blocked = true;
+				this.#remember();
+				return;
+			}
+			this.dependency_blocked = false;
 			try {
-				this.unload();
+				await Plugins.reloadPluginSource(this);
 			} catch (err) {
-				console.error(err);
+				console.error(`Could not enable plugin "${this.id}"`, err);
 			}
 		} else {
 			this.runOnLoad();
-			this.disabled = false;
 		}
 		this.#remember();
+		Plugins.loadBlockedDependents(this.id);
+	}
+	toggleDisabled() {
+		if (!this.disabled) {
+			this.disable();
+		} else {
+			this.enable();
+		}
 	}
 	showContextMenu(event: MouseEvent) {
 		Plugin.menu.open(event, this);
@@ -1154,6 +1306,14 @@ export class Plugin {
 		};
 		plugin.extend(data);
 		if (plugin.isInstallable() == true && plugin.disabled == false) {
+			if (!plugin.checkDependencies()) {
+				// Held back instead of disabled: the user did not disable it, a dependency is unavailable.
+				plugin.dependency_blocked = true;
+				Blockbench.dispatchEvent('plugin_dependency_blocked', {plugin});
+				console.warn(`Plugin "${plugin.id}" was not enabled because these dependencies are unavailable: ${plugin.describeMissingDependencies()}`);
+				return plugin;
+			}
+			plugin.dependency_blocked = false;
 			if (plugin.onload instanceof Function) {
 				plugin.runOnLoad();
 			}
@@ -1327,7 +1487,49 @@ export async function loadInstalledPlugins() {
 
 		// Install plugins
 		var load_counter = 0;
+		/**
+		 * Declared dependencies of an installation entry. Falls back to the registry offer because
+		 * entries only carry dependencies from the moment they were loaded once.
+		 */
+		function installationDependencies(installation: PluginInstallation): string[] {
+			if (installation.dependencies?.length) return installation.dependencies.slice();
+			let offer = (Plugins.json instanceof Object) ? Plugins.json[installation.id] : undefined;
+			let dependencies: unknown = offer?.dependencies;
+			return Array.isArray(dependencies) ? dependencies.slice() : [];
+		}
+		/**
+		 * A dependency is usable when it is installed, enabled by the user and not itself held back.
+		 */
+		function dependencyAvailable(id: string): boolean {
+			let installation = Plugins.installed.find(entry => entry.id == id);
+			if (!installation || installation.disabled) return false;
+			return !Plugins.all.find(plugin => plugin.id == id)?.dependency_blocked;
+		}
+		/**
+		 * Keep an installation listed, but do not execute its code while dependencies are missing.
+		 */
+		function blockInstallation(installation: PluginInstallation, unavailable: string[]) {
+			let plugin = Plugins.all.find(entry => entry.id == installation.id);
+			if (!plugin) {
+				plugin = new Plugin(installation.id);
+				plugin.source = installation.source;
+				plugin.path = installation.path;
+				plugin.version = installation.version;
+				if (installation.dependencies) plugin.dependencies.safePush(...installation.dependencies);
+			}
+			plugin.installed = true;
+			plugin.dependency_blocked = true;
+			plugin.missing_dependencies = unavailable;
+			Plugins.registered[plugin.id] = plugin;
+			console.warn(`Plugin "${installation.id}" is installed but not enabled: unavailable dependencies ${unavailable.join(', ')}`);
+		}
 		function loadPlugin(installation: PluginInstallation) {
+			let dependencies = installationDependencies(installation);
+			let unavailable = dependencies.filter(id => !dependencyAvailable(id));
+			if (unavailable.length && !installation.disabled) {
+				blockInstallation(installation, unavailable);
+				return;
+			}
 			if (installation.source == 'file') {
 				// Dev Plugins
 				if (isApp && fs.existsSync(installation.path)) {
@@ -1445,6 +1647,14 @@ export async function loadInstalledPlugins() {
 			}
 		}
 		console.log(`Loaded ${load_counter} plugin${pluralS(load_counter)}`)
+		let blocked_plugins = Plugins.all.filter(plugin => plugin.dependency_blocked);
+		if (blocked_plugins.length) {
+			let summary = blocked_plugins.map(plugin => {
+				return `${plugin.title || plugin.id} (${plugin.describeMissingDependencies()})`;
+			}).join('; ');
+			console.warn(`Plugins not enabled due to unavailable dependencies: ${summary}`);
+			Blockbench.showQuickMessage(tl('message.plugin_dependency_blocked', [summary]), 8000);
+		}
 	}
 	StateMemory.save('installed_plugins')
 
@@ -1644,11 +1854,20 @@ BARS.defineActions(function() {
 				},
 				getDependencyName(dependency: string) {
 					let plugin = Plugins.all.find(p => p.id == dependency);
-					return plugin ? (plugin.title + (plugin.installed ? ' ✓' : '')) : (dependency + ' ⚠');
+					if (!plugin) return dependency + ' ⚠';
+					let installation = Plugins.installed.find(entry => entry.id == dependency);
+					if (!installation) return plugin.title + tl('dialog.plugins.dependency_not_installed');
+					if (installation.disabled) return plugin.title + tl('dialog.plugins.dependency_disabled');
+					if (plugin.dependency_blocked) return plugin.title + tl('dialog.plugins.dependency_blocked_by');
+					return plugin.title + ' ✓';
 				},
 				isDependencyInstalled(dependency: string) {
 					let plugin = Plugins.all.find(p => p.id == dependency);
-					return plugin && plugin.installed;
+					let installation = Plugins.installed.find(entry => entry.id == dependency);
+					return !!(plugin && installation && !installation.disabled && !plugin.dependency_blocked);
+				},
+				missingDependenciesText(plugin: Plugin): string {
+					return plugin?.describeMissingDependencies() || '';
 				},
 				getTagClass(tag: string): string {
 					if (tag.match(/^(local|remote)$/i)) {
@@ -1919,7 +2138,7 @@ BARS.defineActions(function() {
 							<div :class="{open: tab == 'available'}" @click="setTab('available')">${tl('dialog.plugins.available')}</div>
 						</div>
 						<ul class="list" :class="{paginated_list: pages.length > 1}" id="plugin_list" ref="plugin_list">
-							<li v-for="plugin in viewed_plugins" :plugin="plugin.id" :class="{plugin: true, testing: plugin.fromFile, selected: plugin == selected_plugin, disabled_plugin: plugin.disabled, installed_plugin: plugin.installed, disabled_plugin: plugin.disabled, incompatible: plugin.isInstallable() !== true}" @click="selectPlugin(plugin)" @contextmenu="selectPlugin(plugin); plugin.showContextMenu($event)">
+							<li v-for="plugin in viewed_plugins" :plugin="plugin.id" :class="{plugin: true, testing: plugin.fromFile, selected: plugin == selected_plugin, disabled_plugin: plugin.disabled, installed_plugin: plugin.installed, dependency_blocked_plugin: plugin.dependency_blocked, incompatible: plugin.isInstallable() !== true}" :title="plugin.dependency_blocked ? missingDependenciesText(plugin) : null" @click="selectPlugin(plugin)" @contextmenu="selectPlugin(plugin); plugin.showContextMenu($event)">
 								<div>
 									<div class="plugin_icon_area">
 										<img v-if="plugin.hasImageIcon()" :src="plugin.getIcon()" width="48" height="48px" @load="loadImageIcon($event)" />
@@ -1929,7 +2148,8 @@ BARS.defineActions(function() {
 										<div class="title">{{ plugin.title || plugin.id }}</div>
 										<div class="author">{{ tl('dialog.plugins.author', [plugin.author]) }}</div>
 									</div>
-									<div v-if="plugin.installed && search_term" class="plugin_installed_tag">✓ ${tl('dialog.plugins.is_installed')}</div>
+									<div v-if="plugin.dependency_blocked" class="plugin_dependency_blocked_tag" :title="missingDependenciesText(plugin)">⚠ ${tl('dialog.plugins.dependency_blocked')}</div>
+									<div v-else-if="plugin.installed && search_term" class="plugin_installed_tag">✓ ${tl('dialog.plugins.is_installed')}</div>
 								</div>
 								<div class="description">{{ plugin.description }}</div>
 								<ul class="plugin_tag_list">
@@ -1966,7 +2186,8 @@ BARS.defineActions(function() {
 									</h1>
 									<div class="author">
 										{{ tl('dialog.plugins.author', [selected_plugin.author]) }}
-										<div v-if="selected_plugin.disabled" class="plugin_disabled_tag">🌙 ${tl('dialog.plugins.is_disabled')}</div>
+										<div v-if="selected_plugin.dependency_blocked" class="plugin_dependency_blocked_tag">⚠ ${tl('dialog.plugins.dependency_blocked')}</div>
+										<div v-else-if="selected_plugin.disabled" class="plugin_disabled_tag">🌙 ${tl('dialog.plugins.is_disabled')}</div>
 										<div v-else-if="selected_plugin.installed" class="plugin_installed_tag">✓ ${tl('dialog.plugins.is_installed')}</div>
 									</div>
 								</div>
@@ -1981,7 +2202,11 @@ BARS.defineActions(function() {
 									<i class="material-icons icon">update</i>
 									<span>${tl('dialog.plugins.update')}</span>
 								</button>
-								<button type="button" v-if="selected_plugin.installed" @click="selected_plugin.toggleDisabled()">
+								<button type="button" v-if="selected_plugin.dependency_blocked" @click="selected_plugin.installMissingDependencies()">
+									<i class="material-icons icon">download</i>
+									<span>${tl('dialog.plugins.install_dependencies')}</span>
+								</button>
+								<button type="button" v-if="selected_plugin.installed && !selected_plugin.dependency_blocked" @click="selected_plugin.toggleDisabled()">
 									<i class="material-icons icon">bedtime</i>
 									<span>{{ selected_plugin.disabled ? '${tl('dialog.plugins.enable')}' : '${tl('dialog.plugins.disable')}' }}</span>
 								</button>
@@ -2009,6 +2234,11 @@ BARS.defineActions(function() {
 							<div class="plugin_dependencies" v-if="selected_plugin.dependencies.length">
 								${tl('dialog.plugins.dependencies')}
 								<a v-for="dep in selected_plugin.dependencies" @click="showDependency(dep)" :class="{installed: isDependencyInstalled(dep)}">{{ getDependencyName(dep) }}</a>
+							</div>
+
+							<div class="tiny plugin_dependency_block_note" v-if="selected_plugin.dependency_blocked">
+								<i class="material-icons icon">error</i>
+								{{ tl('dialog.plugins.dependency_blocked_note', [missingDependenciesText(selected_plugin)]) }}
 							</div>
 
 							<div class="tiny plugin_compatibility_issue" v-if="selected_plugin.isInstallable() != true">

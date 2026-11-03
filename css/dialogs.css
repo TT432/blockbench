@@ -1713,7 +1713,8 @@
 		margin-right: 12px;
 	}
 	.plugin_installed_tag,
-	.plugin_disabled_tag {
+	.plugin_disabled_tag,
+	.plugin_dependency_blocked_tag {
 		display: inline-block;
 		background-color: var(--color-back);
 		height: 25px;
@@ -1724,9 +1725,20 @@
 	.plugin_installed_tag {
 		color: var(--color-confirm);
 	}
-	#plugin_list .plugin_installed_tag {
+	.plugin_dependency_blocked_tag {
+		color: var(--color-warning);
+		cursor: help;
+	}
+	#plugin_list .plugin_installed_tag,
+	#plugin_list .plugin_dependency_blocked_tag {
 		position: absolute;
 		right: 4px;
+	}
+	.plugin_dependency_block_note {
+		color: var(--color-error);
+	}
+	.plugin_dependency_block_note > .icon {
+		vertical-align: text-bottom;
 	}
 	dialog#plugins .version {
 		display: inline-block;
