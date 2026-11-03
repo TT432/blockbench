@@ -13,6 +13,12 @@ import { rotateEulerBy90 } from "../util/math_util";
  */
 export const FlipPlane = {
 	offset: [0, 0, 0],
+	/**
+	 * 反馈#299：每个轴面自己的旋转角（度），索引 = 该轴面的法线轴。
+	 * 旋转轴循环对应：X 面绕 Z、Y 面绕 X、Z 面绕 Y（用户 2026-11-03 定案）。
+	 * 与偏移合起来就是工具栏上的 6 个数值。
+	 */
+	rotation: [0, 0, 0],
 	/** 元素数据空间里该轴镜像面的坐标（与 mirrorSelected 传给 flip() 的 center 同空间） */
 	position(axis) {
 		return (Format.centered_grid ? 0 : 8) + this.offset[axis];
@@ -24,8 +30,27 @@ export const FlipPlane = {
 	scenePosition(axis) {
 		return axis === 1 ? this.position(1) : this.offset[axis];
 	},
+	/** 反馈#299：该轴面旋转所绕的轴（循环对应：X→Z、Y→X、Z→Y） */
+	rotationAxis(axis) {
+		return (axis + 2) % 3;
+	},
+	/** 反馈#299：该轴面是否仍未旋转——未旋转时走原来的轴对齐镜像，逐比特保持既有行为 */
+	isAligned(axis) {
+		return Math.abs(this.rotation[axis] % 360) < 1e-6;
+	},
+	/**
+	 * 反馈#299：三个轴面共用的中心点（元素数据空间）。倾斜的轴面绕它旋转，因此三个面永远交于该点，
+	 * 未旋转时它就是各轴自己的 position（其它两个分量对轴对齐平面没有意义）。
+	 */
+	center() {
+		return [this.position(0), this.position(1), this.position(2)];
+	},
+	/** 反馈#299：6 个数值一起归零 */
 	reset() {
-		this.offset[0] = this.offset[1] = this.offset[2] = 0;
+		for (let axis = 0; axis < 3; axis++) {
+			this.offset[axis] = 0;
+			this.rotation[axis] = 0;
+		}
 	},
 }
 
@@ -465,6 +490,164 @@ export function flipNameOnAxis(node, axis, check, original_name) {
 	}
 	return node.name;
 }
+/**
+ * 反馈#299：轴对齐（未旋转）时的镜像主体，不含 Undo 记录——倾斜轴面要在旋转后的坐标系里复用它。
+ */
+function flipSelectionOnAxisPlane(axis) {
+	// 反馈#276：镜像面取滑条偏移后的翻转轴面（偏移为 0 时就是原来的画布中心）
+	let center = FlipPlane.position(axis);
+	if (Format.bone_rig) {
+		for (let group of Group.multi_selected) {
+			function flipGroup(group) {
+				for (let i = 0; i < 3; i++) {
+					if (i === axis) {
+						// 骨骼格式的原点坐标本来就是居中的（画布中心 = 0），轴面偏移直接叠加
+						group.origin[i] = FlipPlane.offset[axis] * 2 - group.origin[i]
+					} else {
+						group.rotation[i] *= -1
+					}
+				}
+				flipNameOnAxis(group, axis, name => (!Group.all.find(g => g.name == name)), group.temp_data.old_name);
+				Canvas.updateAllBones([group]);
+			}
+			flipGroup(group);
+			group.forEachChild(flipGroup, Group);
+		}
+	}
+	Outliner.selected.forEach(function(obj) {
+		if (obj instanceof Mesh) {
+			obj.flipSelection(axis);
+		} else {
+			obj.flip(axis, center, false);
+		}
+	})
+}
+/**
+ * 反馈#299：锁面/镜像要一起参与刚性旋转的节点——选区元素 + 骨骼格式下被镜像的选中组。
+ * 组的后代由 rotateNodesRigidly 自己展开（它按子树根遍历，不会重复变换）。
+ */
+function getFlipPlaneRotationNodes() {
+	let nodes = Outliner.selected.slice();
+	if (Format.bone_rig) {
+		for (let group of Group.multi_selected) {
+			if (!nodes.includes(group)) nodes.push(group);
+		}
+	}
+	return nodes;
+}
+/**
+ * 反馈#299：把节点列表展开成「组 + 元素」两个集合（组按子树根遍历，重复引用只算一次）。
+ * 既给刚性旋转用，也给 Undo 快照用——倾斜镜像会改到选中组的后代节点，快照必须覆盖它们。
+ */
+function collectSubtreeNodes(nodes) {
+	let groups = [];
+	let elements = [];
+	let visited = new Set();
+	function visit(node) {
+		if (!node || visited.has(node)) return;
+		visited.add(node);
+		if (node instanceof Group) {
+			groups.push(node);
+			for (let child of node.children) visit(child);
+		} else if (node.rotation && node.origin) {
+			elements.push(node);
+		}
+	}
+	nodes.forEach(visit);
+	return {groups, elements};
+}
+/**
+ * 反馈#299：把节点（含组内后代）绕 pivot 做一次刚性旋转。
+ * - 组：rotation ← R·rotation·R⁻¹、origin ← R(origin−pivot)+pivot（层级各自在本层坐标系里共轭，
+ *   嵌套也成立）。
+ * - 元素：rotation ← R·rotation、origin ← R(origin−pivot)+pivot；方块的 from/to 与网格的顶点是绝对坐标
+ *   （渲染时只减去 origin 得到局部几何），枢轴换位置后必须按同一个增量平移，否则方块整体错位。
+ * 先绕 pivot 转 −θ、跑原有轴对齐镜像、再转回 +θ，合成结果正是倾斜轴面的反射 R(θ)·D·R(−θ)。
+ */
+function rotateNodesRigidly(nodes, quaternion, pivot) {
+	let {groups, elements} = collectSubtreeNodes(nodes);
+	if (!groups.length && !elements.length) return;
+	let inverse = quaternion.clone().invert();
+	function rotatedOrigin(node) {
+		return new THREE.Vector3().fromArray(node.origin).sub(pivot).applyQuaternion(quaternion).add(pivot);
+	}
+	groups.forEach(group => {
+		let origin = rotatedOrigin(group);
+		let rotation = quaternion.clone().multiply(getNodeRotationQuaternion(group)).multiply(inverse);
+		group.origin.V3_set([origin.x, origin.y, origin.z]);
+		setNodeRotationFromQuaternion(group, rotation);
+	});
+	elements.forEach(element => {
+		let origin = rotatedOrigin(element);
+		let delta = [origin.x - element.origin[0], origin.y - element.origin[1], origin.z - element.origin[2]];
+		let rotation = quaternion.clone().multiply(getNodeRotationQuaternion(element));
+		element.origin.V3_set([origin.x, origin.y, origin.z]);
+		setNodeRotationFromQuaternion(element, rotation);
+		if (element.from && element.to) {
+			for (let i = 0; i < 3; i++) {
+				element.from[i] += delta[i];
+				element.to[i] += delta[i];
+			}
+		} else if (element.vertices) {
+			for (let key in element.vertices) {
+				let vertex = element.vertices[key];
+				if (!vertex) continue;
+				for (let i = 0; i < 3; i++) vertex[i] += delta[i];
+			}
+		}
+	});
+	Canvas.updateView({elements, groups});
+	if (Format.bone_rig) Canvas.updateAllBones(groups);
+}
+/**
+ * 反馈#301：按轴对齐镜像面镜像「给定节点集合」（含组内后代），不写 Undo、不读选区。
+ * 元素沿用各自 flip()/flipSelection()（几何、面 UV、旋转、名称一起翻），组按 D·R·D 翻转
+ * （ZYX 欧拉序下等价于把另外两个分量取反）并镜像 origin，名称按左右/前后翻到对侧。
+ */
+function mirrorNodesOnAxisPlane(nodes, axis) {
+	let center = FlipPlane.position(axis);
+	let {groups, elements} = collectSubtreeNodes(nodes);
+	elements.forEach(element => {
+		if (element instanceof Mesh) {
+			element.flipSelection(axis, center, false);
+		} else if (element.flip) {
+			element.flip(axis, center, false);
+		}
+	});
+	groups.forEach(group => {
+		for (let i = 0; i < 3; i++) {
+			if (i === axis) {
+				group.origin[i] = center * 2 - group.origin[i];
+			} else {
+				group.rotation[i] *= -1;
+			}
+		}
+		flipNameOnAxis(group, axis, name => !Group.all.find(g => g.name == name));
+	});
+	Canvas.updateView({elements, groups});
+	if (Format.bone_rig) Canvas.updateAllBones(groups);
+	return {groups, elements};
+}
+/**
+ * 反馈#299/#301：把给定节点集合按当前翻转轴面（含位置与旋转角）镜像一次。
+ * 轴面未旋转时就是轴对齐镜像；旋转过时先刚性转 −θ、按轴对齐镜像、再转回 +θ，合成倾斜面的反射。
+ * 返回被改动的 {groups, elements}，供调用方写 Undo 后置快照。
+ */
+export function reflectNodesAboutFlipPlane(nodes, axis) {
+	if (FlipPlane.isAligned(axis)) return mirrorNodesOnAxisPlane(nodes, axis);
+	let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
+	let rotation_axis = FlipPlane.rotationAxis(axis);
+	let axis_vector = new THREE.Vector3(
+		rotation_axis === 0 ? 1 : 0,
+		rotation_axis === 1 ? 1 : 0,
+		rotation_axis === 2 ? 1 : 0
+	);
+	let rad = Math.degToRad(FlipPlane.rotation[axis]);
+	rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(axis_vector, -rad), pivot);
+	let targets = mirrorNodesOnAxisPlane(nodes, axis);
+	rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(axis_vector, rad), pivot);
+	return targets;
+}
 export function mirrorSelected(axis) {
 	if (Modes.animate && Timeline.selected.length) {
 
@@ -477,39 +660,41 @@ export function mirrorSelected(axis) {
 		Animator.preview();
 
 	} else if (Modes.edit && (Outliner.selected.length || Group.first_selected)) {
+		// 反馈#299：倾斜轴面的镜像会顺带刚性旋转选中组的后代，快照要覆盖这些节点
+		let tilt_nodes = FlipPlane.isAligned(axis) ? null : collectSubtreeNodes(getFlipPlaneRotationNodes());
+		let undo_elements = Outliner.selected;
+		if (tilt_nodes && tilt_nodes.elements.length) {
+			undo_elements = undo_elements.slice();
+			for (let element of tilt_nodes.elements) {
+				if (!undo_elements.includes(element)) undo_elements.push(element);
+			}
+		}
+		let undo_groups = Format.bone_rig
+			? Group.all.filter(g => g.selected)
+			: (tilt_nodes && tilt_nodes.groups.length ? tilt_nodes.groups : undefined);
 		Undo.initEdit({
-			elements: Outliner.selected,
-			groups: Format.bone_rig ? Group.all.filter(g => g.selected) : undefined,
+			elements: undo_elements,
+			groups: undo_groups,
 			outliner: Format.bone_rig || Group.first_selected,
 			selection: true
 		});
-		// 反馈#276：镜像面取滑条偏移后的翻转轴面（偏移为 0 时就是原来的画布中心）
-		let center = FlipPlane.position(axis);
-		if (Format.bone_rig) {
-			for (let group of Group.multi_selected) {
-				function flipGroup(group) {
-					for (let i = 0; i < 3; i++) {
-						if (i === axis) {
-							// 骨骼格式的原点坐标本来就是居中的（画布中心 = 0），轴面偏移直接叠加
-							group.origin[i] = FlipPlane.offset[axis] * 2 - group.origin[i]
-						} else {
-							group.rotation[i] *= -1
-						}
-					}
-					flipNameOnAxis(group, axis, name => (!Group.all.find(g => g.name == name)), group.temp_data.old_name);
-					Canvas.updateAllBones([group]);
-				}
-				flipGroup(group);
-				group.forEachChild(flipGroup, Group);
-			}
+		// 反馈#299：轴面旋转过时走斜向反射（转 −θ → 轴对齐镜像 → 转回 +θ），未旋转时保持原路径
+		if (!tilt_nodes) {
+			flipSelectionOnAxisPlane(axis);
+		} else {
+			let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
+			let rotation_axis = FlipPlane.rotationAxis(axis);
+			let rotation_axis_vector = new THREE.Vector3(
+				rotation_axis === 0 ? 1 : 0,
+				rotation_axis === 1 ? 1 : 0,
+				rotation_axis === 2 ? 1 : 0
+			);
+			let rad = Math.degToRad(FlipPlane.rotation[axis]);
+			let nodes = getFlipPlaneRotationNodes();
+			rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(rotation_axis_vector, -rad), pivot);
+			flipSelectionOnAxisPlane(axis);
+			rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(rotation_axis_vector, rad), pivot);
 		}
-		Outliner.selected.forEach(function(obj) {
-			if (obj instanceof Mesh) {
-				obj.flipSelection(axis);
-			} else {
-				obj.flip(axis, center, false);
-			}
-		})
 		updateSelection()
 		Undo.finishEdit('Flip selection')
 		autoFixMeshEdit()
@@ -1498,7 +1683,8 @@ BARS.defineActions(function() {
 			parent: true,
 			local: true,
 			// 反馈#275：第四种空间「跟随」——轴向取 Ctrl 选定的跟随源（见 FollowSpace）
-			follow: {condition: {modes: ['edit']}, name: true},
+			// 反馈#303：社区版开关 community_follow_space 控制是否出现（默认关闭）
+			follow: {condition: {modes: ['edit'], method: () => Settings.get('community_follow_space')}, name: true},
 			normal: {condition: () => Mesh.selected.length || SplineMesh.selected.length, name: true}
 		},
 		onChange() {
@@ -1517,7 +1703,8 @@ BARS.defineActions(function() {
 			parent: 'action.transform_space.parent',
 			local: 'action.transform_space.local',
 			// 反馈#281：复用移动空间的翻译键，避免下拉显示 action.rotation_space.follow 原文
-			follow: {condition: {modes: ['edit']}, name: 'action.transform_space.follow'}
+			// 反馈#303：同上，跟随空间开关关闭时不出现
+			follow: {condition: {modes: ['edit'], method: () => Settings.get('community_follow_space')}, name: 'action.transform_space.follow'}
 		},
 		onChange() {
 			FollowSpace.syncHint();
@@ -2178,6 +2365,7 @@ BARS.defineActions(function() {
 	})
 
 	// 反馈#276：翻转轴面偏移滑条 + 轴面可视化 + 「以块中心为翻转轴面」
+	// 反馈#299：每个轴面再加一个旋转角（X 面绕 Z、Y 面绕 X、Z 面绕 Y），可视化按倾斜后的面绘制
 	let flip_plane_group = null;
 	let flip_plane_grids = [];
 	function updateFlipPlaneVisual() {
@@ -2185,7 +2373,7 @@ BARS.defineActions(function() {
 		if (!flip_plane_group) {
 			let size = 16 * 16;
 			let colors = [gizmo_colors.r, gizmo_colors.g, gizmo_colors.b];
-			// X/Z 轴的轴面与绘画镜像的提示面同款（GridHelper 默认躺在 XZ 平面）
+			// 网格一律按「法线」摆姿态：GridHelper 默认躺在 XZ 平面（法线 +Y）
 			flip_plane_grids = colors.map((color, axis) => {
 				let grid = new THREE.GridHelper(size, 32, new THREE.LineBasicMaterial({
 					color,
@@ -2193,8 +2381,6 @@ BARS.defineActions(function() {
 					opacity: 0.45,
 					depthWrite: false,
 				}));
-				if (axis === 0) grid.rotation.z = Math.PI / 2;
-				if (axis === 2) grid.rotation.x = Math.PI / 2;
 				grid.visible = false;
 				return grid;
 			});
@@ -2204,18 +2390,46 @@ BARS.defineActions(function() {
 			Canvas.scene.add(flip_plane_group);
 			Canvas.gizmos.push(flip_plane_group);
 		}
+		// 数据空间的法线换算到场景空间：借模型根节点的世界矩阵（含画布 Y 轴转换与居中网格平移）
+		let model_matrix = null;
+		if (typeof Project !== 'undefined' && Project && Project.model_3d) {
+			Project.model_3d.updateWorldMatrix(true, false);
+			model_matrix = Project.model_3d.matrixWorld;
+		}
 		flip_plane_grids.forEach((grid, axis) => {
-			// 偏移为 0（画布中心）时不画，避免默认视角被三个面糊住；改过数值才出现并跟随移动
-			let visible = FlipPlane.offset[axis] != 0;
+			let angle = FlipPlane.rotation[axis];
+			// 偏移为 0（画布中心）且未旋转时不画，避免默认视角被三个面糊住；改过数值才出现并跟随
+			let visible = FlipPlane.offset[axis] != 0 || Math.abs(angle % 360) > 1e-6;
 			grid.visible = visible;
 			if (!visible) return;
-			grid.position.set(0, 0, 0);
-			grid.position.setComponent(axis, FlipPlane.scenePosition(axis));
+			// 三个面共用同一中心点（元素数据空间 → 场景坐标）
+			grid.position.set(
+				FlipPlane.scenePosition(0),
+				FlipPlane.scenePosition(1),
+				FlipPlane.scenePosition(2)
+			);
+			let normal = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+			if (Math.abs(angle) > 1e-6) {
+				let rotation_axis = FlipPlane.rotationAxis(axis);
+				normal.applyAxisAngle(
+					new THREE.Vector3(
+						rotation_axis === 0 ? 1 : 0,
+						rotation_axis === 1 ? 1 : 0,
+						rotation_axis === 2 ? 1 : 0
+					),
+					Math.degToRad(angle)
+				);
+			}
+			if (model_matrix) normal.transformDirection(model_matrix);
+			grid.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
 		});
 	}
 	function updateFlipPlaneSliders() {
-		['slider_flip_plane_x', 'slider_flip_plane_y', 'slider_flip_plane_z'].forEach(id => {
-			if (BarItems[id]) BarItems[id].update();
+		['x', 'y', 'z'].forEach(key => {
+			let offset_slider = BarItems['slider_flip_plane_' + key];
+			if (offset_slider) offset_slider.update();
+			let rotation_slider = BarItems['slider_flip_plane_rotation_' + key];
+			if (rotation_slider) rotation_slider.update();
 		});
 	}
 
@@ -2240,14 +2454,19 @@ BARS.defineActions(function() {
 	}
 
 	// 反馈#284：轴面偏移进 Undo（纯运行时状态，用现有 save 钩子挂字段，避免 undo.js 反向依赖）
+	// 反馈#299：旋转角同样入栈——6 个数值要么一起回退，要么一起前进
 	Blockbench.on('create_undo_save', ({save, aspects}) => {
 		if (!aspects.flip_plane) return;
 		save.flip_plane = FlipPlane.offset.slice();
+		save.flip_plane_rotation = FlipPlane.rotation.slice();
 	});
 	Blockbench.on('load_undo_save', ({save}) => {
 		// 只回读「本条记录自己存的」快照：没存过轴面的记录（几何编辑等）不改动当前轴面
 		if (!Array.isArray(save.flip_plane)) return;
 		for (let axis = 0; axis < 3; axis++) FlipPlane.offset[axis] = save.flip_plane[axis] ?? 0;
+		if (Array.isArray(save.flip_plane_rotation)) {
+			for (let axis = 0; axis < 3; axis++) FlipPlane.rotation[axis] = save.flip_plane_rotation[axis] ?? 0;
+		}
 		updateFlipPlaneVisual();
 		updateFlipPlaneSliders();
 	});
@@ -2272,6 +2491,19 @@ BARS.defineActions(function() {
 			return;
 		}
 		FlipPlane.offset[axis] = value;
+		updateFlipPlaneVisual();
+	}
+	/**
+	 * 反馈#299：轴面旋转角（度）。收敛到 (−180, 180]，避免连续拖动后数值无限增长；
+	 * 锁定与偏移共用同一个轴锁。
+	 */
+	function setFlipPlaneRotation(axis, value) {
+		if (isFlipPlaneLocked(axis)) {
+			updateFlipPlaneSliders();
+			return;
+		}
+		let angle = ((value + 180) % 360 + 360) % 360 - 180;
+		FlipPlane.rotation[axis] = Math.round(angle * 1000) / 1000;
 		updateFlipPlaneVisual();
 	}
 	let flip_plane_sliders = [0, 1, 2].map(axis => new NumSlider('slider_flip_plane_' + 'xyz'[axis], {
@@ -2299,6 +2531,29 @@ BARS.defineActions(function() {
 		},
 	}));
 	flip_plane_sliders.forEach(slider => slider.slider_vector = flip_plane_sliders);
+	let flip_plane_rotation_sliders = [0, 1, 2].map(axis => new NumSlider('slider_flip_plane_rotation_' + 'xyz'[axis], {
+		name: tl('action.slider_flip_plane_rotation', ['XYZ'[axis]]),
+		description: 'action.slider_flip_plane_rotation.desc',
+		color: 'xyz'[axis],
+		category: 'transform',
+		condition: () => Modes.edit,
+		get: function() {
+			return FlipPlane.rotation[axis];
+		},
+		change: function(modify) {
+			setFlipPlaneRotation(axis, modify(FlipPlane.rotation[axis]));
+		},
+		setAbsolute: function(value) {
+			setFlipPlaneRotation(axis, value);
+		},
+		onBefore() {
+			beginFlipPlaneEdit(axis);
+		},
+		onAfter() {
+			endFlipPlaneEdit(axis);
+		},
+	}));
+	flip_plane_rotation_sliders.forEach(slider => slider.slider_vector = flip_plane_rotation_sliders);
 
 	new Action('flip_plane_to_center', {
 		name: 'action.flip_plane_to_center',
@@ -2329,10 +2584,35 @@ BARS.defineActions(function() {
 				if (isFlipPlaneLocked(axis)) continue;
 				FlipPlane.offset[axis] = Math.round((center[axis] - base) * 1000) / 1000;
 			}
+			// 反馈#299：轴面的角度同时对齐到选中对象的单轴旋转角。X 面绕 Z 转，就取对象的 Z 旋转值，
+			// 于是倾斜后的 X 面正好贴上该方块自己的 X 轴。
+			let reference = nodes.find(node => node.rotation);
+			for (let axis = 0; axis < 3; axis++) {
+				if (isFlipPlaneLocked(axis)) continue;
+				let angle = reference ? (reference.rotation[FlipPlane.rotationAxis(axis)] ?? 0) : 0;
+				FlipPlane.rotation[axis] = Math.round(angle * 1000) / 1000;
+			}
 			updateFlipPlaneVisual();
 			updateFlipPlaneSliders();
 			Undo.finishEdit('Move flip planes to selection center', {flip_plane: true, keep_saved: true});
 			Blockbench.showQuickMessage(tl('message.flip_plane_center.set'));
+		}
+	})
+	// 反馈#299：「轴面对齐所选中心」右侧的重置按钮——偏移与旋转共 6 个数值一键归零
+	new Action('flip_plane_reset', {
+		name: 'action.flip_plane_reset',
+		description: 'action.flip_plane_reset.desc',
+		icon: 'restart_alt',
+		category: 'transform',
+		condition: () => Modes.edit,
+		click() {
+			if (!FlipPlane.offset.some(value => value) && !FlipPlane.rotation.some(value => value)) return;
+			Undo.initEdit({flip_plane: true, keep_saved: true});
+			FlipPlane.reset();
+			updateFlipPlaneVisual();
+			updateFlipPlaneSliders();
+			Undo.finishEdit('Reset flip planes', {flip_plane: true, keep_saved: true});
+			Blockbench.showQuickMessage(tl('message.flip_plane_reset'));
 		}
 	})
 

@@ -437,13 +437,21 @@ function setupSettings() {
 	// 关闭后按原名称导出、不弹名称报告。生效点见 export_names.js buildBedrockExportNames()。
 	new Setting('community_bedrock_export_rename', {category: 'community', value: true});
 	// 反馈#193/#200：工具栏六个「旋转 X/Y/Z 轴 90°」按钮以什么为枢轴。
-	// 关闭（默认，上游行为）= 居中网格格式绕世界原点、骨架构架绕首个选中组枢轴、其余绕首个选中元素枢轴；
+	// 关闭（默认，上游行为）= 居中网格格式绕世界原点、骨架构型绕首个选中组枢轴、其余绕首个选中元素枢轴；
 	// 开启 = 每个被旋转的子树绕自身枢轴自转（选组绕该组枢轴、选单个方块绕该方块 origin）。
 	// 旋转轴方向跟随「旋转空间」工具栏选项（全局/父级/自身，见 transform.js getRotate90Space）。
 	new Setting('community_rotate_own_pivot', {category: 'community', value: false});
+	// 反馈#303：「跟随」空间模式（#275/#281/#290/#294）做成社区版开关，默认关闭。
+	// 关闭时移动/旋转工具栏的下拉里不出现「跟随」、已选中的跟随态回落全局、跟随源清空；
+	// 生效点见 transform.js 两个 BarSelect 的 follow 选项条件与 follow_space.ts isFollowSelected()。
+	new Setting('community_follow_space', {category: 'community', value: false, onChange() {
+		if (typeof FollowSpace !== 'undefined') FollowSpace.applySetting();
+	}});
 	new Setting('community_tab_groups', {category: 'community', value: true, onChange() {
 		if (typeof Interface !== 'undefined' && Interface.tab_bar) Interface.tab_bar.$forceUpdate();
 	}});
+	// 反馈#303：启动期按开关收敛一次跟随态（onChange 只在用户切换时跑）
+	if (typeof FollowSpace !== 'undefined') FollowSpace.applySetting();
 
 	Blockbench.onUpdateTo('5.0.0', () => {
 		settings.antialiasing_bleed_fix.set(true);

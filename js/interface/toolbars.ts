@@ -518,6 +518,9 @@ export const BARS = {
 				'_',
 				'mirror_modeling',
 				'mirror_animating',
+				'mirror_group_sides',
+				'_',
+				'face_optimize',
 			]
 		})
 
@@ -582,6 +585,7 @@ export const BARS = {
 			]
 		})
 		// 反馈#276：翻转轴面偏移（默认 0 = 画布中心）+ 以块中心为翻转轴面
+		// 反馈#299：第一行是 3 个偏移 + 锁定 + 对齐 + 重置，换行后第二行是 3 个旋转角
 		Toolbars.flip_plane = new Toolbar({
 			id: 'flip_plane',
 			name: 'panel.element.flip_plane',
@@ -594,6 +598,11 @@ export const BARS = {
 				'slider_flip_plane_z',
 				'flip_plane_lock_z',
 				'flip_plane_to_center',
+				'flip_plane_reset',
+				'#',
+				'slider_flip_plane_rotation_x',
+				'slider_flip_plane_rotation_y',
+				'slider_flip_plane_rotation_z',
 			]
 		})
 		if (Blockbench.isMobile) {

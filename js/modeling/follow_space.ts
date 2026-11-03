@@ -71,6 +71,9 @@ export const FollowSpace = {
 	/** 当前工具的空间选择是否处于「跟随」 */
 	isFollowSelected(): boolean {
 		if (typeof BarItems == 'undefined' || typeof Toolbox == 'undefined') return false;
+		// 反馈#303：「跟随」空间由社区版设置开关控制，默认关闭——关闭时整条链路（源、红框、
+		// 状态栏提示、轴向）都不生效
+		if (typeof Settings == 'undefined' || !Settings.get('community_follow_space')) return false;
 		let tool = Toolbox.selected?.id;
 		// 反馈#298：跟随只属于「位移」和「旋转」两个工具。其它工具（缩放、顶点捕捉等）读的是
 		// 同一个 transform_space，此前会被误判成跟随态，红框与源的轴向一直挂着。
@@ -102,6 +105,21 @@ export const FollowSpace = {
 			return;
 		}
 		return source;
+	},
+
+	/**
+	 * 反馈#303：开关关闭时收敛所有跟随态——跟随源/红框清空，两个空间下拉若是「跟随」则回落全局。
+	 * 由 setup_settings.js 的 community_follow_space.onChange 与启动期各调用一次。
+	 */
+	applySetting() {
+		if (typeof Settings == 'undefined' || Settings.get('community_follow_space')) return;
+		this.clearSource();
+		if (typeof BarItems !== 'undefined') {
+			for (let bar of [BarItems.transform_space, BarItems.rotation_space]) {
+				if (bar && bar.value === 'follow') bar.set('global');
+			}
+		}
+		if (typeof BARS !== 'undefined') BARS.updateConditions();
 	},
 
 	getOrphanedSource(): boolean {

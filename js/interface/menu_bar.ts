@@ -540,6 +540,7 @@ export const MenuBar = {
 			'convert_mesh_to_cubes',
 			'auto_set_cullfaces',
 			'remove_blank_faces',
+			'face_optimize',
 			'generate_voxel_shapes',
 			'generate_bedrock_block_box',
 			'generate_bedrock_entity_box',

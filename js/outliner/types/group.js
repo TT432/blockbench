@@ -616,6 +616,7 @@ Group.addBehaviorOverride({
 		'resolve_group',
 		'delete_empty_groups',
 		'rename',
+		'rename_descendants',
 		'delete'
 	]);
 	function syncDirectlySelectedFlags() {
@@ -841,6 +842,61 @@ window.__defineGetter__('selected_group', () => {
 	console.warn('selected_group is deprecated. Please use Group.first_selected instead.')
 	return Group.first_selected
 })
+
+/**
+ * 反馈#293/#302：给定候选组，收敛出「删掉之后确实没有一个非空子节点」的可删集合。
+ * 从候选集出发反复剔除仍有子节点留在集外的组：组内还有元素、或还有不会被删的子组，都不能删。
+ * 最内层空组被删后外层也就空了，逐层收敛到没有变化为止。
+ */
+function collectDeletableGroups(candidates) {
+	let inside = new Set(candidates);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (let group of [...inside]) {
+			if (group.children.length && !group.children.every(child => inside.has(child))) {
+				inside.delete(group);
+				changed = true;
+			}
+		}
+	}
+	return Group.all.filter(group => inside.has(group));
+}
+/**
+ * 反馈#302：删除空分组的确认面板——列出将被删除的组（默认全选），取消勾选的组不删。
+ * 确认后按勾选集重新收敛一次：取消了子组时，上级组也不再是空组。
+ */
+function showDeleteEmptyGroupsDialog(doomed) {
+	let form = {};
+	doomed.forEach((group, index) => {
+		form['group_' + index] = {
+			label: group.name,
+			type: 'checkbox',
+			value: true,
+		};
+	});
+	new Dialog('delete_empty_groups', {
+		title: 'action.delete_empty_groups',
+		width: 400,
+		lines: [tl('dialog.delete_empty_groups.hint', [doomed.length])],
+		form,
+		onConfirm(result) {
+			if (!result) return;
+			let keep = collectDeletableGroups(doomed.filter((group, index) => result['group_' + index]));
+			if (!keep.length) return;
+			// 对齐 SharedActions delete 的写法：initEdit 传引用、finishEdit 前 empty() 标记删除后状态
+			Undo.initEdit({outliner: true, groups: keep, selection: true});
+			for (let group of keep.slice()) {
+				// 子孙随最外层一起离开，不逐个 remove（逐个删会让撤销时挂不回父子关系）
+				if (group.parent instanceof Group && keep.includes(group.parent)) continue;
+				group.remove(false);
+			}
+			keep.empty();
+			Undo.finishEdit('Delete empty groups');
+			updateSelection();
+		}
+	}).show();
+}
 
 BARS.defineActions(function() {
 	new Action('add_group', {
@@ -1113,38 +1169,43 @@ BARS.defineActions(function() {
 		}
 	})
 	// 反馈#105：一键删除选中的空分组（没有任何子内容的组）
+	// 反馈#302：删除前弹面板列出将被删除的空分组，默认全选，可逐个取消
 	new Action('delete_empty_groups', {
 		icon: 'delete_sweep',
 		category: 'edit',
 		condition: {modes: ['edit', 'paint'], method: () => Group.all.some(g => g.selected && !g.children.length)},
 		click() {
-			if (!Group.all.some(g => g.selected && !g.children.length)) return;
-			// 反馈#293：嵌套的空分组要一次删干净。先按「子级全部会一起被删」求闭包——最内层
-			// 空组被删后外层也就空了，逐层收敛到没有新的空组为止（按 Group.all 顺序，外层在前，
-			// 与共享删除动作一致，撤销才能按父级挂回子树）。
-			let doomed = [];
-			let changed = true;
-			while (changed) {
-				changed = false;
-				for (let group of Group.all) {
-					if (!group.selected || doomed.includes(group)) continue;
-					if (group.children.length == 0 || group.children.every(child => child instanceof Group && doomed.includes(child))) {
-						doomed.push(group);
-						changed = true;
-					}
-				}
-			}
+			let doomed = collectDeletableGroups(Group.all.filter(g => g.selected));
 			if (!doomed.length) return;
-			doomed = Group.all.filter(g => doomed.includes(g));
-			// 对齐 SharedActions delete 的写法：initEdit 传引用、finishEdit 前 empty() 标记删除后状态
-			Undo.initEdit({outliner: true, groups: doomed, selection: true});
-			for (let group of doomed.slice()) {
-				// 子孙随最外层一起离开，不逐个 remove（逐个删会让撤销时挂不回父子关系）
-				if (group.parent instanceof Group && doomed.includes(group.parent)) continue;
-				group.remove(false);
+			showDeleteEmptyGroupsDialog(doomed);
+		}
+	})
+	// 反馈#306：右键「重命名」下面的「往下自动重命名」——按被右键组的名称，把它下面的所有组
+	// 依次命名为「原组名_1」「原组名_2」…（自上而下遍历顺序，用户 2026-11-03 定案）
+	new Action('rename_descendants', {
+		icon: 'sort_by_alpha',
+		category: 'edit',
+		condition: {modes: ['edit', 'paint'], method: () => Group.all.some(g => g.selected)},
+		click() {
+			// 多个选中组彼此嵌套时只按最外层命名，否则内层组会被父组与外层组各命名一次
+			let roots = Group.all.filter(group => group.selected
+				&& !Group.all.some(other => other !== group && other.selected && group.isChildOf(other, 128)));
+			let changes = [];
+			for (let root of roots) {
+				let index = 0;
+				root.forEachChild(child => {
+					if (!(child instanceof Group)) return;
+					index++;
+					let name = `${root.name}_${index}`;
+					if (child.name !== name) changes.push({group: child, name});
+				}, Group);
 			}
-			doomed.empty();
-			Undo.finishEdit('Delete empty groups');
+			if (!changes.length) return;
+			Undo.initEdit({outliner: true, groups: changes.map(change => change.group)});
+			for (let change of changes) {
+				change.group.name = change.name;
+			}
+			Undo.finishEdit('Auto rename group descendants');
 			updateSelection();
 		}
 	})
