@@ -128,6 +128,32 @@ export const Plugins = {
 		}
 	},
 	/**
+	 * Hold back every plugin that depends on the given plugin once that dependency became
+	 * unavailable (uninstalled or disabled). The plugin is *not* disabled: `disabled` stays as the
+	 * user set it, only `dependency_blocked` is set, and the code is unloaded because it can no
+	 * longer work. {@link loadBlockedDependents} brings it back when the dependency returns.
+	 *
+	 * Dependencies are re-evaluated recursively, so a chain `A -> B -> C` blocks `A` when `C`
+	 * disappears and restores it once `C` is available again.
+	 */
+	updateBlockedDependents(dependency_id: string) {
+		let dependents = Plugins.all.filter(plugin => plugin.dependencies?.includes(dependency_id));
+		for (let plugin of dependents) {
+			if (plugin.dependency_blocked) continue;
+			if (plugin.checkDependencies()) continue;
+			plugin.dependency_blocked = true;
+			try {
+				plugin.unload();
+			} catch (err) {
+				console.error(`Could not unload plugin "${plugin.id}" whose dependency is unavailable`, err);
+			}
+			Blockbench.showQuickMessage(
+				tl('message.plugin_dependency_held_back',
+					[plugin.title || plugin.id, plugin.describeMissingDependencies()]))
+			this.updateBlockedDependents(plugin.id);
+		}
+	},
+	/**
 	 * Dev reload all side-loaded plugins
 	 */
 	devReload() {
@@ -889,6 +915,7 @@ export class Plugin {
 			removeCachedFile(Plugins.path + this.id + '.about.md');
 		}
 		StateMemory.save('installed_plugins')
+		Plugins.updateBlockedDependents(this.id);
 		return this;
 	}
 	unload() {
@@ -1003,6 +1030,7 @@ export class Plugin {
 			console.error(err);
 		}
 		this.#remember();
+		Plugins.updateBlockedDependents(this.id);
 	}
 	async enable() {
 		this.disabled = false;

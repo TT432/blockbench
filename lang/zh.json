@@ -2166,6 +2166,7 @@
 	"message.plugin_dependencies.message2": "你是否要安装它们并继续？",
 	"message.plugin_dependencies.invalid": "插件无法被安装，无效前置：",
 	"message.plugin_dependencies.unknown": "前置插件“%0”不在插件仓库中，无法自动安装。",
+	"message.plugin_dependency_held_back": "插件 %0 已暂停：前置插件不可用：%1",
 	"message.plugin_dependency_blocked": "以下插件因前置插件不可用而未启用：%0",
 	"message.plugin_dependency_enabled": "前置插件已就绪，插件 %0 已自动启用",
 	"message.preview_scene_load_failed": "无法加载预览场景。检查互联网连接。",

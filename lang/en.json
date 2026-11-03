@@ -342,6 +342,7 @@
 	"message.plugin_dependencies.message2": "Do you want to install them to continue?",
 	"message.plugin_dependencies.invalid": "Unfortunately the plugin cannot be installed, it has an invalid dependency:",
 	"message.plugin_dependencies.unknown": "The dependency \"%0\" is not available in the plugin repository, so it cannot be installed automatically.",
+	"message.plugin_dependency_held_back": "Plugin %0 is paused because its dependencies are unavailable: %1",
 	"message.plugin_dependency_blocked": "These plugins are not enabled because their dependencies are unavailable: %0",
 	"message.plugin_dependency_enabled": "Plugin %0 is enabled because its dependencies are available now",
 	"message.plugin_deprecated.message": "Are you sure you want to install this deprecated plugin?",
