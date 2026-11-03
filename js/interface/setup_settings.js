@@ -2,6 +2,7 @@ import { AutoBackup } from "../auto_backup";
 import { changeImageEditor } from "../desktop";
 import { currentwindow } from "../native_apis";
 import { Setting, Settings, SettingsProfile } from "./settings";
+import { isPackBoundProject } from "../formats/bedrock/export_names";
 import { addStartScreenSection } from "./start_screen";
 
 function setupSettings() {
@@ -435,7 +436,13 @@ function setupSettings() {
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
 	// 反馈#271：基岩版导出时把不合规名称自动换成合规名称（骨骼/定位器/动画/动画控制器），
 	// 关闭后按原名称导出、不弹名称报告。生效点见 export_names.js buildBedrockExportNames()。
-	new Setting('community_bedrock_export_rename', {category: 'community', value: true});
+	new Setting('community_bedrock_export_rename', {category: 'community', value: true, lock() {
+		// 桥接到 YSM 模型包的工程：名称由模型包内文件按名引用，改名会断引用，
+		// 因此这里把设置锁成关闭（用户存量值保留，断开桥接后自动恢复）。
+		if (isPackBoundProject()) {
+			return {value: false, reason: tl('settings.community_bedrock_export_rename.locked')};
+		}
+	}});
 	// 反馈#193/#200：工具栏六个「旋转 X/Y/Z 轴 90°」按钮以什么为枢轴。
 	// 关闭（默认，上游行为）= 居中网格格式绕世界原点、骨架构型绕首个选中组枢轴、其余绕首个选中元素枢轴；
 	// 开启 = 每个被旋转的子树绕自身枢轴自转（选组绕该组枢轴、选单个方块绕该方块 origin）。

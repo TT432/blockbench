@@ -267,6 +267,13 @@ onVueSetup(function() {
 					let master = setting.group ? settings[setting.group] : undefined;
 					return !!master && master.ui_value === false;
 				},
+				/** 上下文接管（如桥接项目禁止改名）时控件禁用，原因作为悬停提示。 */
+				isLocked(setting: Setting): boolean {
+					return !!setting.lock?.();
+				},
+				lockReason(setting: Setting): string {
+					return setting.lock?.()?.reason ?? '';
+				},
 				// 反馈#251：把数值项恢复为默认值，走与右键菜单「重置至原值」相同的写回路径
 				resetToDefault(this: SettingsDialogVueData, setting: Setting) {
 					setting.ui_value = setting.default_value;
@@ -366,7 +373,7 @@ onVueSetup(function() {
 								<div class="setting_element setting_icon" v-html="getIconNode(setting.icon).outerHTML"></div>
 							</template>
 							<template v-else-if="setting.type == 'toggle'"><!--TOGGLE-->
-								<div class="setting_element"><input type="checkbox" class="toggle_switch" v-model="setting.ui_value" v-bind:id="'setting_'+key" :key="key" v-on:click="saveSettings(); $forceUpdate()" :disabled="isGroupDisabled(setting)"></div>
+								<div class="setting_element"><input type="checkbox" class="toggle_switch" v-model="setting.ui_value" v-bind:id="'setting_'+key" :key="key" v-on:click="saveSettings(); $forceUpdate()" :disabled="isGroupDisabled(setting) || isLocked(setting)" :title="isLocked(setting) ? lockReason(setting) : null"></div>
 							</template>
 
 							<div class="setting_label">
@@ -384,6 +391,11 @@ onVueSetup(function() {
 									@click.stop="profile = (profile == profile_here) ? null : profile_here"
 								/>
 								<div class="setting_description">{{ setting.description }}</div>
+								<!-- 上下文接管（例如桥接项目禁止改名）时说明为什么改不了 -->
+								<div class="setting_lock_reason" v-if="isLocked(setting)" :title="lockReason(setting)">
+									<i class="material-icons" style="font-size: 14px; vertical-align: -2px;">lock</i>
+									{{ lockReason(setting) }}
+								</div>
 							</div>
 
 							<template v-if="setting.type === 'text'">

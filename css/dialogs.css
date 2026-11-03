@@ -736,6 +736,14 @@
 		font-size: 0.94em;
 		color: var(--color-subtle_text);
 	}
+	/* 上下文接管（如桥接项目禁止改名）时说明为什么改不了 */
+	.settings_list .setting_lock_reason {
+		font-size: 0.9em;
+		color: var(--color-warning, var(--color-subtle_text));
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
 	.settings_list .setting_plugin_label {
 		padding: 3px 10px;
 		font-size: 15px;

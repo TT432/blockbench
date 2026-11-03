@@ -41,6 +41,12 @@ interface SettingOptions {
 	 * 自身存量值保留；组开关重新打开后恢复。
 	 */
 	group?: string
+	/**
+	 * 当前上下文接管这项设置时返回强制值与原因（例如桥接到外部工具的项目禁止改名）。
+	 * 返回值存在时：读取到的 value / ui_value 用强制值、界面控件禁用、写入被拒绝；
+	 * 用户原有的存量值保留，上下文解除后自动恢复。
+	 */
+	lock?(): {value: SettingsValue, reason: string} | undefined | null
 }
 
 /**
@@ -71,6 +77,7 @@ export class Setting {
 	onChange: (value: SettingsValue) => void
 	keybind_label: string
 	group?: string
+	lock?: () => {value: SettingsValue, reason: string} | undefined | null
 
 	constructor(id: string, data: SettingOptions) {
 		this.id = id;
@@ -127,6 +134,9 @@ export class Setting {
 		if (typeof data.group == 'string') {
 			this.group = data.group
 		}
+		if (typeof data.lock == 'function') {
+			this.lock = data.lock
+		}
 
 		//add to structure
 		var category = Settings.structure[this.category];
@@ -157,6 +167,9 @@ export class Setting {
 	 * The active value
 	 */
 	get value(): SettingsValue {
+		// 上下文接管（例如桥接项目禁止改名）时强制值优先，用户存量值按原样保留。
+		let lock = this.lock?.();
+		if (lock) return lock.value;
 		let value: SettingsValue;
 		let profile = SettingsProfile.all.find(profile => profile.isActive() && profile.settings[this.id] !== undefined);
 		if (profile) {
@@ -179,6 +192,9 @@ export class Setting {
 	 * The value that is displayed in the settings dialog
 	 */
 	get ui_value(): SettingsValue {
+		// 上下文接管时界面显示强制值，避免「显示开着但实际不生效」。
+		let lock = this.lock?.();
+		if (lock) return lock.value;
 		let profile = Settings.dialog.content_vue?.$data.profile;
 		if (profile && profile.settings[this.id] !== undefined) {
 			return profile.settings[this.id];
@@ -188,6 +204,8 @@ export class Setting {
 		return this.value;
 	}
 	set ui_value(value: SettingsValue) {
+		// 上下文接管期间拒绝写入（控件本身在设置窗口里被禁用，这里是兜底）。
+		if (this.lock?.()) return;
 		let profile = Settings.dialog.content_vue?.$data.profile;
 		if (this.type == 'number') value = Math.clamp(value as number, this.min, this.max)
 		if (profile) {
@@ -216,6 +234,12 @@ export class Setting {
 	 */
 	set(value: SettingsValue) {
 		if (value === undefined || value === null) return;
+		let lock = this.lock?.();
+		if (lock) {
+			// 写入被上下文接管时给出原因，而不是静默失败。
+			Blockbench.showQuickMessage(lock.reason, 4000);
+			return;
+		}
 		let old_value = this.value;
 
 		if (this.type == 'number' && typeof value == 'number') {

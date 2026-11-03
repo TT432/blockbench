@@ -245,6 +245,7 @@
 	"settings.community_paste_with_textures": "复制粘贴：粘贴结构时同步贴图",
 	"settings.community_paste_with_textures.desc": "复制元素时一并携带贴图，粘贴时导入目标工程。关闭后不带贴图（原版行为）。",
 	"settings.community_bedrock_export_rename": "基岩版导出：自动规范化名称",
+	"settings.community_bedrock_export_rename.locked": "从游戏打开的项目锁定为关闭：这些名称被模型包内的文件按名引用，改名会让引用断掉。",
 	"settings.community_bedrock_export_rename.desc": "导出基岩版几何与动画时，把不合规的骨骼名、定位器名、动画名、动画控制器名自动替换为合规名称，并弹出名称报告。关闭后按原名称导出（引用了这些名称的外部文件会失效）。",
 	"settings.community_rotate_own_pivot": "旋转 90°：绕选中对象自身枢轴",
 	"settings.community_rotate_own_pivot.desc": "工具栏的「旋转 X/Y/Z 轴 90°」按钮改为绕每个选中对象自身的枢轴自转：选中组时绕该组枢轴，选中单个方块时绕该方块自己的枢轴。关闭时按原版行为：居中网格格式绕世界原点、骨架构架绕首个选中组的枢轴、其余格式绕首个选中元素的枢轴。旋转轴的方向跟随「旋转空间」工具栏选项（全局 / 父级 / 自身）：全局用世界轴，父级用所在组上一级的朝向，自身用对象自己的朝向。帧不是直角对齐（所在组带任意角度）时只能以旋转值表达结果。",

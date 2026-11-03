@@ -26,6 +26,24 @@ export function isLegalBedrockName(name) {
 }
 
 /**
+ * 项目是否被外部工具按名称接管（YSM 文件夹模型经 bbconnectmod 桥接打开）。
+ *
+ * 这类项目的骨骼/定位器/动画名由模型包内的 ysm.json 与动画文件按名称引用，改名会让引用断掉，
+ * 因此导出时一律按原名称写出、不做不合规替换，也不产出改名报告。标记由 bbconnectmod 在绑定
+ * 模型目录时写入（`bbconnect_pack`，并同步 `ysm_project_info.path` 供 ysm_utils 使用）。
+ *
+ * @param {object} [project]
+ * @returns {boolean}
+ */
+export function isPackBoundProject(project) {
+	let current = project ?? (typeof Project != 'undefined' ? Project : null);
+	if (!current) return false;
+	if (typeof current.bbconnect_pack == 'string' && current.bbconnect_pack) return true;
+	let ysm_path = current.ysm_project_info?.path;
+	return typeof ysm_path == 'string' && ysm_path.length > 0;
+}
+
+/**
  * 把任意字符串压成合规名称的候选值（不含唯一性处理）
  * @param {string} name
  * @param {string} fallback 完全无法提取时使用的前缀
@@ -155,7 +173,9 @@ function shortNameOf(exported_full_name, fallback) {
 export function buildBedrockExportNames() {
 	// 反馈#271：设置「基岩版导出：自动规范化名称」关闭时，四类名称全部按原样导出（不做不合规替换，
 	// 也不产生改名报告）。短名称表仍按实际导出名计算。
-	const auto_rename = typeof settings == 'undefined' || settings.community_bedrock_export_rename?.value !== false;
+	// 桥接到外部工具（YSM 模型包）的项目一律不改名：名称被包内文件按名引用。
+	const auto_rename = !isPackBoundProject()
+		&& (typeof settings == 'undefined' || settings.community_bedrock_export_rename?.value !== false);
 	const bones = createDomain(collectNodes(() => Group.all), 'bone', 'bone', auto_rename);
 	const locators = createDomain(collectNodes(() => {
 		let list = [...(typeof Locator != 'undefined' ? Locator.all : [])];
