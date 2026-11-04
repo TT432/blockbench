@@ -19,7 +19,7 @@ Blockbench.on('unloaded_plugin', ({plugin}) => {
 
 /**
  * 新建自定义 molang 对话框（语义：仅新建）。编辑已有定义时传入 edit_def，
- * 此时对话框预填并按 uuid 更新——编辑入口在变量占位符面板的条目右键菜单。
+ * 此时对话框预填并按 uuid 更新——编辑入口在高级 molang 面板的条目右键菜单。
  */
 function openCustomMolangDialog(edit_def) {
 	if (!Project) return;

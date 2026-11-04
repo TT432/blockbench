@@ -1563,6 +1563,11 @@
 		min-height: 0;
 		overflow-y: auto;
 	}
+	#panel_advanced_molang .panel_vue_wrapper {
+		flex-grow: 1;
+		min-height: 0;
+		overflow-y: auto;
+	}
 	#panel_variable_placeholders .prism-editor-component {
 		flex-grow: 1;
 		flex-shrink: 0;
@@ -1616,7 +1621,7 @@
 		color: var(--color-light);
 	}
 
-/* 变量占位符面板：自定义 molang 列表与变量表 */
+/* 高级 molang 面板：自定义 molang 列表与变量表 */
 	.custom_molang_section_label {
 		display: block;
 		padding: 4px 8px 0;
