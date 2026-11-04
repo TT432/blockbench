@@ -98,6 +98,27 @@ function insertAfter(node: OutlinerNode, source: OutlinerNode) {
 	list.splice(source_index >= 0 ? source_index + 1 : list.length, 0, node);
 }
 
+/** 节点当前是否还在场景树里（被删除的节点可能还留着 parent 引用） */
+function isInTree(node: OutlinerNode): boolean {
+	if (OutlinerNode.uuids[node.uuid] !== node) return false;
+	let parent = node.parent;
+	if (parent instanceof Group) return parent.children.includes(node);
+	return Outliner.root.includes(node);
+}
+
+function pathsEqual(a: number[], b: number[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
+}
+
+/** 把节点放到 parent.children 的第 index 位（越界按末尾） */
+function placeAtIndex(node: OutlinerNode, parent: Group, index: number) {
+	node.addTo(parent, Math.max(0, Math.min(index, parent.children.length)));
+}
+
 function mirrorGroupTransform(source: Group, counterpart: Group) {
 	let center = mirrorCenter();
 	counterpart.origin[0] = 2 * center - source.origin[0];
@@ -124,15 +145,26 @@ export const SmartCopyGroup = {
 	edited_groups: null as Set<UUID> | null,
 	/** 编辑前的名字快照，用于判断本次编辑是否改了名字（第 6 点） */
 	edited_names: null as Map<UUID, string> | null,
+	/** 本次编辑涉及的链接 → 成员组（第 2 点：结构同步只在被编辑的链接上做） */
+	edit_links: null as Map<UUID, Group[]> | null,
+	/** 编辑前各节点相对成员根的路径与所属成员（第 2 点：新节点 / 拖动后的结构调整靠它对齐） */
+	pre_paths: null as Map<UUID, number[]> | null,
+	pre_roots: null as Map<UUID, Group> | null,
+	/** 本次编辑涉及的链接属性是否仍连着；断开后组级改动（含枢轴）不再映射（复报第 1 点） */
+	edit_attrs_linked: true,
+	/** 本次编辑是否在组级（组本身被选中/编辑）——断开后连子块的位移也不映射 */
+	edit_group_level: false,
+	/** 本次编辑由本模块新建的对侧节点，避免结构同步与几何同步重复处理 */
+	created_nodes: null as Set<UUID> | null,
 
 	/** 由 transform.js 的翻转路径调用：本次编辑的组级改动不传播到对侧 */
 	markGroupFlip() {
 		this.group_flip = true;
 	},
 
-	/** 本次编辑是否允许同步组级属性（镜像翻转编辑里为 false，供镜像建模的祖先同步跳过） */
+	/** 本次编辑是否允许同步组级属性（镜像翻转/已断开属性链接时为 false，供镜像建模的祖先同步跳过） */
 	groupSyncEnabled(): boolean {
-		return !this.group_flip;
+		return !this.group_flip && this.edit_attrs_linked;
 	},
 
 	/** 该组所在链接的全部成员（旧工程的成对 `smart_mirror` 在这里就地迁移成链接 id） */
@@ -173,6 +205,157 @@ export const SmartCopyGroup = {
 			node.forEachChild(child => list.push(child));
 		}
 		return list;
+	},
+
+	/**
+	 * 记录编辑开始时的结构快照（反馈#305 复报第 2 点）。配对仍按「相对成员根的下标路径」做，
+	 * 因此结构变化必须在各成员上以相同下标重放，路径才会继续对齐：这份快照给出
+	 * 「编辑前各节点在哪」，finishEdit 据此判断哪些是新节点、哪些被拖动过。
+	 */
+	recordEditState(aspects: UndoAspects) {
+		this.edit_links = new Map();
+		this.pre_paths = new Map();
+		this.pre_roots = new Map();
+		this.created_nodes = new Set();
+		this.edit_attrs_linked = true;
+		this.edit_group_level = false;
+		if (typeof Group == 'undefined' || !Group.all.length) return;
+		let candidates: OutlinerNode[] = [];
+		let push = (node: OutlinerNode) => {
+			if (node instanceof OutlinerNode && !candidates.includes(node)) candidates.push(node);
+		};
+		(aspects.elements ?? []).forEach(push);
+		(aspects.groups ?? []).forEach(push);
+		(Outliner.selected ?? []).forEach(push);
+		Group.all.forEach(group => {
+			if (group.selected) push(group);
+		});
+		for (let node of candidates) {
+			let root = memberRootOf(node);
+			if (!root) continue;
+			// 组本身被选中/编辑：本次编辑属于「组级」（断开属性链接后连子块的位移也不映射）
+			if (node instanceof Group && linkId(node)) this.edit_group_level = true;
+			let id = linkId(root);
+			if (this.edit_links.has(id)) continue;
+			let members = membersOf(id);
+			this.edit_links.set(id, members);
+			if (!members.every(member => attrsLinked(member))) this.edit_attrs_linked = false;
+			let walk = (current: OutlinerNode, path: number[]) => {
+				this.pre_paths.set(current.uuid, path);
+				this.pre_roots.set(current.uuid, root);
+				if (current instanceof Group) {
+					current.children.forEach((child, index) => walk(child, path.concat(index)));
+				}
+			};
+			members.forEach(member => walk(member, []));
+		}
+	},
+
+	/** 新建的对侧节点登记进 undo：post 侧记录 → 撤销时删除、重做时重建 */
+	registerCreatedNodes(node: OutlinerNode, aspects: UndoAspects) {
+		for (let child of this.collectSubtree(node)) {
+			if (child instanceof OutlinerElement) {
+				if (!aspects.elements) aspects.elements = [];
+				if (!aspects.elements.includes(child)) aspects.elements.safePush(child);
+			} else if (child instanceof Group) {
+				if (!aspects.groups) aspects.groups = [];
+				if (!aspects.groups.includes(child)) aspects.groups.safePush(child);
+			}
+		}
+	},
+
+	/** 新节点（新建/复制/拖入）在其它成员的同一位置生成镜像副本（反馈#305 复报第 2 点） */
+	mirrorNewNode(node: OutlinerNode, aspects: UndoAspects, created: Set<UUID>): boolean {
+		if (!this.edit_links) return false;
+		let root = memberRootOf(node);
+		if (!root) return false;
+		let members = this.edit_links.get(linkId(root));
+		if (!members) return false;
+		let path = nodePath(node, root);
+		if (!path || !path.length) return false;
+		let parent_path = path.slice(0, -1);
+		let index = path[path.length - 1];
+		let changed = false;
+		for (let member of members) {
+			if (member === root) continue;
+			let target = nodeAtPath(member, parent_path);
+			if (!(target instanceof Group)) continue;
+			let clone = this.cloneMirrored(node, target);
+			placeAtIndex(clone, target, index);
+			created.add(clone.uuid);
+			this.registerCreatedNodes(clone, aspects);
+			changed = true;
+		}
+		return changed;
+	},
+
+	/** 被拖动/重排的既有节点：把对侧在「编辑前同一位置」的节点挪到对应位置（第 2 点） */
+	mirrorMovedNodes(aspects: UndoAspects, node_ids: Set<UUID>): boolean {
+		if (!this.edit_links || !this.pre_paths || !this.pre_roots) return false;
+		let changed = false;
+		// 只重放用户实际拖动的节点：其它节点的下标变化是这次结构操作的连带结果，
+		// 把「对侧节点逐个搬到新下标」会连环错位（曾把整组顺序搬乱）。
+		for (let uuid of node_ids) {
+			let old_path = this.pre_paths.get(uuid);
+			if (!old_path) continue;
+			let node = OutlinerNode.uuids[uuid] as OutlinerNode | undefined;
+			if (!node || !(node instanceof OutlinerNode) || !isInTree(node)) continue;
+			let old_root = this.pre_roots.get(uuid);
+			if (!old_root) continue;
+			let members = this.edit_links.get(linkId(old_root));
+			if (!members) continue;
+			let root = memberRootOf(node);
+			if (!root || linkId(root) !== linkId(old_root)) continue;
+			let new_path = nodePath(node, root);
+			if (!new_path || pathsEqual(old_path, new_path)) continue;
+			let parent_path = new_path.slice(0, -1);
+			let index = new_path[new_path.length - 1];
+			for (let member of members) {
+				if (member === root) continue;
+				let counterpart = nodeAtPath(member, old_path);
+				if (!counterpart || counterpart === node) continue;
+				// 两侧都被用户拖动时各自保留自己的位置
+				if (node_ids.has(counterpart.uuid)) continue;
+				let target = nodeAtPath(member, parent_path);
+				if (!(target instanceof Group)) continue;
+				let current_path = nodePath(counterpart, member);
+				if (current_path && pathsEqual(current_path, new_path)) continue;
+				if (counterpart instanceof Group) {
+					let before = counterpart.getChildlessCopy();
+					before.uuid = counterpart.uuid;
+					MirrorModeling.insertGroupIntoUndo(counterpart, aspects, before);
+				} else if (counterpart instanceof OutlinerElement) {
+					MirrorModeling.insertElementIntoUndo(counterpart, aspects, counterpart.getUndoCopy(aspects));
+				} else {
+					continue;
+				}
+				placeAtIndex(counterpart, target, index);
+				changed = true;
+			}
+		}
+		return changed;
+	},
+
+	/** 本次编辑的结构变化镜像到其它成员（先重放既有节点的移动，再插入新节点的副本） */
+	syncStructure(aspects: UndoAspects, edited_elements: Set<UUID>, edited_groups: Set<UUID>): boolean {
+		if (!this.edit_links || !this.pre_paths) return false;
+		// 断开属性链接后的组级改动（移动/枢轴）完全不映射，结构也不会变
+		if (!this.edit_attrs_linked && this.edit_group_level) return false;
+		let created = this.created_nodes ?? new Set<UUID>();
+		let changed = false;
+		if (aspects.outliner) {
+			let moved = new Set<UUID>([...edited_elements, ...edited_groups]);
+			changed = this.mirrorMovedNodes(aspects, moved) || changed;
+		}
+		let touched = [...(aspects.elements ?? []), ...(aspects.groups ?? [])];
+		for (let node of touched.slice()) {
+			if (created.has(node.uuid)) continue;
+			if (!isInTree(node)) continue;
+			if (this.pre_paths.has(node.uuid)) continue;
+			changed = this.mirrorNewNode(node, aspects, created) || changed;
+		}
+		if (changed) Canvas.updateAll();
+		return changed;
 	},
 
 	/**
@@ -265,11 +448,42 @@ export const SmartCopyGroup = {
 		Blockbench.showQuickMessage(tl('message.smart_copy.created', [counterpart.name]), 3000);
 	},
 
-	/** 右键「取消智能复制组」：删除其它成员并清掉链接 id */
+	/**
+	 * 右键「取消智能复制组」（反馈#305 复报第 3 点）：默认只解除链接、保留其余复制组，
+	 * 并在视图下方弹出小面板（与顶点捕捉旋转模式的 amend 面板同一形态）提供
+	 * 「同时删除其余复制组」勾选；勾上就删、取消勾选就回到只解链接。
+	 */
 	remove(group: Group) {
-		let others = this.members(group).filter(member => member !== group);
-		if (!others.length) return;
-		this.suspended = true;
+		let members = this.members(group);
+		if (members.length < 2) return;
+		let group_uuid = group.uuid;
+		let member_uuids = members.map(member => member.uuid);
+		this.applyRemoval(group_uuid, member_uuids, false, false);
+		Undo.amendEdit({
+			delete_others: {
+				type: 'checkbox',
+				label: 'dialog.smart_copy.remove_others',
+				description: 'dialog.smart_copy.remove_others.desc',
+				value: false,
+			},
+		}, result => {
+			this.applyRemoval(group_uuid, member_uuids, !!result.delete_others, true);
+		});
+	},
+
+	/**
+	 * 取消智能复制组的实际执行：解除全部成员的链接；`delete_others` 为真时把其余成员的
+	 * 整棵子树一起删掉。按 uuid 重查节点，是因为 amend 面板每次改动都会先撤销上一条编辑。
+	 * `amended` 为真表示这次执行来自 amend 面板（要保住面板，不把它关掉）。
+	 */
+	applyRemoval(group_uuid: UUID, member_uuids: UUID[], delete_others: boolean, amended: boolean) {
+		let group = OutlinerNode.uuids[group_uuid];
+		if (!(group instanceof Group)) return;
+		let members = member_uuids
+			.map(uuid => OutlinerNode.uuids[uuid])
+			.filter(node => node instanceof Group) as Group[];
+		if (!members.includes(group)) members.push(group);
+		let others = delete_others ? members.filter(member => member !== group && isInTree(member)) : [];
 		let removed: OutlinerNode[] = [];
 		for (let other of others) removed.push(...this.collectSubtree(other));
 		let aspects: UndoAspects = {
@@ -277,17 +491,20 @@ export const SmartCopyGroup = {
 			elements: removed.filter(node => node instanceof OutlinerElement),
 			groups: [group, ...removed.filter(node => node instanceof Group)],
 		};
-		Undo.initEdit(aspects);
-		setLinkId(group, '');
+		this.suspended = true;
+		Undo.initEdit(aspects, amended);
+		for (let member of members) setLinkId(member, '');
 		for (let other of others) other.remove();
 		// post 不记录被删节点（与正规删除一致），redo 才会重新删除、undo 才整棵还原
 		aspects.elements = aspects.elements.filter(node => !removed.includes(node));
 		aspects.groups = aspects.groups.filter(node => !removed.includes(node));
-		Undo.finishEdit('Remove smart copy group', aspects);
+		Undo.finishEdit(delete_others ? 'Remove smart copy group' : 'Unlink smart copy group', aspects);
 		this.suspended = false;
 		Canvas.updateAll();
 		updateSelection();
-		Blockbench.showQuickMessage(tl('message.smart_copy.removed', [others.length]), 2500);
+		Blockbench.showQuickMessage(delete_others
+			? tl('message.smart_copy.removed', [others.length])
+			: tl('message.smart_copy.unlinked_only', [members.length - 1]), 2500);
 	},
 
 	/** 断开 / 恢复组属性链接（反馈#305 第 4 点）：只切这一层开关，组内容照旧同步 */
@@ -320,6 +537,12 @@ export const SmartCopyGroup = {
 			this.edited_elements = null;
 			this.edited_groups = null;
 			this.edited_names = null;
+			this.edit_links = null;
+			this.pre_paths = null;
+			this.pre_roots = null;
+			this.created_nodes = null;
+			this.edit_attrs_linked = true;
+			this.edit_group_level = false;
 			return;
 		}
 		if (typeof Group == 'undefined' || !Group.all.length) return;
@@ -331,6 +554,8 @@ export const SmartCopyGroup = {
 		this.edited_elements = new Set((aspects.elements ?? []).map(element => element.uuid));
 		this.edited_groups = new Set((aspects.groups ?? []).map(group => group.uuid));
 		this.edited_names = new Map((aspects.groups ?? []).map(group => [group.uuid, group.name]));
+		// 结构快照与属性链接状态（复报第 1、2 点）：必须在任何同步注入之前记录
+		this.recordEditState(aspects);
 		if (!Group.all.some(group => linkId(group))) return;
 		// 本条编辑可能连带删除副本，先把「编辑前」的树补进 pre 快照，
 		// 否则撤销时 Outliner.loadJSON 没有位置挂回被删子树
@@ -374,17 +599,30 @@ export const SmartCopyGroup = {
 		let edited_groups = this.edited_groups ?? new Set<UUID>();
 		let edited_names = this.edited_names ?? new Map<UUID, string>();
 		let group_flip = this.group_flip;
+		let attrs_linked = this.edit_attrs_linked;
+		let group_level = this.edit_group_level;
 		this.edited_elements = null;
 		this.edited_groups = null;
 		this.edited_names = null;
 		// 注意：标志位要留到元素同步之后才清——`MirrorModeling.createClone` 会读
 		// `SmartCopyGroup.groupSyncEnabled()` 来决定是否顺带同步祖先组，这里提前清掉会让
-		// 翻转时的祖先组同步重新生效（反馈#305 第 5 点曾被它漏掉）
+		// 翻转时的祖先组同步重新生效（反馈#305 第 5 点曾被它漏掉）；
+		// `edit_attrs_linked` 同理，断开属性链接后祖先组的枢轴/位移都不能再映射（复报第 1 点）。
 		if (this.suspended) {
 			this.group_flip = false;
+			this.edit_links = null;
+			this.pre_paths = null;
+			this.pre_roots = null;
+			this.created_nodes = null;
+			this.edit_attrs_linked = true;
+			this.edit_group_level = false;
 			return;
 		}
 		let changed = false;
+
+		// 反馈#305 复报第 2 点：先把本次编辑造成的结构变化镜像到其它成员，
+		// 保证随后按「下标路径」配对做几何同步时两侧结构已经对齐。
+		changed = this.syncStructure(aspects, edited_elements, edited_groups) || changed;
 
 		if (aspects.elements) {
 			for (let element of aspects.elements.slice()) {
@@ -400,6 +638,9 @@ export const SmartCopyGroup = {
 					}
 					continue;
 				}
+				// 复报第 1 点：属性链接断开后，组级编辑（移动/枢轴）连子块的位移也不再映射。
+				// 直接编辑组内的块仍然同步（那不是组级编辑）。
+				if (!attrs_linked && group_level) continue;
 				if (!MirrorModeling.cached_elements[element.uuid]?.smart_pair) continue;
 				for (let counterpart of this.equivalents(element)) {
 					if (!(counterpart instanceof OutlinerElement) || counterpart === element) continue;
@@ -446,6 +687,12 @@ export const SmartCopyGroup = {
 			updateSelection();
 		}
 		this.group_flip = false;
+		this.edit_links = null;
+		this.pre_paths = null;
+		this.pre_roots = null;
+		this.created_nodes = null;
+		this.edit_attrs_linked = true;
+		this.edit_group_level = false;
 	},
 
 	/**

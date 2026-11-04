@@ -780,6 +780,32 @@ export const Painter = {
 		return true;
 	},
 	/**
+	 * 反馈#321：绘画模式下 Ctrl + 滚轮直接调笔刷直径（笔刷 / 橡皮擦等带 brush.size 的工具）。
+	 * 只认物理 Ctrl（Pressing.ctrl）：触控板双指捏合会合成 ctrlKey 但没有按键，仍交还缩放。
+	 * 只影响笔刷直径视图（tool_settings.brush_size），不写工程数据，因此不进 Undo。
+	 */
+	handleBrushSizeWheel(event) {
+		if (!Modes.paint || !Pressing.ctrl) return false;
+		if (!event || !event.deltaY) return false;
+		let slider = BarItems.slider_brush_size;
+		if (!slider || typeof slider.get !== 'function') return false;
+		if (!this.getBrushSizeDragTool()) return false;
+		// 滚轮向上变大、向下变小；一格（deltaY 约 100）一步，触控板小增量同样一步
+		let steps = event.deltaY < 0 ? 1 : -1;
+		if (Math.abs(event.deltaY) >= 200) steps *= Math.min(10, Math.round(Math.abs(event.deltaY) / 100));
+		slider.change(value => Math.max(slider.settings?.min ?? 1, Math.min(slider.settings?.max ?? 1024, value + steps)), event);
+		slider.update();
+		Blockbench.setStatusBarText(`${tl('action.slider_brush_size')}: ${slider.get()}`);
+		clearTimeout(this._brush_size_wheel_timer);
+		this._brush_size_wheel_timer = setTimeout(() => {
+			this._brush_size_wheel_timer = null;
+			Blockbench.setStatusBarText();
+		}, 800);
+		if (typeof event.preventDefault === 'function') event.preventDefault();
+		if (typeof event.stopPropagation === 'function') event.stopPropagation();
+		return true;
+	},
+	/**
 	 * 反馈#250：选区工具的「所选块」子模式是否生效（绘画模式 + 选区工具 + block 子模式）。
 	 * 视图点击的选中语义（Ctrl 加/减选、Shift 选组）挂在 preview.ts 上，那里需要据此判断。
 	 */

@@ -478,6 +478,11 @@ export class Preview {
 				event.stopPropagation();
 			}
 		}, { capture: true, passive: false });
+		// 反馈#321：Ctrl + 滚轮调笔刷直径。OrbitControls 的 wheel 挂在 canvas 上，
+		// 同样在 node 的捕获阶段先截住，否则滚轮会先被当成缩放。
+		addEventListeners(this.node, 'wheel', (event: WheelEvent) => {
+			Painter.handleBrushSizeWheel(event);
+		}, { capture: true, passive: false });
 		addEventListeners(this.canvas, 'pointerdown', (event: PointerEvent) => {
 			this.click(event)
 		}, { passive: false });

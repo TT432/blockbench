@@ -3293,6 +3293,9 @@ Interface.definePanels(function() {
 					UVEditor.updateUVNavigator();
 				},
 				onMouseWheel(event) {
+					// 反馈#321：绘画模式下按住 Ctrl + 滚轮调笔刷直径（笔刷/橡皮擦）。
+					// 触控板捏合合成的 ctrlKey 没有物理按键，仍走下面的缩放分支。
+					if (typeof Painter != 'undefined' && Painter.handleBrushSizeWheel(event)) return;
 					let is_zoom_gesture = event.ctrlKey && !Pressing.ctrl;
 					if (is_zoom_gesture || Keybinds.extra.uv_editor_scroll_zoom.keybind.isTriggered(event) && event.deltaY) {
 				
