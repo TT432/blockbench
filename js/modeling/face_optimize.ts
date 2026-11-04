@@ -43,6 +43,54 @@ interface OptimizeOptions {
 	per_group: boolean
 }
 
+/** 选项面板的默认值 */
+const OPTIMIZE_DEFAULT_OPTIONS: OptimizeOptions = {
+	restrict: true,
+	culling: false,
+	epsilon: 0.00001,
+	coverage: 100,
+	keep_cubes: false,
+	per_group: false,
+};
+
+/**
+ * 反馈#313（复报）：选项面板记住上一次「确认」时使用的值，不再每次打开都重置为默认。
+ * 这几项属于工具级偏好（与工程无关），所以存 localStorage 而不是工程数据或设置配置。
+ */
+const OPTIMIZE_OPTIONS_STORAGE = 'face_optimize_options';
+
+function loadOptimizeOptions(): OptimizeOptions {
+	let options: OptimizeOptions = {...OPTIMIZE_DEFAULT_OPTIONS};
+	let stored: unknown = null;
+	try {
+		stored = JSON.parse(localStorage.getItem(OPTIMIZE_OPTIONS_STORAGE) || 'null');
+	} catch (err) {
+		stored = null;
+	}
+	if (stored && typeof stored == 'object') {
+		const source = stored as Partial<Record<keyof OptimizeOptions, unknown>>;
+		if (typeof source.restrict == 'boolean') options.restrict = source.restrict;
+		if (typeof source.culling == 'boolean') options.culling = source.culling;
+		if (typeof source.epsilon == 'number') options.epsilon = source.epsilon;
+		if (typeof source.coverage == 'number') options.coverage = source.coverage;
+		if (typeof source.keep_cubes == 'boolean') options.keep_cubes = source.keep_cubes;
+		if (typeof source.per_group == 'boolean') options.per_group = source.per_group;
+	}
+	// 手改过 localStorage 或旧版本留下的坏值：回到默认值的合法范围
+	if (!isFinite(options.epsilon) || options.epsilon <= 0) options.epsilon = OPTIMIZE_DEFAULT_OPTIONS.epsilon;
+	if (!isFinite(options.coverage)) options.coverage = OPTIMIZE_DEFAULT_OPTIONS.coverage;
+	options.coverage = Math.clamp(options.coverage, 0, 100);
+	return options;
+}
+
+function saveOptimizeOptions(options: OptimizeOptions): void {
+	try {
+		localStorage.setItem(OPTIMIZE_OPTIONS_STORAGE, JSON.stringify(options));
+	} catch (err) {
+		console.warn('Could not save face optimize options', err);
+	}
+}
+
 interface OptimizeCounters {
 	removed_faces: number
 	deleted_cubes: number
@@ -597,48 +645,60 @@ BARS.defineActions(() => {
 			try {
 				// 反馈#313：标签文字超过 --max_label_width 时会被裁掉左半边（「浮点容差」「面剔除覆盖率」
 				// 两行只剩输入框），这里加宽对话框，并把标签里的大段括号说明搬到字段的悬浮备注（title + ? 图标）
+				// 反馈#313（复报）：面板记住上一次确认时用的选项值（见 loadOptimizeOptions），
+				// 另给一个「恢复默认值」按钮把面板与记忆一起清回默认。
+				const last = loadOptimizeOptions();
 				const dialog = new Dialog({
 					id: 'face_optimize_options',
 					title: 'dialog.face_optimize.title',
 					width: 620,
 					form: {
-						restrict: {label: 'dialog.face_optimize.restrict', type: 'checkbox', value: true},
+						restrict: {label: 'dialog.face_optimize.restrict', type: 'checkbox', value: last.restrict},
 						culling: {
-							label: 'dialog.face_optimize.culling', type: 'checkbox', value: false,
+							label: 'dialog.face_optimize.culling', type: 'checkbox', value: last.culling,
 							description: 'dialog.face_optimize.culling.desc',
 						},
 						epsilon: {
-							label: 'dialog.face_optimize.epsilon', type: 'number', value: 0.00001, step: 0.000001, min: 0,
+							label: 'dialog.face_optimize.epsilon', type: 'number', value: last.epsilon, step: 0.000001, min: 0,
 							description: 'dialog.face_optimize.epsilon.desc',
 						},
 						coverage: {
-							label: 'dialog.face_optimize.coverage', type: 'number', value: 100, min: 0, max: 100, step: 1,
+							label: 'dialog.face_optimize.coverage', type: 'number', value: last.coverage, min: 0, max: 100, step: 1,
 							description: 'dialog.face_optimize.coverage.desc',
 						},
 						keep_cubes: {
-							label: 'dialog.face_optimize.keep_cubes', type: 'checkbox', value: false,
+							label: 'dialog.face_optimize.keep_cubes', type: 'checkbox', value: last.keep_cubes,
 							description: 'dialog.face_optimize.keep_cubes.desc',
 						},
 						per_group: {
-							label: 'dialog.face_optimize.per_group', type: 'checkbox', value: false,
+							label: 'dialog.face_optimize.per_group', type: 'checkbox', value: last.per_group,
 							description: 'dialog.face_optimize.per_group.desc',
+						},
+						reset_options: {
+							label: ' ', type: 'buttons', buttons: ['dialog.face_optimize.restore_defaults'],
+							click() {
+								dialog.form.setValues({...OPTIMIZE_DEFAULT_OPTIONS});
+								saveOptimizeOptions({...OPTIMIZE_DEFAULT_OPTIONS});
+							},
 						},
 						hint: {type: 'info', text: 'dialog.face_optimize.hint'},
 					},
 					onConfirm(data) {
 						dialog.hide();
 						const epsilon_value = parseFloat(data.epsilon);
-						const epsilon = (isFinite(epsilon_value) && epsilon_value > 0) ? epsilon_value : 0.00001;
+						const epsilon = (isFinite(epsilon_value) && epsilon_value > 0) ? epsilon_value : OPTIMIZE_DEFAULT_OPTIONS.epsilon;
 						const coverage_value = parseFloat(data.coverage);
-						const coverage = isFinite(coverage_value) ? Math.min(100, Math.max(0, coverage_value)) : 100;
-						runFaceOptimize({
+						const coverage = isFinite(coverage_value) ? Math.min(100, Math.max(0, coverage_value)) : OPTIMIZE_DEFAULT_OPTIONS.coverage;
+						const options: OptimizeOptions = {
 							restrict: !!data.restrict,
 							culling: !!data.culling,
 							epsilon,
 							coverage,
 							keep_cubes: !!data.keep_cubes,
 							per_group: !!data.per_group,
-						});
+						};
+						saveOptimizeOptions(options);
+						runFaceOptimize(options);
 					},
 				});
 				dialog.show();

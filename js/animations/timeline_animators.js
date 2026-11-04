@@ -1079,11 +1079,17 @@ export class EffectAnimator extends GeneralAnimator {
 		}
 
 		if (!this.muted.particle) {
+			// 反馈#322：粒子关键帧的时间基准必须用「该动画自己的时间」（Animation.time 按 loop 模式
+			// 取模/钳制），不能用全局 Timeline.time——时间轴只在「选中动画」的长度处回绕，状态机预览
+			// 下 Timeline.time 更是一路递增。于是短循环动画（1 秒循环的 weapon）叠在长动画（10 秒的
+			// idle，同时是选中动画）里播放时，全局时间永不回到起点，粒子只在开头触发一次。
+			// 改用动画自己的时间后，循环回到起点时 diff 由大变小，Wintersky 的 jumpTo 因此
+			// stop(true).start() 重新发射；once 模式下 Animation.time 仍等于 Timeline.time
+			// （动画结束后粒子照常跑完），hold 模式下两者都是钳制到 length 的同一个值，行为不变。
+			// （音效通道本来就是用 this.animation.time。）
+			let particle_time = this.animation.time;
 			this.particle.forEach(kf => {
-				// Using the timeline time instead of animation to not stop after animation end in some loop modes.
-				// To be changed when implementing separate play times for animations
-				// let diff = this.animation.time - kf.time;
-				let diff = Timeline.time - kf.time;
+				let diff = particle_time - kf.time;
 				let i = 0;
 				for (let data_point of kf.data_points) {
 					let particle_effect = data_point.file && Animator.particle_effects[data_point.fileLookupRef]

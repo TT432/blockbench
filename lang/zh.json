@@ -953,6 +953,7 @@
 	"dialog.face_optimize.per_group": "按组删除面/方块",
 	"dialog.face_optimize.per_group.desc": "只在同一父组内部判定遮挡，保留组间接触面/关节面与防穿模面",
 	"dialog.face_optimize.hint": "请检查所有可见方块是否仍在。多余更改可用 Ctrl+Z 撤销。",
+	"dialog.face_optimize.restore_defaults": "恢复默认值",
 	"message.face_optimize.result": "已移除面 %0，已删除方块 %1，已应用面剔除 %2",
 	"message.face_optimize.empty": "没有可优化的方块",
 	"message.face_optimize.error": "面块优化出错：%0",

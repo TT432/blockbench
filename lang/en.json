@@ -2539,6 +2539,7 @@
 	"dialog.face_optimize.per_group": "Per-group removal",
 	"dialog.face_optimize.per_group.desc": "Only test occlusion inside the same parent group; keep contact, joint and anti-clipping faces between groups",
 	"dialog.face_optimize.hint": "Check that all visible cubes are still there. Undo extra changes with Ctrl+Z.",
+	"dialog.face_optimize.restore_defaults": "Restore defaults",
 	"message.face_optimize.result": "Removed %0 faces, deleted %1 cubes, applied %2 cullfaces",
 	"message.face_optimize.empty": "No cubes to optimize",
 	"message.face_optimize.error": "Face optimization failed: %0",
