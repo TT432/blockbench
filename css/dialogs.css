@@ -14,8 +14,9 @@
 	#blackout.darken {
 		/* 固定深色，不跟随 --color-dark：该变量同时是用户可自定义的
 		   「暗色（工作区背景）」，跟随它会把对话框遮罩染成自定义色，
-		   整个 UI 被叠加染色（社区反馈） */
-		background-color: #21252b;
+		   整个 UI 被叠加染色（社区反馈）
+		   反馈#316：默认值仍是中性深色，但留一个 --color-blackout 给主题覆盖 */
+		background-color: var(--color-blackout, #21252b);
 		opacity: 0.6;
 	}
 	.dialog_handle {
@@ -1243,7 +1244,8 @@
 		font-size: 1.4em;
 	}
 	dialog#about .community_links a i.fa-github {
-		color: #dddddd;
+		/* 反馈#316：跟随主题文字色；爱发电的图标色是品牌色，保持原样 */
+		color: var(--color-text);
 	}
 	dialog#about .community_links a svg.afdian_icon {
 		width: 1.4em;

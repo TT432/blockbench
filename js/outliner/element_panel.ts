@@ -41,9 +41,9 @@ Interface.definePanels(function() {
 			attached_index: 1,
 			sidebar_index: 2,
 		},
-		toolbars: [
-			Toolbars.flip_plane,
-		],
+		// 反馈#312：轴面偏移/旋转/锁定从元素面板移到视口右上角的「翻转轴面」浮动面板，
+		// 元素面板不再保留第二处入口
+		toolbars: [],
 		form: new InputForm({})
 	})
 	function updateElementForm() {

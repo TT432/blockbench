@@ -773,7 +773,7 @@
 		pointer-events: none;
 	}
 	#tab_bar .tab_group_chip.collapsed {
-		outline: 1px solid #ffffff40;
+		outline: 1px solid color-mix(in srgb, var(--color-text) 25%, transparent);
 	}
 	#tab_bar .tab_group_chip.has_active {
 		outline: 2px solid var(--color-accent);
@@ -1204,7 +1204,8 @@
 	}
 	.reference_image_crop_shade {
 		position: absolute;
-		background-color: rgba(0, 0, 0, 0.55);
+		/* 反馈#316：遮罩跟随主题的深色（自定义主题下也是同一色调的压暗，而不是纯黑） */
+		background-color: color-mix(in srgb, var(--color-dark) 55%, transparent);
 		pointer-events: none;
 		z-index: 2;
 	}

@@ -22,6 +22,7 @@ export interface ToolbarRegistry {
 	element_origin: Toolbar
 	element_rotation: Toolbar
 	flip_plane: Toolbar
+	flip_plane_rotation: Toolbar
 	brush: Toolbar
 	vertex_snap: Toolbar
 	seam_tool: Toolbar
@@ -585,10 +586,11 @@ export const BARS = {
 			]
 		})
 		// 反馈#276：翻转轴面偏移（默认 0 = 画布中心）+ 以块中心为翻转轴面
-		// 反馈#299：第一行是 3 个偏移 + 锁定 + 对齐 + 重置，换行后第二行是 3 个旋转角
+		// 反馈#299：旋转角另起一行
+		// 反馈#312：这两条工具栏不再挂在元素面板里，改由视口右上角「翻转轴面」浮动面板承载
 		Toolbars.flip_plane = new Toolbar({
 			id: 'flip_plane',
-			name: 'panel.element.flip_plane',
+			name: 'panel.element.flip_plane.offset',
 			label: true,
 			children: [
 				'slider_flip_plane_x',
@@ -597,9 +599,16 @@ export const BARS = {
 				'flip_plane_lock_y',
 				'slider_flip_plane_z',
 				'flip_plane_lock_z',
+				'#',
 				'flip_plane_to_center',
 				'flip_plane_reset',
-				'#',
+			]
+		})
+		Toolbars.flip_plane_rotation = new Toolbar({
+			id: 'flip_plane_rotation',
+			name: 'panel.element.flip_plane.rotation',
+			label: true,
+			children: [
 				'slider_flip_plane_rotation_x',
 				'slider_flip_plane_rotation_y',
 				'slider_flip_plane_rotation_z',

@@ -65,6 +65,11 @@ export const MirrorModeling = {
 			}
 
 			// Update hierarchy up
+			// 反馈#305 第 5 点：智能复制组在「镜像翻转」编辑里只同步块本身，祖先组的
+			// 位移/旋转/缩放不跟着映射（SmartCopyGroup 在该次编辑里判定 group_flip）
+			let sync_parents = !cached_data?.smart_pair
+				|| typeof SmartCopyGroup == 'undefined'
+				|| SmartCopyGroup.groupSyncEnabled();
 			function updateParent(child: OutlinerNode, child_b: OutlinerNode) {
 				let parent = child.parent;
 				let parent_b = child_b.parent;
@@ -79,7 +84,7 @@ export const MirrorModeling = {
 
 				updateParent(parent, parent_b);
 			}
-			updateParent(original, mirror_element);
+			if (sync_parents) updateParent(original, mirror_element);
 
 		} else {
 			function getParentMirror(child: OutlinerNode) {
@@ -347,7 +352,7 @@ Blockbench.on('finish_edit', ({aspects}) => {
 		let static_elements_copy = aspects.elements.slice();
 		static_elements_copy.forEach((element) => {
 			let cached_data = MirrorModeling.cached_elements[element.uuid]
-			// 反馈#274：智能镜像组的配对由 SmartMirrorGroup 统一同步，这里跳过避免翻两次
+			// 反馈#274：智能复制组的配对由 SmartCopyGroup 统一同步，这里跳过避免翻两次
 			if (cached_data?.smart_pair) return;
 			if (element.allow_mirror_modeling && !element.isEffectivelyLocked()) {
 				// 缓存里已有配对（智能镜像组 / 本次编辑开始时判定过）时以缓存为准
@@ -383,7 +388,7 @@ Blockbench.on('finish_edit', ({aspects}) => {
 
 		selected_groups.forEach(group => {
 			let cached_data = MirrorModeling.cached_elements[group.uuid];
-			// 反馈#274：智能镜像组的组级同步由 SmartMirrorGroup.finishEdit 处理
+			// 反馈#274：智能复制组的组级同步由 SmartCopyGroup.finishEdit 处理
 			if (cached_data?.smart_pair) return;
 			let mirror_group = cached_data?.counterpart;
 			if (mirror_group && Group.all.includes(mirror_group)) {

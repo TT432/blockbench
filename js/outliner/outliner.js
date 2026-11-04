@@ -1491,9 +1491,12 @@ Interface.definePanels(function() {
 				></i>
 				<i v-else class="outliner_opener_placeholder"></i>
 
-				<dynamic-icon :icon="node.icon.replace('fa ', '').replace(/ /g, '.')" :color="(outliner_colors.value && node.color >= 0) ? markerColors[node.color % markerColors.length].pastel : ''" v-on:dblclick.stop="doubleClickIcon(node)"></dynamic-icon>
+				<dynamic-icon :icon="node.icon.replace('fa ', '').replace(/ /g, '.')" :color="(outliner_colors.value && node.color >= 0) ? (node.type == 'group' ? getMarkerColor(node) : markerColors[node.color % markerColors.length].pastel) : ''" v-on:dblclick.stop="doubleClickIcon(node)"></dynamic-icon>
 				<input type="text" class="cube_name tab_target" :class="{locked: node.locked}" v-model="node.name" disabled>` +
 				`<span v-if="node.smart_object" class="outliner_smart_object_badge">【智能对象】</span>` +
+				// 反馈#305：智能复制组的两侧都带染色标识与锁链图标（断开属性链接时锁链变浅）
+				`<span v-if="node.smart_copy_id" class="outliner_smart_copy_badge">【智能复制组】</span>` +
+				`<dynamic-icon v-if="node.smart_copy_id" class="outliner_smart_copy_chain" :class="{'smart_copy_broken': node.smart_copy_linked === false}" :icon="node.smart_copy_linked === false ? 'link_off' : 'link'"></dynamic-icon>` +
 
 
 				`<dynamic-icon v-for="(btn, key) in node.buttons" :key="key"
@@ -1540,6 +1543,8 @@ Interface.definePanels(function() {
 				let classes = [];
 				if (node.type === 'group') classes.push('group');
 				if (node.smart_object) classes.push('smart_object');
+				// 反馈#305：智能复制组的染色标识（与智能对象的标识区分开）
+				if (node.smart_copy_id) classes.push('smart_copy');
 				// #87：selected class 由 Outliner.syncNodeDomState 命令式维护（批量选中时 1825+ 节点逐个触发 Vue 重渲染是大模型卡顿主因）
 				Blockbench.dispatchEvent('get_outliner_node_classes', {node, classes});
 				return classes;
@@ -1593,8 +1598,10 @@ Interface.definePanels(function() {
 			},
 			getMarkerColor(node) {
 				// #78：组行的标记色同时用于名称文字与折叠指示（与行图标同源）
-				if (node.type != 'group' || !this.outliner_colors.value || !(node.color >= 0)) return 'inherit';
-				return markerColors[node.color % markerColors.length].pastel;
+				// 反馈#316：没有标记色时退回主题文字色；有标记色时与主题文字色混合，
+				// 这样切换主题（含自定义主题）后组行文字不会再是一块与主题无关的高饱和色块
+				if (node.type != 'group' || !this.outliner_colors.value || !(node.color >= 0)) return 'var(--color-text)';
+				return `color-mix(in srgb, ${markerColors[node.color % markerColors.length].pastel} 55%, var(--color-text))`;
 			},
 			doubleClickIcon(node) {
 				if (node.children && node.children.length) {

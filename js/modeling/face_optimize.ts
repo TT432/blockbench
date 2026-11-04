@@ -595,16 +595,34 @@ BARS.defineActions(() => {
 		condition: () => Modes.edit,
 		click() {
 			try {
+				// 反馈#313：标签文字超过 --max_label_width 时会被裁掉左半边（「浮点容差」「面剔除覆盖率」
+				// 两行只剩输入框），这里加宽对话框，并把标签里的大段括号说明搬到字段的悬浮备注（title + ? 图标）
 				const dialog = new Dialog({
 					id: 'face_optimize_options',
 					title: 'dialog.face_optimize.title',
+					width: 620,
 					form: {
 						restrict: {label: 'dialog.face_optimize.restrict', type: 'checkbox', value: true},
-						culling: {label: 'dialog.face_optimize.culling', type: 'checkbox', value: false},
-						epsilon: {label: 'dialog.face_optimize.epsilon', type: 'number', value: 0.00001, step: 0.000001, min: 0},
-						coverage: {label: 'dialog.face_optimize.coverage', type: 'number', value: 100, min: 0, max: 100, step: 1},
-						keep_cubes: {label: 'dialog.face_optimize.keep_cubes', type: 'checkbox', value: false},
-						per_group: {label: 'dialog.face_optimize.per_group', type: 'checkbox', value: false},
+						culling: {
+							label: 'dialog.face_optimize.culling', type: 'checkbox', value: false,
+							description: 'dialog.face_optimize.culling.desc',
+						},
+						epsilon: {
+							label: 'dialog.face_optimize.epsilon', type: 'number', value: 0.00001, step: 0.000001, min: 0,
+							description: 'dialog.face_optimize.epsilon.desc',
+						},
+						coverage: {
+							label: 'dialog.face_optimize.coverage', type: 'number', value: 100, min: 0, max: 100, step: 1,
+							description: 'dialog.face_optimize.coverage.desc',
+						},
+						keep_cubes: {
+							label: 'dialog.face_optimize.keep_cubes', type: 'checkbox', value: false,
+							description: 'dialog.face_optimize.keep_cubes.desc',
+						},
+						per_group: {
+							label: 'dialog.face_optimize.per_group', type: 'checkbox', value: false,
+							description: 'dialog.face_optimize.per_group.desc',
+						},
 						hint: {type: 'info', text: 'dialog.face_optimize.hint'},
 					},
 					onConfirm(data) {

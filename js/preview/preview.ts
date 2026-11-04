@@ -290,6 +290,7 @@ export class Preview {
 		this.node.appendChild(this.canvas);
 		let menu = $(`
 			<div class="preview_menu">
+				<div class="tool preview_flip_plane one_is_enough"><i class="material-icons">flip</i></div>
 				<div class="tool preview_fullscreen_button quad_view_only"><i class="material-icons">fullscreen</i></div>
 				<div class="tool preview_view_mode_menu one_is_enough"><i class="material-icons">image</i></div>
 				<div class="tool preview_view_options one_is_enough"><i class="material-icons">discover_tune</i></div>
@@ -313,9 +314,17 @@ export class Preview {
 		(menu.querySelector('.preview_view_mode_menu') as HTMLElement).onclick = (event) => {
 			BarItems.view_mode.open(event);
 		}
+		// 反馈#312：翻转轴面面板的入口（原控件在元素面板里）
+		(menu.querySelector('.preview_flip_plane') as HTMLElement).onclick = (event) => {
+			BarItems['flip_plane_panel'].trigger();
+		}
 		BarItem.prototype.addLabel(false, {
 			name: tl('menu.preview.maximize'),
 			node: menu.querySelector('.preview_fullscreen_button')
+		})
+		BarItem.prototype.addLabel(false, {
+			name: tl('panel.element.flip_plane'),
+			node: menu.querySelector('.preview_flip_plane')
 		})
 		BarItem.prototype.addLabel(false, {
 			name: tl('action.view_mode'),

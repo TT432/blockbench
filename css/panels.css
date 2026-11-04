@@ -604,10 +604,25 @@
 	.outliner_object:hover {
 		color: var(--color-light);
 	}
-	/* #78：组行文字与折叠指示跟随标记色（行图标已由 dynamic-icon 着色） */
+	/* #78：组行文字与折叠指示跟随标记色（行图标已由 dynamic-icon 着色）
+	   反馈#316：--color-marker 现在由 getMarkerColor 给出「标记色 × 主题文字色」的混合值，
+	   没有标记色时就是主题文字色，随之切换主题/自定义主题都不会再出现与主题无关的色块 */
 	div.outliner_object > i.icon-open-state,
 	div.outliner_object > input.cube_name:not(.locked) {
-		color: var(--color-marker, inherit);
+		color: var(--color-marker, var(--color-text));
+	}
+	/* 反馈#316：行尾的开关按钮（眼睛/锁/导出…）固定走主题色，不继承行内的标记色，
+	   与主题切换保持一致；关闭态用弱化文字色 */
+	div.outliner_object > i.outliner_toggle {
+		color: var(--color-text);
+	}
+	div.outliner_object:hover > i.outliner_toggle,
+	div.outliner_object > i.outliner_toggle:hover,
+	div.outliner_object.selected > i.outliner_toggle {
+		color: var(--color-light);
+	}
+	div.outliner_object > i.outliner_toggle.icon_off {
+		color: var(--color-subtle_text);
 	}
 	#cubes_list.drag_hover > li:last-child {
 		position: relative;
@@ -747,6 +762,33 @@
 		line-height: 16px;
 		white-space: nowrap;
 		pointer-events: none;
+	}
+	/* 反馈#305：智能复制组的染色标识与锁链图标（断链时图标变浅） */
+	div.outliner_object.smart_copy {
+		background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 88%);
+	}
+	.outliner_smart_copy_badge {
+		flex: 0 0 auto;
+		align-self: center;
+		margin: 0 2px 0 2px;
+		color: var(--color-accent);
+		font-size: 11px;
+		line-height: 16px;
+		white-space: nowrap;
+		pointer-events: none;
+	}
+	.outliner_smart_copy_chain {
+		flex: 0 0 auto;
+		align-self: center;
+		margin-right: 2px;
+		font-size: 11px;
+		color: var(--color-accent);
+		opacity: 0.9;
+		pointer-events: none;
+	}
+	/* 断开的锁链：颜色变浅 */
+	.outliner_smart_copy_chain.smart_copy_broken {
+		opacity: 0.35;
 	}
 	input.cube_name.renaming {
 		pointer-events: auto;
@@ -2325,22 +2367,23 @@ svg.ac_connections g.dimmed path.ac_connection {
 svg.ac_connections g.dimmed path.ac_connection_arrow {
 	opacity: 0.2;
 }
+/* 反馈#316：播放中的连线/状态用主题强调色，不再写死绿色（换主题后仍是高亮语义） */
 svg.ac_connections g.conn_playing path.ac_connection {
-	stroke: #4ade80 !important;
+	stroke: var(--color-accent) !important;
 	opacity: 1;
 	stroke-dasharray: 8 5;
 	animation: ac_connection_flow 0.6s linear infinite;
 }
 svg.ac_connections g.conn_playing path.ac_connection_arrow {
-	fill: #4ade80 !important;
+	fill: var(--color-accent) !important;
 	opacity: 1;
 }
 svg.ac_connections g.conn_active_in path.ac_connection {
-	stroke: #86efac !important;
+	stroke: color-mix(in srgb, var(--color-accent) 60%, var(--color-light)) !important;
 	opacity: 0.8;
 }
 svg.ac_connections g.conn_active_in path.ac_connection_arrow {
-	fill: #86efac !important;
+	fill: color-mix(in srgb, var(--color-accent) 60%, var(--color-light)) !important;
 }
 @keyframes ac_connection_flow {
 	0%   { stroke-dashoffset: 0; }
@@ -2371,12 +2414,13 @@ line.ac_pickwhip {
 	z-index: 19;
 }
 #animation_controllers_wrapper .controller_state.playing {
-	border-color: #4ade80;
+	/* 反馈#316：播放高亮同样跟随主题强调色 */
+	border-color: var(--color-accent);
 	animation: ac_state_playing_pulse 1.5s ease-in-out infinite;
 }
 @keyframes ac_state_playing_pulse {
-	0%, 100% { box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.7), 0 0 10px rgb(0 0 0 / 22%); }
-	50%      { box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.25), 0 0 10px rgb(0 0 0 / 22%); }
+	0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 70%, transparent), 0 0 10px rgb(0 0 0 / 22%); }
+	50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 25%, transparent), 0 0 10px rgb(0 0 0 / 22%); }
 }
 #animation_controllers_wrapper:focus {
 	outline: none;

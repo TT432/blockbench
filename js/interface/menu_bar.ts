@@ -541,6 +541,8 @@ export const MenuBar = {
 			'auto_set_cullfaces',
 			'remove_blank_faces',
 			'face_optimize',
+			// 反馈#308：「一键镜像组」除工具栏按钮外，同时放进「工具」菜单（工具栏入口保留）
+			'mirror_group_sides',
 			'generate_voxel_shapes',
 			'generate_bedrock_block_box',
 			'generate_bedrock_entity_box',

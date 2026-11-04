@@ -22,12 +22,16 @@ type SmartProjection = {root_uuid: UUID, outliner: OutlinerSaveItem[], origin?: 
 type LegacySmartProjection = {root_uuid: UUID, fragment: SmartFragment};
 type SmartUndoSave = UndoSave & {
 	smart_owner_uuid?: UUID
+	/** 反馈#314：本工程自己的隐藏节点（visibility === false 的 uuid），回放后只在原工程内还原 */
+	smart_hidden?: UUID[]
 	smart_projection?: SmartProjection | LegacySmartProjection
 	_detach_node?: (node: OutlinerNode) => void
 	_project_texture_order?: (target: UUID[], reference?: UUID[]) => UUID[]
 };
 type SmartSelectionSave = UndoSelectionSave & {smart_owner_uuid?: UUID};
 type TransientUndoSystem = UndoSystem & {current_selection_save?: SmartSelectionSave};
+/** #87 起的窄快照字段列表（`Undo.initEdit({elements, element_fields})`）尚未进类型声明 */
+type UndoAspectFieldLists = UndoAspects & {element_fields?: string[], group_fields?: string[]};
 
 /** 贴图同步载荷：getUndoCopy 的推断类型缺少索引签名，这里显式命名用到的字段 */
 export type TextureSyncCopy = {
@@ -41,6 +45,8 @@ export type TextureSyncCopy = {
 /** 内容快照。根组只由 root_uuid 标识，绝不携带根组属性或变换。 */
 export type SmartFragment = {
 	root_uuid: UUID
+	/** 生成快照时的工程 UV 分辨率（uv 坐标空间）。反馈#317：子页的 UV 空间必须跟随主工程 */
+	resolution: [number, number]
 	elements: Record<string, unknown>[]
 	groups: Group[]
 	outliner: OutlinerSaveItem[]
@@ -52,6 +58,12 @@ const tab_states = new Map<UUID, SmartTabState>();
 const pending_pushes = new Map<UUID, PendingPush[]>();
 /** 待拉取：key = 智能对象标签页 uuid */
 const pending_pulls = new Map<UUID, SmartFragment>();
+/**
+ * 反馈#314：待还原的子页隐藏状态（key = 子页 uuid）。
+ * 子页里的显隐操作只在子页内成立，撤销/重做时必须还原到「做出该操作的那个工程」，
+ * 而共享历史的回放固定发生在主工程里，所以先记在这里，等子页下次取快照时再写回。
+ */
+const pending_tab_visibility = new Map<UUID, UUID[]>();
 
 function stateOf(project?: ModelProject): SmartTabState | undefined {
 	return project ? tab_states.get(project.uuid) : undefined;
@@ -144,6 +156,101 @@ function textureSignature(entry: SmartFragment['textures'][number]): string {
 	return JSON.stringify([entry.uuid, copy, source, image_data]);
 }
 
+/**
+ * 反馈#314：隐藏状态（visibility）属于各标签自己的视图状态，和 isOpen 一样不进入内容快照。
+ * 若不剥离：子页里隐藏的元素会随快照推回主工程；主工程里隐藏的组（级联写进后代元素的
+ * visibility）又会被快照带进子页，子页里那几个组就变成「可展开但元素不显示」。
+ */
+function stripViewState<T>(copy: T): T {
+	delete (copy as Record<string, unknown>).visibility;
+	return copy;
+}
+/** 反馈#314：收集当前工程的隐藏节点，供跨工程撤销回放后在原工程内还原。 */
+function collectHiddenNodes(project: ModelProject): UUID[] {
+	const hidden: UUID[] = [];
+	project.elements.forEach(node => {
+		if (node.visibility === false) hidden.push(node.uuid);
+	});
+	project.groups.forEach(node => {
+		if (node.visibility === false) hidden.push(node.uuid);
+	});
+	return hidden;
+}
+/** 反馈#314：按快照还原本工程的隐藏状态（撤销/重做子页内的显隐操作）。 */
+function applyHiddenNodes(project: ModelProject, hidden?: UUID[]): boolean {
+	if (!(hidden instanceof Array)) return false;
+	const hidden_set = new Set<UUID>(hidden);
+	let changed = false;
+	const apply = (node: OutlinerNode) => {
+		const visible = !hidden_set.has(node.uuid);
+		if (node.visibility == visible) return;
+		node.visibility = visible;
+		changed = true;
+		if (node.preview_controller && node.preview_controller.updateVisibility) {
+			node.preview_controller.updateVisibility(node);
+		}
+	};
+	project.elements.forEach(apply);
+	project.groups.forEach(apply);
+	if (changed && Project === project) Canvas.updateVisibility();
+	return changed;
+}
+/** 反馈#317：UV 坐标空间换挡比例（快照空间 / 目标工程当前空间）。 */
+function uvSpaceFactor(current: [number, number], target: [number, number]): [number, number] {
+	const fx = current[0] > 0 && target[0] > 0 ? target[0] / current[0] : 1;
+	const fy = current[1] > 0 && target[1] > 0 ? target[1] / current[1] : 1;
+	return [fx, fy];
+}
+/**
+ * 反馈#317：按比例缩放元素 UV（箱型 UV 缩 uv_offset，逐面 UV 缩面矩形，网格逐顶点缩）。
+ * 与 TextureGenerator.adjustUVToTexture 同一口径，保证分辨率变化后视觉不变。
+ */
+function scaleNodeUVs(element: OutlinerElement, factor: [number, number], update_preview: boolean) {
+	const [fx, fy] = factor;
+	if (!element.faces) return;
+	if (element.box_uv && element.uv_offset) {
+		element.uv_offset[0] *= fx;
+		element.uv_offset[1] *= fy;
+	} else if (element.getTypeBehavior('cube_faces')) {
+		for (const key in element.faces) {
+			const uv = element.faces[key].uv;
+			if (!(uv instanceof Array) || uv.length < 4) continue;
+			uv[0] *= fx;
+			uv[2] *= fx;
+			uv[1] *= fy;
+			uv[3] *= fy;
+		}
+	} else if (element instanceof Mesh) {
+		for (const fkey in element.faces) {
+			const uv = element.faces[fkey].uv;
+			for (const vkey in uv) {
+				uv[vkey][0] *= fx;
+				uv[vkey][1] *= fy;
+			}
+		}
+	}
+	if (update_preview && element.preview_controller && element.preview_controller.updateUV) {
+		element.preview_controller.updateUV(element);
+	}
+}
+/** 元素/组引用的贴图 uuid 集合（判断贴图是否还有人用）。 */
+function referencedTextureUUIDs(project: ModelProject): Set<UUID> {
+	const referenced = new Set<UUID>();
+	project.elements.forEach(element => {
+		const faces = element.faces as Record<string, {texture?: unknown}> | undefined;
+		if (!faces) return;
+		for (const fkey in faces) {
+			const texture_uuid = faces[fkey]?.texture;
+			if (typeof texture_uuid === 'string' && texture_uuid) referenced.add(texture_uuid);
+		}
+	});
+	project.groups.forEach(group => {
+		const texture_uuid = (group as Group & {texture?: unknown}).texture;
+		if (typeof texture_uuid === 'string' && texture_uuid) referenced.add(texture_uuid);
+	});
+	return referenced;
+}
+
 /** 把局部贴图顺序投影到完整列表的既有 scoped 槽位，外部贴图的索引与相对顺序不变。 */
 function projectTextureOrder(current_order: UUID[], target_order: UUID[], reference_order: UUID[]): UUID[] {
 	const scoped = new Set<UUID>(target_order);
@@ -182,6 +289,70 @@ function normalizeProjection(save?: UndoSave): SmartProjection | undefined {
 function setProjectUndo(project: ModelProject, undo: SmartUndoSystem) {
 	// _static 本身冻结，但 properties 容器是既有的可变工程属性表。
 	project._static.properties.undo = undo;
+}
+
+/**
+ * 反馈#314：跨工程回放时剥离隐藏状态。
+ * 子页里的显隐操作（大纲眼睛用 `element_fields: ['visibility']` 的窄快照）进的是共享历史，
+ * 而回放固定发生在主工程——不剥离就会把「子页里隐藏的元素」直接写到主工程上。
+ * 返回的函数把被临时改动的快照还原，调用方的其它 aspect 处理保持原状。
+ */
+function stripSaveViewState(save: UndoSave): () => void {
+	const target = save as SmartUndoSave;
+	// 窄快照的字段列表（#87 起）还没进类型声明，这里按可达字段收窄
+	const aspects: UndoAspectFieldLists | undefined = target.aspects as UndoAspectFieldLists | undefined;
+	const restore_visibility: {uuid: UUID, value: unknown}[] = [];
+	const restore_groups: {index: number, value: unknown}[] = [];
+	let restore_element_fields: string[] | undefined;
+	let restore_group_fields: string[] | undefined;
+
+	if (target.elements) {
+		const elements = target.elements as Record<UUID, Record<string, unknown>>;
+		for (const uuid in elements) {
+			const copy = elements[uuid];
+			if (!copy || typeof copy != 'object' || !('visibility' in copy)) continue;
+			restore_visibility.push({uuid, value: copy.visibility});
+			delete copy.visibility;
+		}
+	}
+	if (target.groups instanceof Array) {
+		target.groups.forEach((group, index) => {
+			const copy = group as unknown as Record<string, unknown>;
+			if (!copy || typeof copy != 'object' || !('visibility' in copy)) return;
+			restore_groups.push({index, value: copy.visibility});
+			delete copy.visibility;
+		});
+	}
+	if (aspects?.element_fields?.includes('visibility')) {
+		restore_element_fields = aspects.element_fields.slice();
+		aspects.element_fields = aspects.element_fields.filter(field => field != 'visibility');
+	}
+	if (aspects?.group_fields?.includes('visibility')) {
+		restore_group_fields = aspects.group_fields.slice();
+		aspects.group_fields = aspects.group_fields.filter(field => field != 'visibility');
+	}
+	return () => {
+		if (restore_visibility.length) {
+			const elements = target.elements as Record<UUID, Record<string, unknown>>;
+			restore_visibility.forEach(({uuid, value}) => {
+				if (elements[uuid]) elements[uuid].visibility = value;
+			});
+		}
+		restore_groups.forEach(({index, value}) => {
+			const copy = target.groups[index] as unknown as Record<string, unknown>;
+			if (copy) copy.visibility = value;
+		});
+		if (restore_element_fields && aspects) aspects.element_fields = restore_element_fields;
+		if (restore_group_fields && aspects) aspects.group_fields = restore_group_fields;
+	};
+}
+
+/** 反馈#314：把回放里的隐藏状态挂回发起该编辑的子页，等它下次同步时还原。 */
+function queueTabVisibility(save: SmartUndoSave) {
+	const owner = save.smart_owner_uuid;
+	if (!owner || !(save.smart_hidden instanceof Array)) return;
+	if (!stateOf(ModelProject.all.find(project => project.uuid == owner))) return;
+	pending_tab_visibility.set(owner, save.smart_hidden.slice());
 }
 
 /**
@@ -248,12 +419,17 @@ class SmartUndoSystem extends UndoSystem {
 			outliner_save.outliner = projected_outliner || undefined;
 			target._detach_node = detachProjectionNode;
 			target._project_texture_order = projectSmartTextureOrder;
+			// 反馈#314：隐藏状态不随回放跨工程——主工程保持自己的隐藏状态，
+			// 发起这次编辑的子页等下次取快照时再还原它自己的。
+			queueTabVisibility(target);
+			const restore_view_state = stripSaveViewState(target);
 			const offset = projection.origin || [0, 0, 0];
 			const restore_target = translateUndoSave(target, offset);
 			const restore_reference = translateUndoSave(reference, offset);
 			try {
 				super.loadSave(target, reference, mode);
 			} finally {
+				restore_view_state();
 				restore_target();
 				restore_reference();
 				if (had_outliner) outliner_save.outliner = original_outliner;
@@ -315,6 +491,27 @@ export const SmartObject = {
 	},
 	isSmartTab(project: ModelProject = Project): boolean {
 		return !!stateOf(project);
+	},
+	/**
+	 * 反馈#315：智能对象子页只装了智能根组的内容，贴图却是与主工程共享的同一张。
+	 * 「向模板追加元素」在子页里只统计子页自己的面，主工程里组外元素占用的 UV 区
+	 * （在透明材质上尤其看不出来）就被当成空白：新元素的 UV 直接压上去，回推主工程即
+	 * 「入侵已有材质 UV」；「清除未引用的像素」还会顺手抹掉这些面以外的像素。
+	 * 这里把主工程里不属于本子页的元素连同 UV 空间比例交给贴图装配去占位。
+	 */
+	appendOccupancy(texture?: Texture): {elements: OutlinerElement[], factor: [number, number]} | null {
+		if (!texture || !(Project instanceof ModelProject) || !this.isSmartTab(Project)) return null;
+		const parent = this.parentProject(Project);
+		if (!parent || !(parent.elements instanceof Array)) return null;
+		// 子页内容在主工程里是同一批 uuid（已由子页自己统计），只补组外的部分
+		const elements = parent.elements.filter(element => element.faces && !OutlinerNode.uuids[element.uuid]);
+		if (!elements.length) return null;
+		const external = parent.textures.find(item => item.uuid == texture.uuid);
+		// 面的 UV 数字属于主工程的 UV 空间，占位表属于子页的 UV 空间，分辨率不同时换算
+		const factor: [number, number] = external
+			? uvSpaceFactor([external.getUVWidth(), external.getUVHeight()], [texture.getUVWidth(), texture.getUVHeight()])
+			: [1, 1];
+		return {elements, factor};
 	},
 	/** 标签栏图标：智能对象标签用专用图标，其余保持原样 */
 	tabIcon(project: ModelProject): string {
@@ -461,11 +658,12 @@ export const SmartObject = {
 		const collectNodes = (nodes: OutlinerNode[]) => {
 			for (const node of nodes) {
 				if (isGroupNode(node)) {
-					groups.push(translateSpatialCopy(structuredClone(node.getSaveCopy(false)), offset));
+					// 反馈#314：组的隐藏状态是主工程自己的视图状态，不写进快照
+					groups.push(stripViewState(translateSpatialCopy(structuredClone(node.getSaveCopy(false)), offset)) as Group);
 					if (node.texture) texture_uuids.add(node.texture);
 					collectNodes(node.children);
 				} else {
-					const copy = translateSpatialCopy(structuredClone(node.getSaveCopy(meta)) as Record<string, unknown>, offset);
+					const copy = stripViewState(translateSpatialCopy(structuredClone(node.getSaveCopy(meta)) as Record<string, unknown>, offset));
 					elements.push(copy);
 					const faces = copy.faces;
 					if (faces && typeof faces == 'object') {
@@ -489,6 +687,7 @@ export const SmartObject = {
 
 		return {
 			root_uuid,
+			resolution: [project.texture_width, project.texture_height],
 			elements,
 			groups,
 			outliner: saveOutliner(content),
@@ -535,7 +734,11 @@ export const SmartObject = {
 		const same_outliner = nodeSignature(current_fragment.outliner) == nodeSignature(fragment.outliner);
 		const same_texture_order = current_fragment.textures.length == fragment.textures.length &&
 			current_fragment.textures.every((entry, index) => entry.uuid == fragment.textures[index].uuid);
-		const unchanged = current_fragment.elements.length == fragment.elements.length &&
+		// 反馈#317：UV 分辨率也是内容的一部分——只改分辨率（不改元素 UV）也必须触发同步
+		const same_resolution = (current_fragment.resolution?.[0] ?? 0) == (fragment.resolution?.[0] ?? 0) &&
+			(current_fragment.resolution?.[1] ?? 0) == (fragment.resolution?.[1] ?? 0);
+		const unchanged = same_resolution &&
+			current_fragment.elements.length == fragment.elements.length &&
 			current_fragment.groups.length == fragment.groups.length &&
 			current_fragment.textures.length == fragment.textures.length &&
 			same_outliner &&
@@ -548,6 +751,33 @@ export const SmartObject = {
 		let reattach_outliner = !same_outliner;
 		let groups_changed = false;
 
+		// 反馈#317：主工程的 UV 分辨率变化后（改工程分辨率、换分辨率更高的贴图、子页追加元素扩图），
+		// 子页若继续用旧分辨率，追加元素生成的 UV 与贴图尺寸对不上（32x32 与 64x64 两张贴图并存、UV 错位）。
+		// 快照是 UV 空间的唯一真值源：取快照/回推两侧都采用快照的分辨率。
+		// 只有「回推 + 工程级 UV 空间」需要顺带换算 UV——子页里扩过图时，主工程智能根组之外的
+		// 元素还停在旧空间，必须按同一比例换算（与 changeUVResolution 对组外元素的处理同口径）；
+		// 逐贴图 UV 尺寸的格式里贴图扩图时像素/UV 单位比不变，换算反而会错位，保持原数字。
+		if (!same_resolution && fragment.resolution?.[0] > 0 && fragment.resolution?.[1] > 0) {
+			// 分辨率变了就要重算所有面（像素/UV 单位比变了）
+			full_refresh = true;
+			const factor: [number, number] = (!tab_state && !Format.per_texture_uv_size)
+				? uvSpaceFactor([project.texture_width, project.texture_height], fragment.resolution)
+				: [1, 1];
+			if (factor[0] != 1 || factor[1] != 1) {
+				const update_preview = Project === project;
+				const covered = new Set<UUID>(fragment.elements.map(copy => copy.uuid as UUID));
+				project.elements.forEach(element => {
+					if (covered.has(element.uuid)) return;
+					scaleNodeUVs(element, factor, update_preview);
+				});
+			}
+			project.texture_width = fragment.resolution[0];
+			project.texture_height = fragment.resolution[1];
+			// 与原生 uv_mode 回放同一口径：UV 空间变了要同步 UV 面板与覆盖层
+			// （texture_width 的 setter 会在选中工程上补 updateProjectResolution）
+			if (Project === project) Canvas.updateAllUVs();
+		}
+
 		// 1. 贴图：只写变化的属性与像素，避免重复触发图片解码和材质上传。
 		for (const entry of fragment.textures) {
 			const current = current_textures.get(entry.uuid);
@@ -555,6 +785,10 @@ export const SmartObject = {
 			full_refresh = true;
 			const image_data = entry.copy.image_data || entry.copy.source;
 			const current_image = current && (current.copy.image_data || current.copy.source);
+			// 反馈#317：链接贴图（外部文件）的 source 路径不变、像素尺寸却变了时，只比较 source
+			// 会跳过重载，贴图像素停在旧分辨率（32x32px 却按 64 的 UV 空间渲染）→ 必须按尺寸补一次。
+			const size_changed = !!current &&
+				(current.copy.width != entry.copy.width || current.copy.height != entry.copy.height);
 			const data = Object.assign({}, entry.copy);
 			delete data.image_data;
 			delete data.source;
@@ -565,7 +799,7 @@ export const SmartObject = {
 				if (image_data) texture.fromDataURL(image_data);
 			} else {
 				texture.extend(data);
-				if (image_data && (image_data != current_image || entry.copy.layers)) texture.updateSource(image_data);
+				if (image_data && (image_data != current_image || entry.copy.layers || size_changed)) texture.updateSource(image_data);
 				else texture.updateMaterial();
 			}
 		}
@@ -654,6 +888,10 @@ export const SmartObject = {
 			}
 		}
 
+		// 反馈#317：外部替换掉分辨率的旧贴图不会自己离开——子页会同时列着 32x32 与 64x64
+		// 两张同名贴图，选中旧的那张时 UV 面板按旧尺寸显示，看起来「UV 错位」。
+		if (this.pruneUnreferencedTextures(project, fragment, current_fragment)) full_refresh = true;
+
 		if (full_refresh || (groups_changed && Format.per_group_texture)) Canvas.updateAllFaces();
 		if (full_refresh || groups_changed) Canvas.updateAllBones();
 		if (full_refresh) Canvas.updateAllPositions();
@@ -661,6 +899,37 @@ export const SmartObject = {
 		updateSelection();
 		if (!Modes.animate && !Modes.pose) Animator.showDefaultPose(true);
 		return true;
+	},
+	/**
+	 * 反馈#314：把回放里属于本子页的隐藏状态写回并清除。
+	 * 子页的显隐不参与内容快照，所以不能指望 applyFragment 带回来。
+	 */
+	restoreTabVisibility(project: ModelProject): boolean {
+		const hidden = pending_tab_visibility.get(project.uuid);
+		if (!hidden) return false;
+		pending_tab_visibility.delete(project.uuid);
+		return applyHiddenNodes(project, hidden);
+	},
+	/**
+	 * 反馈#317：回收快照里已经消失、且没有任何节点再引用的贴图。
+	 * 只处理「上一次同步还在、本次快照没有」的贴图，外部工程自己的贴图不受影响。
+	 */
+	pruneUnreferencedTextures(project: ModelProject, fragment: SmartFragment, current_fragment: SmartFragment): boolean {
+		if (!current_fragment.textures.length) return false;
+		const kept = new Set<UUID>(fragment.textures.map(entry => entry.uuid));
+		const stale = current_fragment.textures.filter(entry => !kept.has(entry.uuid));
+		if (!stale.length) return false;
+		const referenced = referencedTextureUUIDs(project);
+		let removed = false;
+		for (const entry of stale) {
+			if (referenced.has(entry.uuid)) continue;
+			const texture = project.textures.find(item => item.uuid == entry.uuid);
+			if (!texture) continue;
+			// 同步不写历史（贴图创建同样如此），所以这里走 no_update 分支
+			texture.remove(true);
+			removed = true;
+		}
+		return removed;
 	},
 	/** 把子页结构嵌入主工程当前大纲；返回新树，原生回放不会改写历史中的 projection。 */
 	resolveProjectionOutliner(projection: SmartProjection): OutlinerSaveItem[] | null {
@@ -730,6 +999,7 @@ export const SmartObject = {
 			return [item.uuid, outliner(item.children)];
 		});
 		return JSON.stringify([
+			fragment.resolution,
 			fragment.elements,
 			groups,
 			outliner(fragment.outliner),
@@ -797,6 +1067,8 @@ export const SmartObject = {
 				this.discardTab(project);
 				return;
 			}
+			// 反馈#314：撤销/重做记下的隐藏状态只在发起编辑的工程里生效，子页回到前台时还原它自己的
+			this.restoreTabVisibility(project);
 			const fragment = pending_pulls.get(project.uuid);
 			pending_pulls.delete(project.uuid);
 			if (!fragment) return;
@@ -867,6 +1139,7 @@ export const SmartObject = {
 		if (state) {
 			tab_states.delete(project.uuid);
 			pending_pulls.delete(project.uuid);
+			pending_tab_visibility.delete(project.uuid);
 			return;
 		}
 		pending_pushes.delete(project.uuid);
@@ -879,6 +1152,7 @@ export const SmartObject = {
 		const state = stateOf(tab);
 		tab_states.delete(tab.uuid);
 		pending_pulls.delete(tab.uuid);
+		pending_tab_visibility.delete(tab.uuid);
 		removePendingPush(tab.uuid);
 
 		if (Project === tab) {
@@ -913,6 +1187,8 @@ Blockbench.on('create_undo_save', ({save}) => {
 	target.smart_owner_uuid = Project.uuid;
 	const state = stateOf(Project);
 	if (!state || !(Project.undo instanceof SmartUndoSystem)) return;
+	// 反馈#314：子页的隐藏状态不随内容快照跨工程，撤销/重做只能靠这里记下来的快照在本工程内还原
+	target.smart_hidden = collectHiddenNodes(Project);
 	const parent = ModelProject.all.find(project => project.uuid == state.parent_uuid);
 	const root = parent?.groups.find(group => group.uuid == state.group_uuid);
 	target.smart_projection = {

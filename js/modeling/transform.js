@@ -19,6 +19,11 @@ export const FlipPlane = {
 	 * 与偏移合起来就是工具栏上的 6 个数值。
 	 */
 	rotation: [0, 0, 0],
+	/**
+	 * 反馈#312：是否在视口里绘制轴面网格（浮动面板里的「显示轴面」开关，默认开）。
+	 * 关闭后数值改动照常生效，只是不画网格。
+	 */
+	visible: true,
 	/** 元素数据空间里该轴镜像面的坐标（与 mirrorSelected 传给 flip() 的 center 同空间） */
 	position(axis) {
 		return (Format.centered_grid ? 0 : 8) + this.offset[axis];
@@ -494,6 +499,8 @@ export function flipNameOnAxis(node, axis, check, original_name) {
  * 反馈#299：轴对齐（未旋转）时的镜像主体，不含 Undo 记录——倾斜轴面要在旋转后的坐标系里复用它。
  */
 function flipSelectionOnAxisPlane(axis) {
+	// 反馈#305 第 5 点：镜像翻转不传播到智能复制组的对侧（组级属性不同步），组内单位照常同步
+	if (typeof SmartCopyGroup != 'undefined') SmartCopyGroup.markGroupFlip();
 	// 反馈#276：镜像面取滑条偏移后的翻转轴面（偏移为 0 时就是原来的画布中心）
 	let center = FlipPlane.position(axis);
 	if (Format.bone_rig) {
@@ -605,6 +612,8 @@ function rotateNodesRigidly(nodes, quaternion, pivot) {
  * （ZYX 欧拉序下等价于把另外两个分量取反）并镜像 origin，名称按左右/前后翻到对侧。
  */
 function mirrorNodesOnAxisPlane(nodes, axis) {
+	// 反馈#305 第 5 点：翻转不传播到智能复制组的对侧（组级属性不同步）
+	if (typeof SmartCopyGroup != 'undefined') SmartCopyGroup.markGroupFlip();
 	let center = FlipPlane.position(axis);
 	let {groups, elements} = collectSubtreeNodes(nodes);
 	elements.forEach(element => {
@@ -2399,7 +2408,8 @@ BARS.defineActions(function() {
 		flip_plane_grids.forEach((grid, axis) => {
 			let angle = FlipPlane.rotation[axis];
 			// 偏移为 0（画布中心）且未旋转时不画，避免默认视角被三个面糊住；改过数值才出现并跟随
-			let visible = FlipPlane.offset[axis] != 0 || Math.abs(angle % 360) > 1e-6;
+			// 反馈#312：面板里的「显示轴面」关闭时一律不画（数值照常生效）
+			let visible = FlipPlane.visible && (FlipPlane.offset[axis] != 0 || Math.abs(angle % 360) > 1e-6);
 			grid.visible = visible;
 			if (!visible) return;
 			// 三个面共用同一中心点（元素数据空间 → 场景坐标）
@@ -2554,6 +2564,55 @@ BARS.defineActions(function() {
 		},
 	}));
 	flip_plane_rotation_sliders.forEach(slider => slider.slider_vector = flip_plane_rotation_sliders);
+
+	/**
+	 * 反馈#312：翻转轴面的全部控件（偏移、旋转、每轴锁定、对齐所选中心、重置轴面 + 「显示轴面」开关）
+	 * 从元素面板搬进这个浮动面板。面板形态与「预览选项」一致：无遮罩、贴着入口按钮弹出、改动即时生效。
+	 * 懒创建——`Toolbars.flip_plane*` 由 toolbars.ts 里的 defineActions 建出来，太早取会是 undefined。
+	 */
+	let flip_plane_panel = null;
+	function getFlipPlanePanel() {
+		if (!flip_plane_panel) {
+			flip_plane_panel = new ConfigDialog('flip_plane_options', {
+				title: 'panel.element.flip_plane',
+				width: 360,
+				form: {
+					show_flip_planes: {
+						label: 'dialog.flip_plane.show',
+						type: 'checkbox',
+						style: 'toggle_switch',
+						value: true,
+						description: 'dialog.flip_plane.show.desc',
+					},
+				},
+				toolbars: {
+					flip_plane: Toolbars.flip_plane,
+					flip_plane_rotation: Toolbars.flip_plane_rotation,
+				},
+				onOpen() {
+					this.setFormValues({show_flip_planes: FlipPlane.visible});
+				},
+				onFormChange(result) {
+					if (typeof result.show_flip_planes != 'boolean') return;
+					FlipPlane.visible = result.show_flip_planes;
+					updateFlipPlaneVisual();
+				},
+			});
+		}
+		return flip_plane_panel;
+	}
+	new Action('flip_plane_panel', {
+		name: 'panel.element.flip_plane',
+		description: 'action.flip_plane_panel.desc',
+		icon: 'flip',
+		category: 'transform',
+		// 不挂模式条件：入口按钮常驻在视口右上角，面板里的滑条/开关各自带条件
+		click() {
+			// 入口是视口右上角那个按钮，面板贴着它弹出（与「预览选项」同一套定位）
+			let anchor = document.querySelector('.preview .preview_flip_plane');
+			getFlipPlanePanel().show(anchor instanceof HTMLElement ? anchor : undefined);
+		}
+	})
 
 	new Action('flip_plane_to_center', {
 		name: 'action.flip_plane_to_center',

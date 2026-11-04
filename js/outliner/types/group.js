@@ -452,6 +452,8 @@ export class Group extends OutlinerNode {
 			child.duplicate().addTo(copy)
 		}
 		copy.isOpen = true;
+		// 反馈#305 第 3 点：智能复制组的 Ctrl+D 复制同样进入该链接（副本与源共享链接 id、继续参与同步）
+		if (typeof SmartCopyGroup != 'undefined') SmartCopyGroup.onDuplicate(this, copy);
 		Canvas.updatePositions();
 		return copy;
 	}
@@ -608,8 +610,10 @@ Group.addBehaviorOverride({
 		'add_all_to_timeline',
 		'add_locator',
 		new MenuSeparator('manage'),
-		'setup_smart_mirror_group',
-		'remove_smart_mirror',
+		'setup_smart_copy_group',
+		'break_smart_copy_link',
+		'restore_smart_copy_link',
+		'remove_smart_copy',
 		'create_smart_object',
 		'edit_smart_object',
 		'demote_smart_object',
@@ -1181,7 +1185,12 @@ BARS.defineActions(function() {
 		}
 	})
 	// 反馈#306：右键「重命名」下面的「往下自动重命名」——按被右键组的名称，把它下面的所有组
-	// 依次命名为「原组名_1」「原组名_2」…（自上而下遍历顺序，用户 2026-11-03 定案）
+	// 依次命名（自上而下遍历顺序）。
+	// 反馈#306 复报（用户 2026-11-04 定案）：命名必须沿用 Blockbench 既有的同名进位规则，
+	// 不能直接拼「_1」「_2」——该规则 = 去掉名字末尾数字后再按 2、3、4… 进位（见
+	// OutlinerNode.createUniqueName：`abc` → `abc2` → `abc3`；`abc_1` → `abc_2`）。
+	// 这里不复用 createUniqueName 是因为它在非 bone_rig 格式下因 unique_name 行为关闭而直接返回，
+	// 而「往下自动重命名」在任何格式下都要给出名字；算法与它保持一致。
 	new Action('rename_descendants', {
 		icon: 'sort_by_alpha',
 		category: 'edit',
@@ -1191,13 +1200,45 @@ BARS.defineActions(function() {
 			let roots = Group.all.filter(group => group.selected
 				&& !Group.all.some(other => other !== group && other.selected && group.isChildOf(other, 128)));
 			let changes = [];
+			// 名字占用表：与 createUniqueName 一致——忽略大小写，且「自己被改名时自己的旧名不算占用」
+			let owners = new Map();
+			for (let group of Group.all) {
+				let key = group.name.toLowerCase();
+				if (!owners.has(key)) owners.set(key, []);
+				owners.get(key).push(group);
+			}
+			let isFree = (name, self) => (owners.get(name.toLowerCase()) ?? []).every(owner => owner === self);
+			let take = (name, self) => {
+				let key = name.toLowerCase();
+				if (!owners.has(key)) owners.set(key, []);
+				owners.get(key).push(self);
+			};
+			let release = (name, self) => {
+				let list = owners.get(name.toLowerCase());
+				if (!list) return;
+				let index = list.indexOf(self);
+				if (index >= 0) list.splice(index, 1);
+			};
+			let nextName = (candidate, self) => {
+				let zero_based = /[^\d]0$/.test(candidate);
+				let stem = candidate.replace(/\d+$/, '').replace(/\s+/g, '_');
+				if (isFree(candidate, self)) return candidate;
+				for (let num = zero_based ? 1 : 2; num < 8e3; num++) {
+					if (isFree(stem + num, self)) return stem + num;
+				}
+				return candidate;
+			};
 			for (let root of roots) {
-				let index = 0;
+				let previous = root.name;
 				root.forEachChild(child => {
 					if (!(child instanceof Group)) return;
-					index++;
-					let name = `${root.name}_${index}`;
-					if (child.name !== name) changes.push({group: child, name});
+					let old_name = child.name;
+					// 上一个名字已被占用（根组自己或前一个后代），按既有规则进位
+					let name = nextName(previous, child);
+					release(old_name, child);
+					take(name, child);
+					previous = name;
+					if (old_name !== name) changes.push({group: child, name});
 				}, Group);
 			}
 			if (!changes.length) return;

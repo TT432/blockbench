@@ -1177,14 +1177,30 @@ export const TextureGenerator = {
 					append_occupancy_snapshot = {};
 				}
 				let affected_elements = Outliner.elements.filter(el => el.faces);
-				affected_elements.forEach(element => {
+				// 反馈#315：智能对象子页只装了智能根组的内容，贴图却是与主工程共享的同一张。
+				// 只统计子页自己的面时，主工程里组外元素占用的 UV 区（在透明材质上完全看不出来）
+				// 会被当成空白：新元素的 UV 直接压上去，回推主工程就是「入侵已有材质 UV」；
+				// 「清除未引用的像素」还会顺手把这些面以外的像素抹掉。这里把主工程组外的占用
+				// 连同 UV 空间比例一并算进占位表（子页内的同 uuid 元素已由上面统计，不重复计入）。
+				const external_occupancy = (typeof SmartObject != 'undefined' && makeTexture instanceof Texture)
+					? SmartObject.appendOccupancy(makeTexture)
+					: null;
+				function markOccupancy(element, factor) {
 					for (let fkey in element.faces) {
 						let face = element.faces[fkey];
-						if (face.getTexture() !== makeTexture) continue;
+						let face_texture = face.getTexture();
+						// 主工程的贴图对象与子页不是同一个实例，uuid 相同即同一张贴图
+						if (face_texture !== makeTexture && (!face_texture || face_texture.uuid !== makeTexture.uuid)) continue;
 
 						let rect = face.getBoundingRect();
+						if (!rect) continue;
+						if (factor && (factor[0] !== 1 || factor[1] !== 1)) {
+							// 面的 UV 数字属于主工程的 UV 空间，占位表属于子页的 UV 空间
+							rect = {ax: rect.ax*factor[0], ay: rect.ay*factor[1], bx: rect.bx*factor[0], by: rect.by*factor[1]};
+						}
 						let face_matrix;
-						if (face instanceof MeshFace) {
+						// 多边形占位矩阵是逐 uv 格的，跨工程换算会失真，外部元素退化为整块矩形（更保守）
+						if (!factor && face instanceof MeshFace) {
 							face_matrix = face.getOccupationMatrix(false);
 						}
 
@@ -1208,9 +1224,13 @@ export const TextureGenerator = {
 								}
 							}
 						}
-						
+
 					}
-				})
+				}
+				affected_elements.forEach(element => markOccupancy(element, null));
+				if (external_occupancy) {
+					external_occupancy.elements.forEach(element => markOccupancy(element, external_occupancy.factor));
+				}
 
 				if (options.padding && !append_occupancy_snapshot) {
 					// 反馈#208：填充间隙必须与「贴图里已存在的像素」也隔开一格，而不只是与面的 UV 矩形隔开。

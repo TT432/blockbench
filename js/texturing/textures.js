@@ -12,6 +12,21 @@ import { ScopeColors } from '../multi_file_editing';
 
 let tex_version = 1;
 
+/**
+ * 反馈#311：找出当前工程里用到这张贴图、需要跟着贴图尺寸修正 UV 的元素。
+ * 只在「工程里有多个贴图」且不是单贴图格式时才有意义——单贴图格式改的是工程 UV 尺寸，不用逐元素改 UV。
+ */
+function getTextureResizeUVTargets(texture) {
+	if (Texture.all.length < 2 || Format.single_texture) return null;
+	let elements = [...Cube.all, ...Mesh.all].filter(element => {
+		for (let fkey in element.faces) {
+			if (element.faces[fkey].texture == texture.uuid) return true;
+		}
+		return false;
+	});
+	return elements.length ? elements : null;
+}
+
 //Textures
 export class Texture {
 	constructor(data, uuid) {
@@ -1569,6 +1584,127 @@ export class Texture {
 			}
 		}).show()
 	}
+	/**
+	 * 反馈#311：把这张贴图重采样到 size（[宽, 高]，高度已含动画帧数）。
+	 * 逻辑整段搬自 resizeDialog 的 onConfirm，供「单张贴图」与「按同一倍率应用到全部贴图」共用；
+	 * 调用方负责 Undo.initEdit / finishEdit（批量时整批仍只算一条 Undo 记录）。
+	 * @param {Array<Number>} size 目标画布尺寸
+	 * @param {String} mode 'crop'（裁剪/扩展）或 'scale'（缩放）
+	 * @param {String} fill 裁剪模式的填充方式：transparent / color / repeat
+	 * @param {Array|null} elements_to_change 需要跟着改 UV 的元素（多贴图工程才有）
+	 */
+	resizeBitmapTo(size, mode, fill, elements_to_change) {
+		let scope = this;
+		let old_width = this.width;
+		let old_height = this.height;
+		this.edit(() => {
+			let temp_canvas = document.createElement('canvas');
+			let temp_ctx = temp_canvas.getContext('2d');
+			let resizeCanvas = (ctx) => {
+				temp_canvas.width = ctx.canvas.width;
+				temp_canvas.height = ctx.canvas.height;
+				temp_ctx.drawImage(ctx.canvas, 0, 0);
+
+				if (ctx.canvas.width == scope.canvas.width && ctx.canvas.height == scope.canvas.height) {
+					ctx.canvas.width = size[0];
+					ctx.canvas.height = size[1];
+				} else if (mode == 'scale') {
+					ctx.canvas.width = Math.round(ctx.canvas.width * (size[0] / scope.canvas.width));
+					ctx.canvas.height = Math.round(ctx.canvas.height * (size[1] / scope.canvas.height));
+				}
+				ctx.imageSmoothingEnabled = false;
+
+				if (mode == 'crop') {
+					switch (fill) {
+						case 'transparent':
+							ctx.drawImage(temp_canvas, 0, 0, temp_canvas.width, temp_canvas.height);
+							break;
+						case 'color':
+							ctx.fillStyle = ColorPanel.get();
+							ctx.fillRect(0, 0, size[0], size[1])
+							ctx.clearRect(0, 0, temp_canvas.width, temp_canvas.height)
+							ctx.drawImage(temp_canvas, 0, 0, temp_canvas.width, temp_canvas.height);
+							break;
+						case 'repeat':
+							for (var x = 0; x < size[0]; x += temp_canvas.width) {
+								for (var y = 0; y < size[1]; y += temp_canvas.height) {
+									ctx.drawImage(temp_canvas, x, y, temp_canvas.width, temp_canvas.height);
+								}
+							}
+							break;
+					}
+				} else {
+					ctx.drawImage(temp_canvas, 0, 0, ctx.canvas.width, ctx.canvas.height);
+				}
+			}
+
+			if (scope.layers_enabled && scope.layers.length) {
+				for (let layer of scope.layers) {
+					if (layer.type != 'pixel_layer') continue;
+					if (mode == 'scale') {
+						resizeCanvas(layer.ctx);
+						layer.offset[0] = Math.round(layer.offset[0] * (size[0] / scope.width));
+						layer.offset[1] = Math.round(layer.offset[1] * (size[1] / scope.height));
+					}
+				}
+			} else {
+				resizeCanvas(scope.ctx);
+			}
+
+			scope.width = size[0];
+			scope.height = size[1];
+
+			scope.keep_size = true;
+			if (mode == 'scale') {
+				// Nothing
+			} else if (fill === 'repeat' && Format.animated_textures && size[0] < size[1]) {
+				// Animated
+			} else if (Format.single_texture || Texture.all.length == 1 || Format.per_texture_uv_size) {
+
+				if (Format.per_texture_uv_size) {
+					scope.uv_width = scope.uv_width * (size[0] / old_width);
+					scope.uv_height = scope.uv_height * (size[1] / old_height);
+					Project.texture_width = scope.uv_width;
+					Project.texture_height = scope.uv_height;
+				} else {
+					Undo.current_save.uv_mode = {
+						box_uv: Project.box_uv,
+						width:  Project.texture_width,
+						height: Project.texture_height
+					}
+					Undo.current_save.aspects.uv_mode = true;
+					Project.texture_width = Project.texture_width * (size[0] / old_width);
+					Project.texture_height = Project.texture_height * (size[1] / old_height);
+				}
+				Canvas.updateAllUVs()
+
+			} else if (elements_to_change) {
+				elements_to_change.forEach(element => {
+					if (element.getTypeBehavior('cube_faces')) {
+						for (var key in element.faces) {
+							if (element.faces[key].texture !== scope.uuid) continue;
+							var uv = element.faces[key].uv;
+							uv[0] /= size[0] / old_width;
+							uv[2] /= size[0] / old_width;
+							uv[1] /= size[1] / old_height;
+							uv[3] /= size[1] / old_height;
+						}
+					} else if (element instanceof Mesh) {
+						for (var key in element.faces) {
+							if (element.faces[key].texture !== scope.uuid) continue;
+							var uv = element.faces[key].uv;
+							for (let vkey in uv) {
+								uv[vkey][0] /= size[0] / old_width;
+								uv[vkey][1] /= size[1] / old_height;
+							}
+						}
+					}
+				})
+				Canvas.updateView({elements: elements_to_change, element_aspects: {uv: true}})
+			}
+
+		}, {no_undo: true});
+	}
 	resizeDialog() {
 		let scope = this;
 		let updated_to_repeat = false;
@@ -1602,7 +1738,64 @@ export class Texture {
 					transparent: 'dialog.resize_texture.fill.transparent',
 					color: 'dialog.resize_texture.fill.color',
 					repeat: 'dialog.resize_texture.fill.repeat',
-				}}
+				}},
+				// 反馈#311：把这次调整的缩放倍率一次性套到工程里的全部贴图
+				// （原本 A 256→512 后，B 也按 ×2 到 512、C 512→1024）。通用模型没有外部格式、
+				// 贴图各自独立，不需要批量入口，故只在「非通用模型 + 多贴图」时提供
+				resize_all: {
+					type: 'buttons',
+					buttons: ['dialog.resize_texture.resize_all'],
+					condition: () => Texture.all.length > 1 && Format.id !== 'free',
+					click: () => {
+						let formResult = dialog.getFormResult();
+						let base_size = Array.isArray(formResult.size) ? formResult.size.slice() : [scope.width, scope.display_height];
+						let factor_x = base_size[0] / scope.width;
+						let factor_y = base_size[1] / scope.display_height;
+						if (!(factor_x > 0) || !(factor_y > 0)) return;
+						// 本次调整的帧数只作用于当前贴图；其余贴图保留各自的帧数
+						let frames = (Format.animated_textures && formResult.frames > 1) ? formResult.frames : null;
+
+						let textures = Texture.all.slice();
+						let uv_targets = new Map();
+						let elements_to_change = [];
+						if (formResult.mode === 'crop') {
+							for (let texture of textures) {
+								let targets = getTextureResizeUVTargets(texture);
+								if (!targets) continue;
+								uv_targets.set(texture, targets);
+								// 同一个元素可能同时用了多张贴图，按出现顺序去重
+								for (let element of targets) {
+									if (!elements_to_change.includes(element)) elements_to_change.push(element);
+								}
+							}
+						}
+
+						Undo.initEdit({
+							textures,
+							bitmap: true,
+							elements: elements_to_change.length ? elements_to_change : null,
+							uv_only: true
+						})
+						for (let texture of textures) {
+							let target_size;
+							if (texture === scope && frames) {
+								target_size = [base_size[0], base_size[1] * frames];
+							} else {
+								let frame_count = texture.frameCount || 1;
+								target_size = [
+									Math.max(1, Math.round(texture.width * factor_x)),
+									Math.max(1, Math.round(texture.display_height * factor_y)) * frame_count,
+								];
+							}
+							texture.resizeBitmapTo(target_size, formResult.mode, formResult.fill, uv_targets.get(texture) || null);
+						}
+						Undo.finishEdit('Resize all textures');
+
+						dialog.hide();
+						UVEditor.vue.updateTexture();
+						setTimeout(updateSelection, 100);
+					}
+				}
 			},
 			onFormChange(formResult) {
 				if (formResult.frames > (scope.frameCount || 1) && !updated_to_repeat) {
@@ -1611,20 +1804,12 @@ export class Texture {
 				}
 			},
 			onConfirm: function(formResult) {
-				let old_width = scope.width;
-				let old_height = scope.height;
-				let elements_to_change = null;
-				if (formResult.mode === 'crop' && Texture.length >= 2 && !Format.single_texture) {
-					let elements = [...Cube.all, ...Mesh.all].filter(el => {
-						for (let fkey in el.faces) {
-							if (el.faces[fkey].texture == scope.uuid) return true;
-						}
-					})
-					if (elements.length) elements_to_change = elements;
-				}
+				let size = formResult.size.slice();
 				if (Format.animated_textures && formResult.frames > 1) {
-					formResult.size[1] *= formResult.frames;
+					size[1] *= formResult.frames;
 				}
+				// 反馈#311：UV 修正目标与「应用到全部贴图」共用同一套判定
+				let elements_to_change = (formResult.mode === 'crop') ? getTextureResizeUVTargets(scope) : null;
 
 				Undo.initEdit({
 					textures: [scope],
@@ -1633,113 +1818,7 @@ export class Texture {
 					uv_only: true
 				})
 
-				scope.edit((canvas) => {
-					let temp_canvas = document.createElement('canvas');
-					let temp_ctx = temp_canvas.getContext('2d');
-					let resizeCanvas = (ctx) => {
-						temp_canvas.width = ctx.canvas.width;
-						temp_canvas.height = ctx.canvas.height;
-						temp_ctx.drawImage(ctx.canvas, 0, 0);
-
-						if (ctx.canvas.width == scope.canvas.width && ctx.canvas.height == scope.canvas.height) {
-							ctx.canvas.width = formResult.size[0];
-							ctx.canvas.height = formResult.size[1];
-						} else if (formResult.mode == 'scale') {
-							ctx.canvas.width = Math.round(ctx.canvas.width * (formResult.size[0] / scope.canvas.width));
-							ctx.canvas.height = Math.round(ctx.canvas.height * (formResult.size[1] / scope.canvas.height));
-						}
-						ctx.imageSmoothingEnabled = false;
-	
-						if (formResult.mode == 'crop') {
-							switch (formResult.fill) {
-								case 'transparent':
-									ctx.drawImage(temp_canvas, 0, 0, temp_canvas.width, temp_canvas.height);
-									break;
-								case 'color':
-									ctx.fillStyle = ColorPanel.get();
-									ctx.fillRect(0, 0, formResult.size[0], formResult.size[1])
-									ctx.clearRect(0, 0, temp_canvas.width, temp_canvas.height)
-									ctx.drawImage(temp_canvas, 0, 0, temp_canvas.width, temp_canvas.height);
-									break;
-								case 'repeat':
-									for (var x = 0; x < formResult.size[0]; x += temp_canvas.width) {		
-										for (var y = 0; y < formResult.size[1]; y += temp_canvas.height) {
-											ctx.drawImage(temp_canvas, x, y, temp_canvas.width, temp_canvas.height);
-										}
-									}
-									break;
-							}
-						} else {
-							ctx.drawImage(temp_canvas, 0, 0, ctx.canvas.width, ctx.canvas.height);
-						}
-					}
-
-					if (scope.layers_enabled && scope.layers.length) {
-						for (let layer of scope.layers) {
-							if (layer.type != 'pixel_layer') continue;
-							if (formResult.mode == 'scale') {
-								resizeCanvas(layer.ctx);
-								layer.offset[0] = Math.round(layer.offset[0] * (formResult.size[0] / scope.width));
-								layer.offset[1] = Math.round(layer.offset[1] * (formResult.size[1] / scope.height));
-							}
-						}
-					} else {
-						resizeCanvas(scope.ctx);
-					}
-
-					scope.width = formResult.size[0];
-					scope.height = formResult.size[1];
-
-					scope.keep_size = true;
-					if (formResult.mode == 'scale') {
-						// Nothing
-					} else if (formResult.fill === 'repeat' && Format.animated_textures && formResult.size[0] < formResult.size[1]) {
-						// Animated
-					} else if (Format.single_texture || Texture.all.length == 1 || Format.per_texture_uv_size) {
-
-						if (Format.per_texture_uv_size) {
-							scope.uv_width = scope.uv_width * (formResult.size[0] / old_width);
-							scope.uv_height = scope.uv_height * (formResult.size[1] / old_height);
-							Project.texture_width = scope.uv_width;
-							Project.texture_height = scope.uv_height;
-						} else {
-							Undo.current_save.uv_mode = {
-								box_uv: Project.box_uv,
-								width:  Project.texture_width,
-								height: Project.texture_height
-							}
-							Undo.current_save.aspects.uv_mode = true;
-							Project.texture_width = Project.texture_width * (formResult.size[0] / old_width);
-							Project.texture_height = Project.texture_height * (formResult.size[1] / old_height);
-						}
-						Canvas.updateAllUVs()
-
-					} else if (Texture.length >= 2 && elements_to_change) {
-						elements_to_change.forEach(element => {
-							if (element.getTypeBehavior('cube_faces')) {
-								for (var key in element.faces) {
-									if (element.faces[key].texture !== scope.uuid) continue;
-									var uv = element.faces[key].uv;
-									uv[0] /= formResult.size[0] / old_width;
-									uv[2] /= formResult.size[0] / old_width;
-									uv[1] /= formResult.size[1] / old_height;
-									uv[3] /= formResult.size[1] / old_height;
-								}
-							} else if (element instanceof Mesh) {
-								for (var key in element.faces) {
-									if (element.faces[key].texture !== scope.uuid) continue;
-									var uv = element.faces[key].uv;
-									for (let vkey in uv) {
-										uv[vkey][0] /= formResult.size[0] / old_width;
-										uv[vkey][1] /= formResult.size[1] / old_height;
-									}
-								}
-							}
-						})
-						Canvas.updateView({elements: elements_to_change, element_aspects: {uv: true}})
-					}
-
-				}, {no_undo: true})
+				scope.resizeBitmapTo(size, formResult.mode, formResult.fill, elements_to_change);
 
 				Undo.finishEdit('Resize texture');
 

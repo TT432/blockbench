@@ -93,6 +93,12 @@ function buildToolbars(dialog: Dialog) {
 	let dialog_content = $(dialog.object).find('.dialog_content')
 	for (let id in dialog.toolbars) {
 		let toolbar = dialog.toolbars[id];
+		// 反馈#312：与面板里的工具栏一致——带 label 的先渲染标题行（翻转轴面面板的「偏移」「旋转」）
+		if (toolbar.label) {
+			let label = Interface.createElement('p', {class: 'panel_toolbar_label'}, tl(toolbar.name));
+			dialog_content.append(label);
+			toolbar.label_node = label;
+		}
 		dialog_content.append(toolbar.node);
 	}
 }
