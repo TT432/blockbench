@@ -2575,7 +2575,9 @@ BARS.defineActions(function() {
 		if (!flip_plane_panel) {
 			flip_plane_panel = new ConfigDialog('flip_plane_options', {
 				title: 'panel.element.flip_plane',
-				width: 360,
+				// 反馈#320：加宽到能放下「三个数值 + 三个锁」和「三个旋转数值 + 对齐/重置按钮」各一行，
+				// 原 360px 下 Z 轴的锁会被挤到下一行
+				width: 460,
 				form: {
 					show_flip_planes: {
 						label: 'dialog.flip_plane.show',

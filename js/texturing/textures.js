@@ -1592,8 +1592,11 @@ export class Texture {
 	 * @param {String} mode 'crop'（裁剪/扩展）或 'scale'（缩放）
 	 * @param {String} fill 裁剪模式的填充方式：transparent / color / repeat
 	 * @param {Array|null} elements_to_change 需要跟着改 UV 的元素（多贴图工程才有）
+	 * @param {{uv_adjust?: 'auto'|'batch'}} options 反馈#319：'batch' 表示正在整批处理多贴图，
+	 *   共享 UV 空间（single_texture / 单贴图）留给调用方在全部重采样完成后只缩一次
 	 */
-	resizeBitmapTo(size, mode, fill, elements_to_change) {
+	resizeBitmapTo(size, mode, fill, elements_to_change, options = {}) {
+		let uv_adjust = options.uv_adjust || 'auto';
 		let scope = this;
 		let old_width = this.width;
 		let old_height = this.height;
@@ -1659,23 +1662,16 @@ export class Texture {
 				// Nothing
 			} else if (fill === 'repeat' && Format.animated_textures && size[0] < size[1]) {
 				// Animated
+			} else if (uv_adjust === 'batch' && (Format.single_texture || Texture.all.length == 1 || Format.per_texture_uv_size)) {
+				// 反馈#319：批量重采样时共享 UV 空间（single_texture / 单贴图）只缩一次，
+				// 由调用方在全部贴图处理完后统一调用 scaleSharedUVSpace()；这里只处理每贴图自己的 UV 尺寸
+				if (Format.per_texture_uv_size) scope.scalePerTextureUVSize(old_width, old_height, size);
 			} else if (Format.single_texture || Texture.all.length == 1 || Format.per_texture_uv_size) {
 
 				if (Format.per_texture_uv_size) {
-					scope.uv_width = scope.uv_width * (size[0] / old_width);
-					scope.uv_height = scope.uv_height * (size[1] / old_height);
-					Project.texture_width = scope.uv_width;
-					Project.texture_height = scope.uv_height;
-				} else {
-					Undo.current_save.uv_mode = {
-						box_uv: Project.box_uv,
-						width:  Project.texture_width,
-						height: Project.texture_height
-					}
-					Undo.current_save.aspects.uv_mode = true;
-					Project.texture_width = Project.texture_width * (size[0] / old_width);
-					Project.texture_height = Project.texture_height * (size[1] / old_height);
+					scope.scalePerTextureUVSize(old_width, old_height, size);
 				}
+				scope.scaleSharedUVSpace(old_width, old_height, size);
 				Canvas.updateAllUVs()
 
 			} else if (elements_to_change) {
@@ -1704,6 +1700,34 @@ export class Texture {
 			}
 
 		}, {no_undo: true});
+	}
+	/**
+	 * 反馈#319：per_texture_uv_size 格式（多贴图各自一套 UV 尺寸）下，把这张贴图自己的
+	 * uv_width/uv_height 跟着位图缩放。批量重采样里每张贴图各调一次。
+	 */
+	scalePerTextureUVSize(old_width, old_height, size) {
+		this.uv_width = this.uv_width * (size[0] / old_width);
+		this.uv_height = this.uv_height * (size[1] / old_height);
+	}
+	/**
+	 * 反馈#319：缩放共享的 UV 空间。single_texture / 单贴图格式里所有面共用
+	 * Project.texture_width/height，整批重采样只能在这里缩一次——原实现让每张贴图各缩一次，
+	 * 2 张贴图就把 UV 空间放大成 4 倍，且 Undo 基线被第二次改写覆盖，撤销后停在中间状态。
+	 */
+	scaleSharedUVSpace(old_width, old_height, size) {
+		if (Format.per_texture_uv_size) {
+			Project.texture_width = this.uv_width;
+			Project.texture_height = this.uv_height;
+		} else {
+			Undo.current_save.uv_mode = {
+				box_uv: Project.box_uv,
+				width:  Project.texture_width,
+				height: Project.texture_height
+			}
+			Undo.current_save.aspects.uv_mode = true;
+			Project.texture_width = Project.texture_width * (size[0] / old_width);
+			Project.texture_height = Project.texture_height * (size[1] / old_height);
+		}
 	}
 	resizeDialog() {
 		let scope = this;
@@ -1776,6 +1800,8 @@ export class Texture {
 							elements: elements_to_change.length ? elements_to_change : null,
 							uv_only: true
 						})
+						// 反馈#319：共享 UV 空间以当前贴图的原尺寸为基线，全部重采样完成后只缩一次
+						let scope_old_size = [scope.width, scope.height];
 						for (let texture of textures) {
 							let target_size;
 							if (texture === scope && frames) {
@@ -1787,7 +1813,15 @@ export class Texture {
 									Math.max(1, Math.round(texture.display_height * factor_y)) * frame_count,
 								];
 							}
-							texture.resizeBitmapTo(target_size, formResult.mode, formResult.fill, uv_targets.get(texture) || null);
+							texture.resizeBitmapTo(target_size, formResult.mode, formResult.fill, uv_targets.get(texture) || null, {uv_adjust: 'batch'});
+						}
+						// 与单张贴图路径同一套判定：动画贴图纵向堆帧（repeat 填充）时 UV 空间不动
+						let animated_repeat = formResult.fill === 'repeat' && Format.animated_textures
+							&& base_size[0] < base_size[1] * (frames || 1);
+						let shares_uv_space = Format.single_texture || Texture.all.length == 1 || Format.per_texture_uv_size;
+						if (formResult.mode === 'crop' && shares_uv_space && !animated_repeat) {
+							scope.scaleSharedUVSpace(scope_old_size[0], scope_old_size[1], [scope.width, scope.height]);
+							Canvas.updateAllUVs();
 						}
 						Undo.finishEdit('Resize all textures');
 

@@ -193,6 +193,17 @@
 	.preview .preview_menu .preview_main_menu > i {
 		width: 20px;
 	}
+	/* 反馈#320：翻转轴面入口改用「沿 X 轴翻转」图标（左半描边 + 右半实心，中间留缝），
+	   不再和镜像共用 material 的 flip 图标；颜色走亮色（默认主题下即白色），便于和镜像区分 */
+	.preview .preview_menu .preview_flip_plane {
+		color: var(--color-light);
+	}
+	.preview .preview_menu .preview_flip_plane > svg.community_flip_plane_icon {
+		width: 20px;
+		height: 20px;
+		display: block;
+		margin: 5px auto 0;
+	}
 	.preview .preview_background_menu {
 		background-size: cover;
 		width: 30px;

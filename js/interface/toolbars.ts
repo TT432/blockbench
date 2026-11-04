@@ -599,9 +599,6 @@ export const BARS = {
 				'flip_plane_lock_y',
 				'slider_flip_plane_z',
 				'flip_plane_lock_z',
-				'#',
-				'flip_plane_to_center',
-				'flip_plane_reset',
 			]
 		})
 		Toolbars.flip_plane_rotation = new Toolbar({
@@ -612,6 +609,11 @@ export const BARS = {
 				'slider_flip_plane_rotation_x',
 				'slider_flip_plane_rotation_y',
 				'slider_flip_plane_rotation_z',
+				// 反馈#320：两个按钮从偏移行下方移到旋转行右侧，和三个旋转数值排在同一行
+				// （'_' 是竖分隔线；'#' 会强制换行，按钮又掉到下一行）
+				'_',
+				'flip_plane_to_center',
+				'flip_plane_reset',
 			]
 		})
 		if (Blockbench.isMobile) {

@@ -895,3 +895,12 @@
 		overflow-y: scroll;
 	}
 }
+/* 反馈#318：第三方主题通常把样式写进 @layer theme，而层序 base → theme 让主题里的
+   `.group / .cube / .outliner_object { padding: … }` 无条件盖掉 base 层的大纲层级缩进
+   （组行缩进退化成固定值，父子层级看不出来；Retrowave 等紫色主题实测全是 8px）。
+   在最后声明的 theme-override 层重申缩进，主题再写 padding 也吞不掉层级。 */
+@layer theme-override {
+	div.outliner_object {
+		padding-left: calc(var(--indentation) * var(--indentation-offset) + 3px);
+	}
+}

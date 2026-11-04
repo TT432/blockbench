@@ -290,7 +290,7 @@ export class Preview {
 		this.node.appendChild(this.canvas);
 		let menu = $(`
 			<div class="preview_menu">
-				<div class="tool preview_flip_plane one_is_enough"><i class="material-icons">flip</i></div>
+				<div class="tool preview_flip_plane one_is_enough"><svg class="community_flip_plane_icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4.5 L3.5 20 L11 20 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M13 4.5 L20.5 20 L13 20 Z" fill="currentColor"/></svg></div>
 				<div class="tool preview_fullscreen_button quad_view_only"><i class="material-icons">fullscreen</i></div>
 				<div class="tool preview_view_mode_menu one_is_enough"><i class="material-icons">image</i></div>
 				<div class="tool preview_view_options one_is_enough"><i class="material-icons">discover_tune</i></div>
