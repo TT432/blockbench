@@ -2661,6 +2661,7 @@
 	"edit.vertex_snap.align.longest": "最长轴",
 	"edit.vertex_snap.align.direction": "从枢轴的方向",
 	"edit.vertex_snap.align.align_axis": "轴 %0",
+	"edit.vertex_snap.align.scale_to_vertex": "自动缩放至顶点",
 	"edit.vertex_snap.ignore_axis": "忽略轴",
 	"codec.common.format": "格式",
 	"codec.image.quality": "品质",

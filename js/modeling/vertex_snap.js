@@ -16,6 +16,25 @@ const INTERSECTION_MAX_POINTS = 256;	// 单元素追加的交点上限
 const INTERSECTION_MAX_RAYS = 8192;		// 单次调用的射线上限（线段正反两向各计一条）
 const INTERSECTION_MAX_ELEMENTS = 512;	// 元素总数上限，超过则整体跳过
 
+// 反馈#323：旋转模式的「对齐」记住上次使用的值，下次捕捉后面板按上次预选。
+// 只是界面记忆、不是工程数据，因此写 localStorage 而不进设置项/工程文件。忽略轴不记忆（保持每次默认全不忽略）。
+const ROTATE_OPTIONS_STORAGE_KEY = 'community_vertex_snap_rotate_options';
+const ROTATE_ALIGN_OPTIONS = ['longest', 'direction', 'x', 'y', 'z', 'scale'];
+function loadRotateOptions() {
+	let saved = {};
+	try {
+		saved = JSON.parse(localStorage.getItem(ROTATE_OPTIONS_STORAGE_KEY)) || {};
+	} catch (err) {
+		saved = {};
+	}
+	return {align: ROTATE_ALIGN_OPTIONS.includes(saved.align) ? saved.align : 'longest'};
+}
+function saveRotateOptions(form) {
+	try {
+		localStorage.setItem(ROTATE_OPTIONS_STORAGE_KEY, JSON.stringify({align: form.align}));
+	} catch (err) {}
+}
+
 export const Vertexsnap = {
 	step1: true,
 	vertex_gizmos: new THREE.Object3D(),
@@ -583,7 +602,8 @@ export const Vertexsnap = {
 			$('#preview').css('cursor', (Vertexsnap.step1 ? 'copy' : 'alias'))
 
 		} else {
-			Vertexsnap.snap(data)
+			// 反馈#323：旋转模式直接按「上次使用的对齐/忽略轴」先算一遍，面板的首选项与结果保持一致
+			Vertexsnap.snap(data, BarItems.vertex_snap_mode.get() == 'rotate' ? loadRotateOptions() : 0)
 			$('#preview').css('cursor', (Vertexsnap.step1 ? 'copy' : 'alias'))
 		}
 		Blockbench.setStatusBarText()
@@ -716,6 +736,42 @@ export const Vertexsnap = {
 			} else if (mode === 'move') {
 				moveElements(global_delta);
 			} else if (mode == 'rotate') {
+				// 反馈#323：「自动缩放至顶点」——不挑轴去凑距离，先按最短弧把顶点方向转到目标方向，
+				// 再绕枢轴沿未被忽略的轴等比缩放，使被抓的顶点正好落在目标顶点上（旧的对齐方式
+				// 只改一个轴分量来凑距离，旋转后顶点不会真正落到目标上）。
+				function scaleAboutPivot(obj, factor) {
+					if (!factor || !isFinite(factor) || factor <= 0) return;
+					let pivot = new THREE.Vector3();
+					obj.mesh.getWorldPosition(pivot);
+					if (obj.mesh.parent) {
+						obj.mesh.parent.updateWorldMatrix(true, false);
+						obj.mesh.parent.worldToLocal(pivot);
+					} else {
+						pivot.sub(Canvas.scene.position);
+					}
+					let scale_coords = (coords) => {
+						for (let i = 0; i < 3; i++) {
+							if (options.ignore_axis?.['xyz'[i]]) continue;
+							let offset = coords[i] - pivot.getComponent(i);
+							coords[i] = pivot.getComponent(i) + offset * factor;
+						}
+					};
+					if (obj instanceof Cube) {
+						scale_coords(obj.from);
+						scale_coords(obj.to);
+						if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
+							Format.cube_size_limiter.clamp(obj)
+						}
+					} else if (obj.vertices) {
+						for (let key in obj.vertices) {
+							if (obj.vertices[key]) scale_coords(obj.vertices[key]);
+						}
+					} else {
+						return;
+					}
+					obj.preview_controller?.updateGeometry?.(obj);
+					if (obj.box_uv && obj.visibility) obj.preview_controller?.updateUV?.(obj);
+				}
 				Vertexsnap.elements.forEach((obj) => {
 					let local_start = obj.mesh.worldToLocal(new THREE.Vector3().copy(Vertexsnap.vertex_pos));
 					let local_target = obj.mesh.worldToLocal(new THREE.Vector3().copy(global_target_pos));
@@ -723,7 +779,11 @@ export const Vertexsnap = {
 					ignoreVectorAxes(local_start);
 					ignoreVectorAxes(local_target);
 
-					if (options.align != 'direction' || !amended) {
+					let auto_scale = options.align == 'scale';
+					let start_distance = local_start.length();
+					let end_distance = local_target.length();
+
+					if (!auto_scale && (options.align != 'direction' || !amended)) {
 						let target_distance = local_target.length();
 						let longest_axis = 'x';
 						if ('xyz'.includes(options.align)) {
@@ -739,10 +799,11 @@ export const Vertexsnap = {
 					local_start.normalize();
 					local_target.normalize();
 					let rot_diff = new THREE.Quaternion().setFromUnitVectors(local_start, local_target);
-					
+
 					obj.mesh.quaternion.multiply(rot_diff);
 					let modified_rotation = obj.mesh.rotation.toArray().slice(0, 3).map(Math.radToDeg);
 					obj.extend({rotation: modified_rotation});
+					if (auto_scale) scaleAboutPivot(obj, end_distance / start_distance);
 				})
 			}
 		}
@@ -779,9 +840,13 @@ export const Vertexsnap = {
 					x: tl('edit.vertex_snap.align.align_axis', 'X'),
 					y: tl('edit.vertex_snap.align.align_axis', 'Y'),
 					z: tl('edit.vertex_snap.align.align_axis', 'Z'),
-				}},
+					// 反馈#323：自动缩放至顶点——顶点方向对齐后再绕枢轴缩放，使顶点正好落在目标顶点上
+					scale: 'edit.vertex_snap.align.scale_to_vertex',
+				}, value: loadRotateOptions().align},
 				ignore_axis: {type: 'inline_multi_select', label: tl('edit.vertex_snap.ignore_axis', ''),  options: {x: 'X', y: 'Y', z: 'Z'}, value: {x: false, y: false, z: false}},
 			}, form => {
+				// 反馈#323：记住这次用的对齐方式，下次捕捉后面板按上次预选
+				saveRotateOptions(form);
 				Vertexsnap.snap(data, form, true);
 			})
 		}

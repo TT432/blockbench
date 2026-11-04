@@ -3133,6 +3133,7 @@
 	"edit.vertex_snap.align.longest": "Longest Axis",
 	"edit.vertex_snap.align.direction": "Direction from Pivot",
 	"edit.vertex_snap.align.align_axis": "%0 Axis",
+	"edit.vertex_snap.align.scale_to_vertex": "Auto Scale to Vertex",
 	"edit.vertex_snap.ignore_axis": "Ignore Axis",
 	"edit.extrude_spline_selection.extend": "Extend",
 	"edit.divide_spline_curve.position": "Position",
