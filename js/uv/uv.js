@@ -3293,9 +3293,8 @@ Interface.definePanels(function() {
 					UVEditor.updateUVNavigator();
 				},
 				onMouseWheel(event) {
-					// 反馈#321：绘画模式下按住 Ctrl + 滚轮调笔刷直径（笔刷/橡皮擦）。
-					// 触控板捏合合成的 ctrlKey 没有物理按键，仍走下面的缩放分支。
-					if (typeof Painter != 'undefined' && Painter.handleBrushSizeWheel(event)) return;
+					// 反馈#324：UV 编辑器里 Ctrl + 滚轮保持缩放贴图预览（#321 曾在这里调笔刷直径，
+					// 与「鼠标在贴图上时滚轮用来缩放」的预期冲突）。调笔刷直径只在 3D 视口生效。
 					let is_zoom_gesture = event.ctrlKey && !Pressing.ctrl;
 					if (is_zoom_gesture || Keybinds.extra.uv_editor_scroll_zoom.keybind.isTriggered(event) && event.deltaY) {
 				

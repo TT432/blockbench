@@ -422,6 +422,10 @@ function setupSettings() {
 	// 反馈#230：绘画模式按住 Alt 拖动右键调整笔刷直径（PS 风格），默认关闭。
 	// 生效入口见 painter.js startBrushSizeDrag()，由 3D 视口与 UV 编辑器的 pointerdown 调用。
 	new Setting('community_brush_size_rmb_drag', {category: 'community', value: false, group: 'community_group_paint'});
+	// 反馈#324：Ctrl + 滚轮调笔刷直径的开关（默认开启，紧跟上面那条「Alt + 右键拖动」，反馈#324 明确要求挨在一起）。
+	// 关掉后 Ctrl + 滚轮不再调笔刷（3D 视口里普通滚轮缩放照旧；UV 编辑器里 Ctrl + 滚轮本来就是缩放贴图）。
+	// 生效入口见 painter.js handleBrushSizeWheel()。
+	new Setting('community_brush_size_ctrl_wheel', {category: 'community', value: true, group: 'community_group_paint'});
 	// 反馈#248：上一条拖动的灵敏度（1~20，默认 10 = 原实现灵敏度（每 4px 一格）的 1/5，即每 20px 一格）。
 	new Setting('community_brush_size_drag_sensitivity', {category: 'community', value: 10, type: 'number', min: 1, max: 20, step: 1, group: 'community_group_paint'});
 

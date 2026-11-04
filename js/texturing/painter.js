@@ -783,9 +783,12 @@ export const Painter = {
 	 * 反馈#321：绘画模式下 Ctrl + 滚轮直接调笔刷直径（笔刷 / 橡皮擦等带 brush.size 的工具）。
 	 * 只认物理 Ctrl（Pressing.ctrl）：触控板双指捏合会合成 ctrlKey 但没有按键，仍交还缩放。
 	 * 只影响笔刷直径视图（tool_settings.brush_size），不写工程数据，因此不进 Undo。
+	 * 反馈#324：设置里可整项关掉（默认开启）；关掉后 Ctrl + 滚轮回到原来的缩放行为。
+	 * UV 编辑器不再走这里——那边 Ctrl + 滚轮保持缩放贴图预览（反馈#324 第 1 点）。
 	 */
 	handleBrushSizeWheel(event) {
 		if (!Modes.paint || !Pressing.ctrl) return false;
+		if (settings.community_brush_size_ctrl_wheel?.value === false) return false;
 		if (!event || !event.deltaY) return false;
 		let slider = BarItems.slider_brush_size;
 		if (!slider || typeof slider.get !== 'function') return false;

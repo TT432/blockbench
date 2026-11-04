@@ -480,8 +480,9 @@ export class Preview {
 		}, { capture: true, passive: false });
 		// 反馈#321：Ctrl + 滚轮调笔刷直径。OrbitControls 的 wheel 挂在 canvas 上，
 		// 同样在 node 的捕获阶段先截住，否则滚轮会先被当成缩放。
+		// 反馈#324：直径变了要立刻用当前指针位置重算 3D 笔刷轮廓，否则要晃一下鼠标才看到大小更新。
 		addEventListeners(this.node, 'wheel', (event: WheelEvent) => {
-			Painter.handleBrushSizeWheel(event);
+			if (Painter.handleBrushSizeWheel(event)) this.mousemove(event);
 		}, { capture: true, passive: false });
 		addEventListeners(this.canvas, 'pointerdown', (event: PointerEvent) => {
 			this.click(event)
