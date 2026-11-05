@@ -764,7 +764,8 @@
 		pointer-events: none;
 	}
 	/* 反馈#305：智能复制组的染色标识与锁链图标（断链时图标变浅） */
-	div.outliner_object.smart_copy {
+	div.outliner_object.smart_copy,
+	div.outliner_object.smart_copy_member {
 		background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 88%);
 	}
 	.outliner_smart_copy_badge {

@@ -280,6 +280,16 @@ Object.defineProperty(window, 'selected', {
 });
 
 
+/** 反馈#305（复报第 4 轮⑥）：节点是否在某个智能复制组成员内部（成员根本身不算，它走 smart_copy）。 */
+function isInsideSmartCopyGroup(node) {
+	let parent = node.parent;
+	while (parent instanceof Group) {
+		if (parent.smart_copy_id) return true;
+		parent = parent.parent;
+	}
+	return false;
+}
+
 /** 非骨骼格式没有组层级；智能根用独立容器承载实例 TRS，避免改写后代源坐标。 */
 function getParentSmartInstance(node) {
 	let parent = node.parent;
@@ -1543,8 +1553,10 @@ Interface.definePanels(function() {
 				let classes = [];
 				if (node.type === 'group') classes.push('group');
 				if (node.smart_object) classes.push('smart_object');
-				// 反馈#305：智能复制组的染色标识（与智能对象的标识区分开）
+				// 反馈#305：智能复制组的染色标识（与智能对象的标识区分开）。
+				// 成员根带 badge + 锁链；成员里面的元素/子组也要有同一道绿色渐变（不带锁链）。
 				if (node.smart_copy_id) classes.push('smart_copy');
+				else if (isInsideSmartCopyGroup(node)) classes.push('smart_copy_member');
 				// #87：selected class 由 Outliner.syncNodeDomState 命令式维护（批量选中时 1825+ 节点逐个触发 Vue 重渲染是大模型卡顿主因）
 				Blockbench.dispatchEvent('get_outliner_node_classes', {node, classes});
 				return classes;

@@ -83,8 +83,27 @@ export function getSelectionCenter(all = false) {
 	if (Group.first_selected) {
 		elements = elements.concat(Group.multi_selected);
 	}
+	// 反馈#326：骨骼格式下组也会进到这里的包围盒里，但组的「世界中心」是枢轴原点
+	// （Group.getWorldCenter），不是它的内容。把枢轴当成几何点混进来，会把选区中心
+	// 拉向组原点：选中一个组做轴居中时整体移动的距离因此不对（组内块越多、偏移越大；
+	// 组内再套组、多个组的原点一起参与时每个组看起来都偏了）。
+	// 现在组不再直接贡献中心，只有「子树里没有任何元素参与」（空组 / 只选中组本身）
+	// 时才退回用组原点，保持选中空组仍能居中的行为。
+	let content_elements = elements.filter(element => !(element instanceof Group) && element.getWorldCenter);
+	let populated_groups = new Set();
+	for (let element of content_elements) {
+		let parent = element.parent;
+		let levels = 0;
+		while (parent instanceof Group && levels < 128) {
+			populated_groups.add(parent);
+			parent = parent.parent;
+			levels++;
+		}
+	}
 	elements.forEach(element => {
-		if (element instanceof Group && !Format.bone_rig) return;
+		if (element instanceof Group) {
+			if (!Format.bone_rig || populated_groups.has(element)) return;
+		}
 		if (element.getWorldCenter) {
 			var pos = getWorldCenterUsingMatrix(element);
 			min[0] = Math.min(pos.x, min[0]);	max[0] = Math.max(pos.x, max[0]);

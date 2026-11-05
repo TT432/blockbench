@@ -437,6 +437,12 @@ function setupSettings() {
 		if (typeof Toolbox !== 'undefined' && Toolbox.selected?.id === 'vertex_snap_tool' && typeof Vertexsnap !== 'undefined') Vertexsnap.select();
 	}});
 
+	// 反馈#327：顶点捕捉时是否把「像素网格交叉点」也作为捕捉候选（默认关闭）。
+	// 与「相交点」同一套开关形态，仅顶点捕捉工具激活时生效，见 vertex_snap.js addPixelGridVertices()。
+	new Setting('community_vertex_snap_pixel_grid', {category: 'community', value: false, onChange() {
+		if (typeof Toolbox !== 'undefined' && Toolbox.selected?.id === 'vertex_snap_tool' && typeof Vertexsnap !== 'undefined') Vertexsnap.select();
+	}});
+
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
 	// 反馈#271：基岩版导出时把不合规名称自动换成合规名称（骨骼/定位器/动画/动画控制器），
 	// 关闭后按原名称导出、不弹名称报告。生效点见 export_names.js buildBedrockExportNames()。

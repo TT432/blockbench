@@ -48,6 +48,21 @@ function mirrorCenter(): number {
 	return Format.centered_grid ? 0 : 8;
 }
 
+/**
+ * 反馈#305 复报第 4 轮④：两侧成员根之间的镜像基准。
+ * 内容同步要在「成员根之间」做镜像：两侧互为全局镜像时基准就是 8（与旧行为完全一致）；
+ * 但断开链接后用户可能移动过某一侧（两侧不再关于全局镜像面对称），这时若仍按 8 镜像，
+ * 对侧的块会被写到「全局镜像位置」而不是对侧组里的相同位置。
+ * 取两个成员根原点 x 的中点作为镜像面，等价于「源块在源成员根内的位置 → 对侧成员根内的
+ * 同位置」，这也是用户说的「以智能组位置为基准」。任一侧不在成员里时退回全局镜像面。
+ */
+function pairCenterBetween(source_node: OutlinerNode, target_node: OutlinerNode | 'root'): number {
+	let source_root = memberRootOf(source_node);
+	let target_root = target_node instanceof OutlinerNode ? memberRootOf(target_node) : undefined;
+	if (!source_root || !target_root || source_root === target_root) return mirrorCenter();
+	return (source_root.origin[0] + target_root.origin[0]) / 2;
+}
+
 function membersOf(id: UUID): Group[] {
 	if (!id) return [];
 	return Group.all.filter(group => linkId(group) === id);
@@ -136,8 +151,7 @@ function placeAtIndex(node: OutlinerNode, parent: Group, index: number) {
 	node.addTo(parent, Math.max(0, Math.min(index, parent.children.length)));
 }
 
-function mirrorGroupTransform(source: Group, counterpart: Group) {
-	let center = mirrorCenter();
+function mirrorGroupTransform(source: Group, counterpart: Group, center = mirrorCenter()) {
 	counterpart.origin[0] = 2 * center - source.origin[0];
 	counterpart.origin[1] = source.origin[1];
 	counterpart.origin[2] = source.origin[2];
@@ -242,27 +256,32 @@ export const SmartCopyGroup = {
 		this.pre_index = new Map();
 		this.created_nodes = new Set();
 		this.edit_attrs_linked = true;
-		this.edit_group_level = false;
+		// 反馈#305 复报第 4 轮③：只有「本次编辑确实编辑了成员根」才算组级编辑。
+		// 不能用「当前选中的组」推断：选中元素时它的父组通常也挂着 selected，
+		// 早前按选中状态判定会把「编辑组内块」误当成组级编辑，断开链接后块就不同步了。
+		this.edit_group_level = (aspects.groups ?? []).some(group => group instanceof Group && memberRootOf(group) === group);
 		if (typeof Group == 'undefined' || !Group.all.length) return;
-		let candidates: OutlinerNode[] = [];
-		let push = (node: OutlinerNode) => {
-			if (node instanceof OutlinerNode && !candidates.includes(node)) candidates.push(node);
-		};
-		(aspects.elements ?? []).forEach(push);
-		(aspects.groups ?? []).forEach(push);
-		(Outliner.selected ?? []).forEach(push);
-		Group.all.forEach(group => {
-			if (group.selected) push(group);
-		});
-		for (let node of candidates) {
+		// 本次编辑涉及的链接 id：候选节点所在的成员根；结构编辑（大纲拖放/删除）在编辑前
+		// 还不知道节点会被拖进哪个成员，因此把当前所有链接都记下来（反馈#305 复报第 4 轮①：
+		// 从组外把元素拖进复制组时，源节点原本不在任何成员里，只看候选节点会漏掉目标链接）。
+		let link_ids = new Set<UUID>();
+		let add_node = (node: OutlinerNode) => {
+			if (!(node instanceof OutlinerNode)) return;
 			let root = memberRootOf(node);
-			if (!root) continue;
-			// 组本身被选中/编辑：本次编辑属于「组级」（断开属性链接后连子块的位移也不映射）。
-			// 判定必须按「成员根」而不是节点自身的链接 id：子组没有自己的 id，只看 linkId(node)
-			// 会把「移动断开成员里的子组」当成块级编辑，子组的块于是被镜像到对侧（复报第 3 轮①）。
-			if (node instanceof Group && memberLinkOf(node)) this.edit_group_level = true;
-			let id = linkId(root);
-			if (this.edit_links.has(id)) continue;
+			if (root) link_ids.add(linkId(root));
+		};
+		(aspects.elements ?? []).forEach(add_node);
+		(aspects.groups ?? []).forEach(add_node);
+		(Outliner.selected ?? []).forEach(add_node);
+		Group.all.forEach(group => {
+			if (group.selected) add_node(group);
+		});
+		if (aspects.outliner) {
+			Group.all.forEach(group => {
+				if (linkId(group)) link_ids.add(linkId(group));
+			});
+		}
+		for (let id of link_ids) {
 			let members = membersOf(id);
 			this.edit_links.set(id, members);
 			if (!members.every(member => attrsLinked(member))) this.edit_attrs_linked = false;
@@ -270,7 +289,7 @@ export const SmartCopyGroup = {
 			this.pre_index.set(id, index);
 			let walk = (current: OutlinerNode, path: number[], member: Group) => {
 				this.pre_paths.set(current.uuid, path);
-				this.pre_roots.set(current.uuid, root);
+				this.pre_roots.set(current.uuid, member);
 				index.set(member.uuid + '|' + path.join(','), current);
 				if (current instanceof Group) {
 					current.children.forEach((child, child_index) => walk(child, path.concat(child_index), member));
@@ -327,6 +346,10 @@ export const SmartCopyGroup = {
 		let changed = false;
 		// 只重放用户实际拖动的节点：其它节点的下标变化是这次结构操作的连带结果，
 		// 把「对侧节点逐个搬到新下标」会连环错位（曾把整组顺序搬乱）。
+		// 反馈#305 复报第 4 轮②：对侧节点必须全部按「编辑前的树」解析完再统一搬动。
+		// 边解析边搬时，同一次重排里第二个节点的对侧会按移动后的顺序取到错误的对象
+		// （交换两个元素顺序时，第二个对侧被搬回原处，结果对面完全没变）。
+		let operations: {counterpart: OutlinerNode, target: Group, index: number}[] = [];
 		for (let uuid of node_ids) {
 			let old_path = this.pre_paths.get(uuid);
 			if (!old_path) continue;
@@ -352,18 +375,22 @@ export const SmartCopyGroup = {
 				if (!(target instanceof Group)) continue;
 				let current_path = nodePath(counterpart, member);
 				if (current_path && pathsEqual(current_path, new_path)) continue;
-				if (counterpart instanceof Group) {
-					let before = counterpart.getChildlessCopy();
-					before.uuid = counterpart.uuid;
-					MirrorModeling.insertGroupIntoUndo(counterpart, aspects, before);
-				} else if (counterpart instanceof OutlinerElement) {
-					MirrorModeling.insertElementIntoUndo(counterpart, aspects, counterpart.getUndoCopy(aspects));
-				} else {
-					continue;
-				}
-				placeAtIndex(counterpart, target, index);
-				changed = true;
+				operations.push({counterpart, target, index});
 			}
+		}
+		for (let {counterpart, target, index} of operations) {
+			if (!isInTree(counterpart)) continue;
+			if (counterpart instanceof Group) {
+				let before = counterpart.getChildlessCopy();
+				before.uuid = counterpart.uuid;
+				MirrorModeling.insertGroupIntoUndo(counterpart, aspects, before);
+			} else if (counterpart instanceof OutlinerElement) {
+				MirrorModeling.insertElementIntoUndo(counterpart, aspects, counterpart.getUndoCopy(aspects));
+			} else {
+				continue;
+			}
+			placeAtIndex(counterpart, target, index);
+			changed = true;
 		}
 		return changed;
 	},
@@ -474,8 +501,16 @@ export const SmartCopyGroup = {
 			}
 			changed = this.mirrorMovedNodes(aspects, moved) || changed;
 		}
-		let touched = [...(aspects.elements ?? []), ...(aspects.groups ?? []), ...pending_added];
-		for (let node of touched.slice()) {
+		// aspects.elements / pending_added 可能同时含同一个新节点（复制动作先登记空数组再
+		// push，差集扫描又会找到它），不去重会让 mirrorNewNode 跑两遍、对侧多出一份副本。
+		let touched: OutlinerNode[] = [];
+		let add_touched = (node: OutlinerNode) => {
+			if (!touched.includes(node)) touched.push(node);
+		};
+		(aspects.elements ?? []).forEach(add_touched);
+		(aspects.groups ?? []).forEach(add_touched);
+		pending_added.forEach(add_touched);
+		for (let node of touched) {
 			if (created.has(node.uuid)) continue;
 			if (!isInTree(node)) continue;
 			if (this.pre_paths.has(node.uuid)) continue;
@@ -521,9 +556,10 @@ export const SmartCopyGroup = {
 	/** 复制节点为镜像副本并挂到 parent 下（递归，结构顺序与源一致） */
 	cloneMirrored(node: OutlinerNode, parent: OutlinerNode | 'root'): OutlinerNode {
 		let clone: OutlinerNode;
+		let center = pairCenterBetween(node, parent);
 		if (node instanceof Group) {
 			clone = new Group(node as unknown as OutlinerNodeData);
-			mirrorGroupTransform(node, clone as Group);
+			mirrorGroupTransform(node, clone as Group, center);
 			// 先建好组（有 mesh）再挂子节点，子元素的 init 需要父组已存在
 			clone.addTo(parent);
 			clone.init();
@@ -538,7 +574,7 @@ export const SmartCopyGroup = {
 		clone.addTo(parent);
 		clone.init();
 		// 反馈#288：UV 随几何一起镜像（两侧读同一块纹理区域、取样方向相反）
-		clone.flip(0, mirrorCenter());
+		clone.flip(0, center);
 		clone.name = node.name;
 		return clone;
 	},
@@ -675,10 +711,9 @@ export const SmartCopyGroup = {
 		}
 		if (typeof Group == 'undefined' || !Group.all.length) return;
 		// aspects 里的数组可能正是「活选区」本身（`mirrorSelected` 传的是 Outliner.selected）。
-		// 下面为了 undo 会把对侧节点注入 aspects.elements，直接改到选区数组上会让随后的翻转/
-		// 移动作用到对侧节点上（复报第 3 轮④：翻转一个组，对侧块跟着一起翻）。先脱开引用。
-		if (Array.isArray(aspects.elements)) aspects.elements = aspects.elements.slice();
-		if (Array.isArray(aspects.groups)) aspects.groups = aspects.groups.slice();
+		// 下面登记对侧节点时不再往这些数组里写，所以不必再换引用：上游存在「initEdit 先传空
+		// 数组、之后向同一个数组 push」的用法（元素复制 `Duplicate elements`），换引用会让
+		// 那些新节点丢失在 undo 之外（反馈#325：撤销后方块掉回根目录）。
 		// 清掉上一次编辑留下的标记，避免跨编辑误跳过/误同步
 		for (let uuid in MirrorModeling.cached_elements) {
 			if (MirrorModeling.cached_elements[uuid]?.smart_pair) delete MirrorModeling.cached_elements[uuid];
@@ -705,7 +740,9 @@ export const SmartCopyGroup = {
 				cached.edit_side = 0;
 				cached.smart_pair = true;
 				for (let counterpart of counterparts) {
-					MirrorModeling.insertElementIntoUndo(counterpart, aspects, counterpart.getUndoCopy(aspects));
+					// 只登记 pre：post 记录留到 finishEdit（那时才确定最终状态），不要往
+					// aspects.elements 里写，见 insertElementPreSnapshot 的说明（反馈#325）
+					MirrorModeling.insertElementPreSnapshot(counterpart, counterpart.getUndoCopy(aspects));
 				}
 			}
 		}
@@ -717,11 +754,11 @@ export const SmartCopyGroup = {
 				cached.counterpart = counterparts[0] as unknown as OutlinerElement;
 				cached.smart_pair = true;
 				for (let counterpart of counterparts) {
-					// 快照必须写回真 uuid，否则 insertGroupIntoUndo 的按 uuid 去重永远不命中，
+					// 快照必须写回真 uuid，否则按 uuid 去重永远不命中，
 					// 撤销时野 uuid 快照被当成新组重建、真副本被当多余节点删掉
 					let before = counterpart.getChildlessCopy();
 					before.uuid = counterpart.uuid;
-					MirrorModeling.insertGroupIntoUndo(counterpart, aspects, before);
+					MirrorModeling.insertGroupPreSnapshot(before);
 				}
 			}
 		}
@@ -786,6 +823,9 @@ export const SmartCopyGroup = {
 					// 两侧都被用户编辑时各自镜像自己的改动，不再交叉同步（否则会翻两次）
 					if (edited_elements.has(counterpart.uuid)) continue;
 					MirrorModeling.cached_elements[element.uuid].counterpart = counterpart;
+					// 反馈#305 复报第 4 轮④：以两侧成员根的相对位置为镜像基准（断开后一侧被挪走时
+					// 不再把对侧的块写到全局镜像位置）
+					MirrorModeling.cached_elements[element.uuid].mirror_center = pairCenterBetween(element, counterpart);
 					MirrorModeling.createClone(element, aspects);
 					changed = true;
 				}
@@ -812,16 +852,18 @@ export const SmartCopyGroup = {
 				for (let partner of partners) {
 					if (edited_groups.has(partner.uuid)) continue;
 					// 第 4 点：断开属性链接后位移/旋转/重命名不再映射，组内容仍然同步。
-					// 断开标记只存在成员根上，子组自身不带该字段——按成员根判定，
-					// 否则移动被断开的成员时，其内部子组仍会把变换映射到对侧（复报第 2 轮①）。
+					// 反馈#305 复报第 4 轮③：只有「成员根」受链接状态约束；成员里的子组是内容，
+					// 断开链接后调整它仍要同步到对侧子组（否则对面完全不动）。
 					let source_link = memberLinkOf(group);
 					let partner_link = memberLinkOf(partner);
 					if (!source_link || !partner_link || source_link.id !== partner_link.id) continue;
-					if (!source_link.linked || !partner_link.linked) continue;
+					let source_is_root = memberRootOf(group) === group;
+					let partner_is_root = memberRootOf(partner) === partner;
+					if ((source_is_root || partner_is_root) && (!source_link.linked || !partner_link.linked)) continue;
 					let before = partner.getChildlessCopy();
 					before.uuid = partner.uuid;
 					MirrorModeling.insertGroupIntoUndo(partner, aspects, before);
-					mirrorGroupTransform(group, partner);
+					mirrorGroupTransform(group, partner, pairCenterBetween(group, partner));
 					this.syncName(group, partner, edited_names.get(group.uuid));
 					aspects.groups.safePush(partner);
 					changed = true;

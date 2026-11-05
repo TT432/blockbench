@@ -1489,18 +1489,12 @@ new NodePreviewController(Cube, {
 			this.dispatchEvent('update_highlight', {element});
 		}
 	},
-	updatePixelGrid(cube) {
-		var mesh = cube.mesh;
-		if (mesh === undefined) return;
-		let grid_enabled = (Modes.paint && settings.painting_grid.value) || (Modes.edit && settings.pixel_grid.value)
-		// #87：无既有网格且当前不需要网格时直接返回，避免模式切换时对每个元素做 remove/dispose
-		if (!grid_enabled && !mesh.grid_box) return;
-		mesh.remove(mesh.grid_box);
-		if (mesh.grid_box?.geometry) mesh.grid_box.geometry.dispose();
-		if (cube.visibility == false) return;
-
-		if (!grid_enabled) return;
-
+	/**
+	 * 反馈#327：像素网格的线段与交叉点（模型空间坐标，未减去 origin）。
+	 * 与像素网格的显示共用同一套 uv / 纹理尺寸口径，供顶点捕捉的「像素网格交叉点」复用，
+	 * 避免两处各算一套、之后逐渐分叉。intersections 每 3 个数一个交叉点。
+	 */
+	getPixelGridGeometry(cube) {
 		var from = cube.from.slice();
 		var to = cube.to.slice();
 		if (cube.inflate || cube.isStretched()) {
@@ -1514,7 +1508,8 @@ new NodePreviewController(Cube, {
 			}
 		}
 
-		var vertices = [];
+		var segments = [];
+		var intersections = [];
 		var epsilon = 0.0001
 		function getVector2(arr, axis) {
 			switch (axis) {
@@ -1523,12 +1518,24 @@ new NodePreviewController(Cube, {
 				case 2: return [arr[0], arr[1]]; break;
 			}
 		}
-		function addVector(u, v, axis, w) {
+		function addVector(list, u, v, axis, w) {
 			switch (axis) {
-				case 0: vertices.push(w, u, v); break;
-				case 1: vertices.push(u, w, v); break;
-				case 2: vertices.push(u, v, w); break;
+				case 0: list.push(w, u, v); break;
+				case 1: list.push(u, w, v); break;
+				case 2: list.push(u, v, w); break;
 			}
+		}
+		// 原实现是 "从 start-offset 起步、每 step 一条、收下所有 >= start 的线"；
+		// 这里保持同一口径，只加一个数量上限（异常 uv 尺寸下 step 会退化成 epsilon）
+		function axisValues(start_value, end_value, size, scale, offset) {
+			var step = Math.abs((end_value - start_value) / size) * scale;
+			if (!(step >= epsilon)) step = epsilon;
+			var values = [];
+			for (var value = start_value - offset; value <= end_value + epsilon; value += step) {
+				if (value >= start_value - epsilon) values.push(value);
+				if (values.length > 512) break;
+			}
+			return values;
 		}
 
 		function addFace(name, uv_offset, axis, side) {
@@ -1555,7 +1562,7 @@ new NodePreviewController(Cube, {
 			]
 			uv_offset[0] = uv_offset[0] % px_x;
 			uv_offset[1] = uv_offset[1] % px_y;
-			
+
 			if ((face.rotation % 180 == 90) != (axis == 0)) {
 				uv_size.reverse();
 				uv_offset.reverse();
@@ -1564,31 +1571,25 @@ new NodePreviewController(Cube, {
 			var w = side == 0 ? from[axis] : to[axis]
 
 			//Columns
-			var width = end[0]-start[0];
-			var step = Math.abs( width / uv_size[0] );
-			if (texture) step *= texture.uv_width / texture.width;
-			if (step < epsilon) step = epsilon;
+			var scale_x = texture ? texture.uv_width / texture.width : 1;
+			var cols = axisValues(start[0], end[0], uv_size[0], scale_x, uv_offset[0]);
+			//Lines
+			var tex_height = texture && texture.frameCount ? (texture.height / texture.frameCount) : (texture ? texture.height : 1);
+			var scale_y = texture ? texture.uv_height / tex_height : 1;
+			var rows = axisValues(start[1], end[1], uv_size[1], scale_y, uv_offset[1]);
 
-			for (var col = start[0] - uv_offset[0]; col <= end[0]; col += step) {
-				if (col >= start[0]) {
-					addVector(col, start[1], axis, w);
-					addVector(col, end[1], axis, w);
-				}
+			for (let col of cols) {
+				addVector(segments, col, start[1], axis, w);
+				addVector(segments, col, end[1], axis, w);
 			}
-
-			//lines
-			var height = end[1]-start[1];
-			var step = Math.abs( height / uv_size[1] );
-			if (texture) {
-				let tex_height = texture.frameCount ? (texture.height / texture.frameCount) : texture.height;
-				step *= texture.uv_height / tex_height;
+			for (let row of rows) {
+				addVector(segments, start[0], row, axis, w);
+				addVector(segments, end[0], row, axis, w);
 			}
-			if (step < epsilon) step = epsilon;
-
-			for (var line = start[1] - uv_offset[1]; line <= end[1]; line += step) {
-				if (line >= start[1]) {
-					addVector(start[0], line, axis, w);
-					addVector(end[0], line, axis, w);
+			// 交叉点：列线与行线的交点就是像素网格的交叉点
+			for (let col of cols) {
+				for (let row of rows) {
+					addVector(intersections, col, row, axis, w);
 				}
 			}
 		}
@@ -1600,6 +1601,21 @@ new NodePreviewController(Cube, {
 		addFace('down',  [false, true],  1, 0);
 		addFace('up',    [false, false], 1, 1);
 
+		return {segments, intersections};
+	},
+	updatePixelGrid(cube) {
+		var mesh = cube.mesh;
+		if (mesh === undefined) return;
+		let grid_enabled = (Modes.paint && settings.painting_grid.value) || (Modes.edit && settings.pixel_grid.value)
+		// #87：无既有网格且当前不需要网格时直接返回，避免模式切换时对每个元素做 remove/dispose
+		if (!grid_enabled && !mesh.grid_box) return;
+		mesh.remove(mesh.grid_box);
+		if (mesh.grid_box?.geometry) mesh.grid_box.geometry.dispose();
+		if (cube.visibility == false) return;
+
+		if (!grid_enabled) return;
+
+		var vertices = this.getPixelGridGeometry(cube).segments;
 
 		var geometry = new THREE.BufferGeometry();
 		geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( vertices, 3 ) );

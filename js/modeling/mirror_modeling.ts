@@ -36,7 +36,8 @@ export const MirrorModeling = {
 		// 只是取样方向相反）。所以固定开启，不受镜像建模里的 UV 开关影响。
 		let cached_data = MirrorModeling.cached_elements[original.uuid];
 		let mirror_uv = cached_data?.smart_pair ? true : options.mirror_uv;
-		let center = Format.centered_grid ? 0 : 8;
+		// 反馈#305 复报第 4 轮④：智能复制组按「两侧成员根之间」的基准镜像内容
+		let center = cached_data?.mirror_center ?? (Format.centered_grid ? 0 : 8);
 		let mirror_element = cached_data?.counterpart;
 		let element_type_options = MirrorModeling.element_types[original.type];
 		let element_before_snapshot;
@@ -232,6 +233,7 @@ export const MirrorModeling = {
 	insertElementIntoUndo(element: OutlinerElement, undo_aspects: UndoAspects, element_before_snapshot?: any) {
 		// pre
 		if (element_before_snapshot) {
+			Undo.current_save.elements ??= {};
 			if (!Undo.current_save.elements[element.uuid]) Undo.current_save.elements[element.uuid] = element_before_snapshot;
 		} else {
 			if (!Undo.current_save.outliner) Undo.current_save.outliner = MirrorModeling.outliner_snapshot;
@@ -239,7 +241,32 @@ export const MirrorModeling = {
 
 		// post
 		if (!element_before_snapshot) undo_aspects.outliner = true;
-		undo_aspects.elements.safePush(element);
+		undo_aspects.elements ??= [];
+		if (!undo_aspects.elements.includes(element)) {
+			// 与 insertGroupIntoUndo 相同：换新数组，避免把对侧节点写进调用方的活选区数组
+			undo_aspects.elements = [...undo_aspects.elements, element];
+		}
+	},
+	/**
+	 * 反馈#325：只登记「编辑前快照」，不把节点塞进 post 的 aspects 列表。
+	 *
+	 * 智能复制组在 initEdit 时需要对侧节点的旧快照，但 post 侧记录要等到 finishEdit
+	 * （那时节点最终状态才确定）。旧实现直接在 initEdit 里调用 insertElementIntoUndo，
+	 * 这会被迫先复制 aspects.elements，而上游存在「initEdit 先传空数组、之后向同一个
+	 * 数组 push」的用法（元素复制 `Duplicate elements` 就是：先传 added_elements，
+	 * 再往里 push 新副本）。换掉引用后这些新副本不会进 pre/post 快照，撤销时既不会被
+	 * 删除、又不在 outliner 快照树里，最后被 loadJSON 当成「多出来的节点」挂到根目录
+	 * （用户看到的「复制的方块不会消失、回到根目录」）。
+	 */
+	insertElementPreSnapshot(element: OutlinerElement, snapshot: unknown) {
+		Undo.current_save.elements ??= {};
+		if (!Undo.current_save.elements[element.uuid]) Undo.current_save.elements[element.uuid] = snapshot;
+	},
+	insertGroupPreSnapshot(snapshot: {uuid: UUID}) {
+		Undo.current_save.groups ??= [];
+		if (!Undo.current_save.groups.find(g => g.uuid == snapshot.uuid)) {
+			Undo.current_save.groups.push(snapshot);
+		}
 	},
 	insertGroupIntoUndo(group: Group, undo_aspects: UndoAspects, before_snapshop?: any) {
 		// pre
@@ -266,7 +293,21 @@ export const MirrorModeling = {
 		let type = type_class.prototype.type;
 		MirrorModeling.element_types[type] = options;
 	},
-	cached_elements: {}
+	cached_elements: {} as Record<string, MirrorModelingCachedData>
+}
+/**
+ * 镜像建模的缓存条目。smart_pair 相关字段由 SmartCopyGroup 写入。
+ * mirror_center：反馈#305 复报第 4 轮④——智能复制组的内容镜像基准（两侧成员根原点的中点），
+ * 不填时按全局镜像面（centered_grid ? 0 : 8）。
+ */
+interface MirrorModelingCachedData {
+	counterpart?: OutlinerElement | false
+	is_centered?: boolean
+	is_copy?: boolean
+	edit_side?: number
+	pre_part_connections?: unknown
+	smart_pair?: boolean
+	mirror_center?: number
 }
 interface MirrorModelingElementTypeOptions {
 	check_parent_symmetry?: boolean

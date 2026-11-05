@@ -666,6 +666,7 @@ export const BARS = {
 			children: [
 				'vertex_snap_mode',
 				'vertex_snap_intersections',
+				'vertex_snap_pixel_grid',
 				'selection_mode',
 				'spline_selection_mode',
 				'spline_handle_mode',

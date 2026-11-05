@@ -15,11 +15,14 @@ const FEATURE_EDGE_CACHE_BUDGET = 65536;	// 缓存内棱数总预算（约 3MB�
 const INTERSECTION_MAX_POINTS = 256;	// 单元素追加的交点上限
 const INTERSECTION_MAX_RAYS = 8192;		// 单次调用的射线上限（线段正反两向各计一条）
 const INTERSECTION_MAX_ELEMENTS = 512;	// 元素总数上限，超过则整体跳过
+// 反馈#327：单元素最多追加多少个像素网格交叉点。像素网格每面 (uv 像素数+1)^2 个交点，
+// 正常 16×16 的面约 289 个；纹理很大或 UV 跨很多格时数量会爆炸，超过上限整体跳过。
+const PIXEL_GRID_MAX_POINTS = 4096;
 
-// 反馈#323：旋转模式的「对齐」记住上次使用的值，下次捕捉后面板按上次预选。
+// 反馈#323：旋转模式的「对齐」与「自动缩放至顶点」记住上次使用的值，下次捕捉后面板按上次预选。
 // 只是界面记忆、不是工程数据，因此写 localStorage 而不进设置项/工程文件。忽略轴不记忆（保持每次默认全不忽略）。
 const ROTATE_OPTIONS_STORAGE_KEY = 'community_vertex_snap_rotate_options';
-const ROTATE_ALIGN_OPTIONS = ['longest', 'direction', 'x', 'y', 'z', 'scale'];
+const ROTATE_ALIGN_OPTIONS = ['longest', 'direction', 'x', 'y', 'z'];
 function loadRotateOptions() {
 	let saved = {};
 	try {
@@ -27,13 +30,23 @@ function loadRotateOptions() {
 	} catch (err) {
 		saved = {};
 	}
-	return {align: ROTATE_ALIGN_OPTIONS.includes(saved.align) ? saved.align : 'longest'};
+	return {
+		align: ROTATE_ALIGN_OPTIONS.includes(saved.align) ? saved.align : 'longest',
+		// 反馈#323：自动缩放至顶点是独立开关（不再是对齐方式的一项），默认值取上次使用时的值
+		auto_scale: saved.auto_scale === true,
+	};
 }
 function saveRotateOptions(form) {
 	try {
-		localStorage.setItem(ROTATE_OPTIONS_STORAGE_KEY, JSON.stringify({align: form.align}));
+		localStorage.setItem(ROTATE_OPTIONS_STORAGE_KEY, JSON.stringify({
+			align: form.align,
+			auto_scale: !!form.auto_scale,
+		}));
 	} catch (err) {}
 }
+// 反馈#323：抓到的顶点在方块 8 个角里属于哪些轴的 from / to（与缩放模式同一张表）。
+// 1 = 该轴用 to（正侧），0 = 用 from（负侧）。
+const CORNER_AXIS_MAP = [[1,1,1],[1,1,0],[1,0,1],[1,0,0],[0,1,0],[0,1,1],[0,0,0],[0,0,1]];
 
 export const Vertexsnap = {
 	step1: true,
@@ -79,6 +92,7 @@ export const Vertexsnap = {
 			}
 			vectors.push([0, 0, 0]);
 			Vertexsnap.addIntersectionVertices(element, vectors);
+			Vertexsnap.addPixelGridVertices(element, vectors);
 			
 			let points = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial().copy(Canvas.meshVertexMaterial));
 			points.element_uuid = element.uuid;
@@ -486,6 +500,36 @@ export const Vertexsnap = {
 			}
 		}
 	},
+	/**
+	 * 反馈#327：「像素网格交叉点」候选——把像素网格显示的交叉点也加进捕捉点。
+	 * 口径与像素网格显示完全一致（Cube 的 preview_controller.getPixelGridGeometry），
+	 * 生成的是模型空间坐标，这里减去 origin 转成 mesh 局部坐标（与 geometry 顶点同一坐标系）。
+	 * 交点可能很多（每面 (uv 像素数+1)^2），单元素超过 PIXEL_GRID_MAX_POINTS 时整体跳过。
+	 */
+	addPixelGridVertices(element, vectors) {
+		if (typeof settings == 'undefined' || !settings.community_vertex_snap_pixel_grid?.value) return;
+		if (typeof Toolbox != 'undefined' && Toolbox.selected?.id !== 'vertex_snap_tool') return;
+		if (!(element instanceof Cube)) return;
+		let controller = element.preview_controller;
+		if (typeof controller?.getPixelGridGeometry !== 'function') return;
+		let grid = controller.getPixelGridGeometry(element);
+		let points = grid.intersections;
+		if (!points.length || points.length / 3 > PIXEL_GRID_MAX_POINTS) return;
+
+		let origin = element.origin;
+		let seen = new Set();
+		let key = (x, y, z) => `${Math.round(x * 10000)},${Math.round(y * 10000)},${Math.round(z * 10000)}`;
+		for (let vector of vectors) seen.add(key(vector[0], vector[1], vector[2]));
+		for (let i = 0; i < points.length; i += 3) {
+			let x = points[i] - origin[0];
+			let y = points[i + 1] - origin[1];
+			let z = points[i + 2] - origin[2];
+			let id = key(x, y, z);
+			if (seen.has(id)) continue;
+			seen.add(id);
+			vectors.push([x, y, z]);
+		}
+	},
 	clearVertexGizmos() {
 		Project.model_3d.remove(Vertexsnap.line);
 		Vertexsnap.elements_with_vertex_gizmos.forEach(element => {
@@ -694,17 +738,8 @@ export const Vertexsnap = {
 			if (mode === 'scale' && !Format.integer_size && Vertexsnap.elements[0] instanceof Cube) {
 				//Scale
 
-				var m;
-				switch (Vertexsnap.vertex_index) {
-					case 0: m=[ 1,1,1 ]; break;
-					case 1: m=[ 1,1,0 ]; break;
-					case 2: m=[ 1,0,1 ]; break;
-					case 3: m=[ 1,0,0 ]; break;
-					case 4: m=[ 0,1,0 ]; break;
-					case 5: m=[ 0,1,1 ]; break;
-					case 6: m=[ 0,0,0 ]; break;
-					case 7: m=[ 0,0,1 ]; break;
-				}
+				// 反馈#323：与旋转模式的自动缩放共用同一张角点轴表
+				let m = CORNER_AXIS_MAP[Vertexsnap.vertex_index];
 
 				if (m) {
 					Vertexsnap.elements.forEach(function(obj) {
@@ -736,9 +771,48 @@ export const Vertexsnap = {
 			} else if (mode === 'move') {
 				moveElements(global_delta);
 			} else if (mode == 'rotate') {
-				// 反馈#323：「自动缩放至顶点」——不挑轴去凑距离，先按最短弧把顶点方向转到目标方向，
-				// 再绕枢轴沿未被忽略的轴等比缩放，使被抓的顶点正好落在目标顶点上（旧的对齐方式
-				// 只改一个轴分量来凑距离，旋转后顶点不会真正落到目标上）。
+				// 反馈#323：先按最短弧把被抓顶点的方向转到目标方向。「自动缩放至顶点」是独立开关
+				// （不再是对齐下拉的一项），打开后让顶点真正落到目标点上：
+				// 方块按「缩放模式」的口径逐轴把该角点对应的那侧边界推到目标（from / to 各轴
+				// 独立伸缩，不是整体等比）；其它元素没有可拆的轴边界，退化为绕枢轴等比缩放。
+				const auto_scale = !!options.auto_scale;
+				function scaleCornersToTarget(obj) {
+					const corner = CORNER_AXIS_MAP[Vertexsnap.vertex_index];
+					if (!corner || !(obj instanceof Cube)) return false;
+					// 合批 cube 的 mesh 矩阵由批处理器维护（matrixAutoUpdate=false），
+					// 旋转后只改 quaternion 不会反映到 matrixWorld，worldToLocal 会拿到旧姿态
+					obj.mesh.updateMatrix();
+					obj.mesh.updateWorldMatrix(true, false);
+					const local_target = obj.mesh.worldToLocal(new THREE.Vector3().copy(global_target_pos));
+					for (let i = 0; i < 3; i++) {
+						if (options.ignore_axis?.['xyz'[i]]) continue;
+						const target = local_target.getComponent(i);
+						if (!Number.isFinite(target)) continue;
+						if (corner[i]) {
+							if (target < obj.from[i]) {
+								// 角点被拉到另一侧：交换这条轴的两端（块在这条轴上翻转），
+								// 直接写 to 会得到负尺寸、被尺寸限制器夹掉，顶点就落不到目标上
+								const from = obj.from[i];
+								obj.from[i] = target;
+								obj.to[i] = from;
+							} else {
+								obj.to[i] = target;
+							}
+						} else if (target > obj.to[i]) {
+							const to = obj.to[i];
+							obj.to[i] = target;
+							obj.from[i] = to;
+						} else {
+							obj.from[i] = target;
+						}
+					}
+					if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
+						Format.cube_size_limiter.clamp(obj);
+					}
+					obj.preview_controller?.updateGeometry?.(obj);
+					if (obj.box_uv && obj.visibility) obj.preview_controller?.updateUV?.(obj);
+					return true;
+				}
 				function scaleAboutPivot(obj, factor) {
 					if (!factor || !isFinite(factor) || factor <= 0) return;
 					let pivot = new THREE.Vector3();
@@ -779,7 +853,6 @@ export const Vertexsnap = {
 					ignoreVectorAxes(local_start);
 					ignoreVectorAxes(local_target);
 
-					let auto_scale = options.align == 'scale';
 					let start_distance = local_start.length();
 					let end_distance = local_target.length();
 
@@ -803,7 +876,9 @@ export const Vertexsnap = {
 					obj.mesh.quaternion.multiply(rot_diff);
 					let modified_rotation = obj.mesh.rotation.toArray().slice(0, 3).map(Math.radToDeg);
 					obj.extend({rotation: modified_rotation});
-					if (auto_scale) scaleAboutPivot(obj, end_distance / start_distance);
+					if (!auto_scale) return;
+					if (scaleCornersToTarget(obj)) return;
+					scaleAboutPivot(obj, end_distance / start_distance);
 				})
 			}
 		}
@@ -833,6 +908,7 @@ export const Vertexsnap = {
 		Vertexsnap.step1 = true;
 		
 		if (!amended) {
+			let rotate_options = loadRotateOptions();
 			Undo.amendEdit({
 				align: {type: 'select', condition: mode == 'rotate', label: 'edit.vertex_snap.align', options: {
 					longest: 'edit.vertex_snap.align.longest',
@@ -840,12 +916,18 @@ export const Vertexsnap = {
 					x: tl('edit.vertex_snap.align.align_axis', 'X'),
 					y: tl('edit.vertex_snap.align.align_axis', 'Y'),
 					z: tl('edit.vertex_snap.align.align_axis', 'Z'),
-					// 反馈#323：自动缩放至顶点——顶点方向对齐后再绕枢轴缩放，使顶点正好落在目标顶点上
-					scale: 'edit.vertex_snap.align.scale_to_vertex',
-				}, value: loadRotateOptions().align},
+				}, value: rotate_options.align},
+				// 反馈#323：独立开关，默认取上次使用时的值；缩放形式与「缩放」模式一致（逐轴）
+				auto_scale: {
+					type: 'checkbox',
+					condition: mode == 'rotate',
+					label: 'edit.vertex_snap.auto_scale',
+					description: 'edit.vertex_snap.auto_scale.desc',
+					value: rotate_options.auto_scale,
+				},
 				ignore_axis: {type: 'inline_multi_select', label: tl('edit.vertex_snap.ignore_axis', ''),  options: {x: 'X', y: 'Y', z: 'Z'}, value: {x: false, y: false, z: false}},
 			}, form => {
-				// 反馈#323：记住这次用的对齐方式，下次捕捉后面板按上次预选
+				// 反馈#323：记住这次用的对齐方式与自动缩放开关，下次捕捉后面板按上次预选
 				saveRotateOptions(form);
 				Vertexsnap.snap(data, form, true);
 			})
@@ -859,6 +941,13 @@ new Toggle('vertex_snap_intersections', {
 	category: 'edit',
 	icon: 'scatter_plot',
 	linked_setting: 'community_vertex_snap_intersections',
+})
+
+// 反馈#327：像素网格交叉点（与相交点并列的独立开关，默认关闭）
+new Toggle('vertex_snap_pixel_grid', {
+	category: 'edit',
+	icon: 'grid_on',
+	linked_setting: 'community_vertex_snap_pixel_grid',
 })
 
 Object.assign(window, {
