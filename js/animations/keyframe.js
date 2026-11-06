@@ -1481,6 +1481,12 @@ Interface.definePanels(function() {
 								// Keyframes are __v_skip (non-reactive): refresh the panel so the
 								// dragged value is displayed live
 								if (Interface.Panels.keyframe?.inside_vue) Interface.Panels.keyframe.inside_vue.$forceUpdate();
+								// 反馈#332：曲线编辑器的曲线由 graph_revision 驱动重算，
+								// 数值拖动不 bump 时曲线要等到松手（Undo.finishEdit）才更新。
+								if (Timeline.vue) {
+									if (Timeline.vue.graph_editor_open) Timeline.vue.graph_revision++;
+									Timeline.vue.$forceUpdate();
+								}
 								Blockbench.setStatusBarText(trimFloatNumber(total));
 							}
 							last_event = e2;

@@ -264,6 +264,9 @@ function setupSettings() {
 	new Setting('ground_plane',			{category: 'grid', value: false, onChange() {
 		Canvas.ground_plane.visible = this.value;
 	}});
+	new Setting('ground_plane_size',	{category: 'grid', type: 'number', value: 256, min: 1, max: 8192, onChange() {
+		Canvas.buildGroundPlane?.();
+	}});
 	new Setting('ground_plane_double_side',{category: 'grid', value: false, onChange() {
 		Canvas.groundPlaneMaterial.side = this.value ? THREE.DoubleSide : THREE.FrontSide;
 	}});

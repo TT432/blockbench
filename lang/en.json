@@ -1389,6 +1389,8 @@
 	"settings.image_editor_grid_size.desc": "Size of the large grid in the 2D image editor",
 	"settings.ground_plane": "Ground Plane",
 	"settings.ground_plane.desc": "Show a floor plane below the model",
+	"settings.ground_plane_size": "Ground Plane Size",
+	"settings.ground_plane_size.desc": "Edge length of the ground plane in blocks. Lower it when the plane fills the view",
 	"settings.ground_plane_double_side": "Ground Plane Double-sided",
 	"settings.ground_plane_double_side.desc": "Make the ground plane visible from below",
 

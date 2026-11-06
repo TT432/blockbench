@@ -1504,8 +1504,9 @@ Interface.definePanels(function() {
 				<dynamic-icon :icon="node.icon.replace('fa ', '').replace(/ /g, '.')" :color="(outliner_colors.value && node.color >= 0) ? (node.type == 'group' ? getMarkerColor(node) : markerColors[node.color % markerColors.length].pastel) : ''" v-on:dblclick.stop="doubleClickIcon(node)"></dynamic-icon>
 				<input type="text" class="cube_name tab_target" :class="{locked: node.locked}" v-model="node.name" disabled>` +
 				`<span v-if="node.smart_object" class="outliner_smart_object_badge">【智能对象】</span>` +
-				// 反馈#305：智能复制组的两侧都带染色标识与锁链图标（断开属性链接时锁链变浅）
-				`<span v-if="node.smart_copy_id" class="outliner_smart_copy_badge">【智能复制组】</span>` +
+				// 反馈#305：智能复制组的两侧都带染色标识与锁链图标（断开属性链接时锁链变浅）；
+				// 后续③：最初的成员标注为「智能复制初始组」，其余复制成员保持「智能复制组」
+				`<span v-if="node.smart_copy_id" class="outliner_smart_copy_badge">{{ node.smart_copy_initial ? '【智能复制初始组】' : '【智能复制组】' }}</span>` +
 				`<dynamic-icon v-if="node.smart_copy_id" class="outliner_smart_copy_chain" :class="{'smart_copy_broken': node.smart_copy_linked === false}" :icon="node.smart_copy_linked === false ? 'link_off' : 'link'"></dynamic-icon>` +
 
 

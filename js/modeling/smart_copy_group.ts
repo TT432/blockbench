@@ -20,12 +20,15 @@
  */
 import { MirrorModeling } from "./mirror_modeling";
 import { nameOnOtherSide, sideAxisOf, uniqueName } from "./mirror_naming";
+import { flipNameOnAxis } from "./transform";
 import { guid } from "../util/math_util";
 
 /** 组上的智能复制组字段（由下方 Property 注册，随工程保存） */
 interface SmartCopyFields {
 	smart_copy_id?: UUID
 	smart_copy_linked?: boolean
+	/** 链接里最早的成员（反馈#305 后续③）：只有删除它才带走全部复制组 */
+	smart_copy_initial?: boolean
 	/** 旧版「智能镜像组」的成对 uuid，只在迁移旧工程时使用 */
 	smart_mirror?: UUID
 }
@@ -42,6 +45,12 @@ function setLinkId(group: Group, id: UUID) {
 function setAttrsLinked(group: Group, linked: boolean) {
 	(group as unknown as SmartCopyFields).smart_copy_linked = linked;
 }
+function isInitial(group: Group): boolean {
+	return (group as unknown as SmartCopyFields).smart_copy_initial === true;
+}
+function setInitial(group: Group, initial: boolean) {
+	(group as unknown as SmartCopyFields).smart_copy_initial = initial;
+}
 
 /** 镜像面坐标：与镜像建模共用同一约定 */
 function mirrorCenter(): number {
@@ -53,7 +62,7 @@ function mirrorCenter(): number {
  * 内容同步要在「成员根之间」做镜像：两侧互为全局镜像时基准就是 8（与旧行为完全一致）；
  * 但断开链接后用户可能移动过某一侧（两侧不再关于全局镜像面对称），这时若仍按 8 镜像，
  * 对侧的块会被写到「全局镜像位置」而不是对侧组里的相同位置。
- * 取两个成员根原点 x 的中点作为镜像面，等价于「源块在源成员根内的位置 → 对侧成员根内的
+ * 取两个成员根原点的中点作为镜像面，等价于「源块在源成员根内的位置 → 对侧成员根内的
  * 同位置」，这也是用户说的「以智能组位置为基准」。任一侧不在成员里时退回全局镜像面。
  *
  * 反馈#305 复报第 5 轮①（X 轴位移第一个块不同步）：基准必须取**编辑前**的成员根原点。
@@ -61,17 +70,36 @@ function mirrorCenter(): number {
  * 第一个被处理的块拿到 center = (源新位置 + 对侧旧位置)/2，镜像后对侧不动；等第一个块处理完
  * （createClone 会顺带把对侧根的 origin 也镜像过去），后面块的中点才回到正确值。于是现象
  * 正好是「第一个块不跟着走，Y/Z 正常（它们直接抄源值，不依赖中点的 x）」。
+ *
+ * 反馈#305 后续④（只支持左右对称）：镜像轴改为按两个成员根的相对位置判定——哪一轴上两者
+ * 分得最开就绕哪一轴镜像。左右对称（X 差最大）结果与旧行为一致；把副本挪到模型前方（Z 差
+ * 最大）之后，前后对称也能正确镜像，同一条规则同样覆盖上下（Y）。
  */
-function rootOriginX(group: Group): number {
+function preRootOrigin(group: Group): number[] {
 	let pre = SmartCopyGroup.pre_root_origins?.get(group.uuid);
-	return pre === undefined ? group.origin[0] : pre;
+	return pre ? pre : group.origin;
 }
 
-function pairCenterBetween(source_node: OutlinerNode, target_node: OutlinerNode | 'root'): number {
+function pairMirror(source_node: OutlinerNode, target_node: OutlinerNode | 'root'): {axis: number, center: number} {
 	let source_root = memberRootOf(source_node);
 	let target_root = target_node instanceof OutlinerNode ? memberRootOf(target_node) : undefined;
-	if (!source_root || !target_root || source_root === target_root) return mirrorCenter();
-	return (rootOriginX(source_root) + rootOriginX(target_root)) / 2;
+	if (!source_root || !target_root || source_root === target_root) {
+		return {axis: 0, center: mirrorCenter()};
+	}
+	let source = preRootOrigin(source_root);
+	let target = preRootOrigin(target_root);
+	let axis = 0;
+	let largest = 0;
+	for (let i = 0; i < 3; i++) {
+		let delta = Math.abs(source[i] - target[i]);
+		if (delta > largest + 1e-6) {
+			largest = delta;
+			axis = i;
+		}
+	}
+	// 两侧原点重合（居中网格上关于 0 左右对称的组）时无从判定轴向，退回 X 轴 + 全局镜像面
+	if (largest < 1e-6) return {axis: 0, center: mirrorCenter()};
+	return {axis, center: (source[axis] + target[axis]) / 2};
 }
 
 function membersOf(id: UUID): Group[] {
@@ -162,13 +190,13 @@ function placeAtIndex(node: OutlinerNode, parent: Group, index: number) {
 	node.addTo(parent, Math.max(0, Math.min(index, parent.children.length)));
 }
 
-function mirrorGroupTransform(source: Group, counterpart: Group, center = mirrorCenter()) {
-	counterpart.origin[0] = 2 * center - source.origin[0];
-	counterpart.origin[1] = source.origin[1];
-	counterpart.origin[2] = source.origin[2];
-	counterpart.rotation[0] = source.rotation[0];
-	counterpart.rotation[1] = -source.rotation[1];
-	counterpart.rotation[2] = -source.rotation[2];
+function mirrorGroupTransform(source: Group, counterpart: Group, mirror: {axis: number, center: number}) {
+	// 沿 axis 取反（镜像面在 center），其余轴直接抄源值；旋转向量只有 axis 分量保留，
+	// 另外两个分量取反——与 Cube.flip 同一约定，左右对称时结果与旧实现完全一致。
+	for (let i = 0; i < 3; i++) {
+		counterpart.origin[i] = i === mirror.axis ? 2 * mirror.center - source.origin[i] : source.origin[i];
+		counterpart.rotation[i] = i === mirror.axis ? source.rotation[i] : -source.rotation[i];
+	}
 	// scale 只有骨骼格式的组才有
 	if (source.scale && counterpart.scale) {
 		counterpart.scale[0] = source.scale[0];
@@ -193,10 +221,17 @@ export const SmartCopyGroup = {
 	pre_paths: null as Map<UUID, number[]> | null,
 	pre_roots: null as Map<UUID, Group> | null,
 	/**
-	 * 编辑前各成员根的原点 x（反馈#305 复报第 5 轮①）：镜像基准必须用编辑前的位置算，
-	 * 否则「源根已移动、对侧根还没同步」的中间态会让 X 轴位移的镜像量失真。
+	 * 编辑前各成员根的原点（反馈#305 复报第 5 轮①）：镜像基准必须用编辑前的位置算，
+	 * 否则「源根已移动、对侧根还没同步」的中间态会让位移的镜像量失真。
+	 * 后续④起存完整坐标，用于判定镜像轴。
 	 */
-	pre_root_origins: null as Map<UUID, number> | null,
+	pre_root_origins: null as Map<UUID, number[]> | null,
+	/**
+	 * 编辑前各组的变换快照（反馈#305 后续①②）：拖动组节点时 undo aspects 里可能没有 groups
+	 * （gizmo 直接改 origin），只能靠这份快照判断哪些组的位移/旋转变了，才能把子组同步到对侧、
+	 * 并在「成员根被移动 + 属性链接已断开」时整棵冻结该成员。
+	 */
+	pre_group_transforms: null as Map<UUID, {origin: number[], rotation: number[], scale?: number[]}> | null,
 	/**
 	 * 编辑前「成员 + 下标路径」→ 节点（复报第 2 轮）：删除动作会在 finishEdit 之前清空
 	 * aspects.elements（outliner.js 的 `recursive_list.empty()`），只能靠这份快照做差集
@@ -271,6 +306,7 @@ export const SmartCopyGroup = {
 		this.pre_roots = new Map();
 		this.pre_index = new Map();
 		this.pre_root_origins = new Map();
+		this.pre_group_transforms = new Map();
 		this.created_nodes = new Set();
 		this.edit_attrs_linked = true;
 		// 反馈#305 复报第 4 轮③：只有「本次编辑确实编辑了成员根」才算组级编辑。
@@ -310,6 +346,11 @@ export const SmartCopyGroup = {
 				this.pre_roots.set(current.uuid, member);
 				index.set(member.uuid + '|' + path.join(','), current);
 				if (current instanceof Group) {
+					this.pre_group_transforms?.set(current.uuid, {
+						origin: current.origin.slice(),
+						rotation: current.rotation.slice(),
+						scale: current.scale ? current.scale.slice() : undefined,
+					});
 					current.children.forEach((child, child_index) => walk(child, path.concat(child_index), member));
 				}
 			};
@@ -317,12 +358,12 @@ export const SmartCopyGroup = {
 		}
 	},
 
-	/** 记录成员根的原始点（供 pairCenterBetween 用编辑前的位置算镜像基准） */
+	/** 记录成员根的原点（供 pairMirror 用编辑前的位置算镜像基准） */
 	recordMemberOrigins(members: Group[]) {
 		if (!this.pre_root_origins) return;
 		for (let member of members) {
 			if (!this.pre_root_origins.has(member.uuid)) {
-				this.pre_root_origins.set(member.uuid, member.origin[0]);
+				this.pre_root_origins.set(member.uuid, member.origin.slice());
 			}
 		}
 	},
@@ -456,6 +497,10 @@ export const SmartCopyGroup = {
 				let member_uuid = key.slice(0, separator);
 				let path_key = key.slice(separator + 1);
 				if (isInTree(node)) continue;
+				// 反馈#305 后续③：整位成员根被删时（含初始组删除全部成员），删掉的子树不再逐个同步，
+				// 只由 finishEdit 的组删除分支决定是否带走其它成员。
+				let member_root = this.pre_roots?.get(node.uuid);
+				if (member_root && !isInTree(member_root)) continue;
 				// 祖先也被删（或祖先就是被删的成员根）时由祖先统一处理
 				if (path_key) {
 					let parent_key = path_key.slice(0, path_key.lastIndexOf(','));
@@ -578,14 +623,15 @@ export const SmartCopyGroup = {
 	},
 
 	/**
-	 * 复制源名称得到副本名称：Ctrl+D 的唯一命名规则 + 左右/前后侧别翻转（反馈#305 第 2 点）。
-	 * `exclude` 是刚建出来、名字还等于源名的副本自己，不算占用。
+	 * 反馈#305 第 2 点 / 后续⑤：复制出来的组按「软件自带镜像翻转」的规则改名——
+	 * 名字里带该镜像轴的侧别字样时翻到对侧（左右对称翻 left→right，前后对称翻 front→back），
+	 * 再按 Ctrl+D 的唯一命名进位去重。`exclude` 是刚建出来的副本自己，不算占用。
 	 */
-	copyName(source: string, exclude?: Group): string {
-		let axis = sideAxisOf(source);
-		let desired = axis == null ? source : nameOnOtherSide(source, axis);
+	mirroredName(source: string, axis: number, exclude?: Group): string {
+		let probe = {name: source};
+		flipNameOnAxis(probe as unknown as OutlinerNode, axis, null, source);
 		let taken = new Set(Group.all.filter(group => group !== exclude).map(group => group.name.toLowerCase()));
-		return uniqueName(desired, taken);
+		return uniqueName(probe.name, taken);
 	},
 
 	/**
@@ -617,13 +663,15 @@ export const SmartCopyGroup = {
 	 */
 	cloneMirrored(node: OutlinerNode, parent: OutlinerNode | 'root', deep = true): OutlinerNode {
 		let clone: OutlinerNode;
-		let center = pairCenterBetween(node, parent);
+		let mirror = pairMirror(node, parent);
 		if (node instanceof Group) {
 			clone = new Group(node as unknown as OutlinerNodeData);
-			mirrorGroupTransform(node, clone as Group, center);
+			mirrorGroupTransform(node, clone as Group, mirror);
 			// 先建好组（有 mesh）再挂子节点，子元素的 init 需要父组已存在
 			clone.addTo(parent);
 			clone.init();
+			// 反馈#305 后续⑤⑥：子组/新组也要按镜像轴翻名并去重，否则对侧会出现同名组
+			clone.name = this.mirroredName(node.name, mirror.axis, clone as Group);
 			if (deep) {
 				for (let child of node.children) {
 					this.cloneMirrored(child, clone);
@@ -637,7 +685,7 @@ export const SmartCopyGroup = {
 		clone.addTo(parent);
 		clone.init();
 		// 反馈#288：UV 随几何一起镜像（两侧读同一块纹理区域、取样方向相反）
-		clone.flip(0, center);
+		clone.flip(mirror.axis, mirror.center);
 		clone.name = node.name;
 		return clone;
 	},
@@ -661,7 +709,10 @@ export const SmartCopyGroup = {
 		setLinkId(counterpart, id);
 		setAttrsLinked(group, true);
 		setAttrsLinked(counterpart, true);
-		counterpart.name = this.copyName(group.name, counterpart);
+		// 反馈#305 后续③：原始对象记为「初始组」，大纲标识与删除规则都以它为准
+		setInitial(group, true);
+		setInitial(counterpart, false);
+		// 名字已由 cloneMirrored 按镜像轴翻转 + 去重
 		counterpart.isOpen = group.isOpen;
 		Canvas.updateAll();
 		let subtree = this.collectSubtree(counterpart);
@@ -750,6 +801,8 @@ export const SmartCopyGroup = {
 	/** 反馈#305 第 3 点：Ctrl+D 复制成员时副本继承链接 id，继续参与同步 */
 	onDuplicate(source: OutlinerNode, copy: OutlinerNode) {
 		if (!(source instanceof Group) || !(copy instanceof Group)) return;
+		// 复制出来的成员永远不是初始组（getChildlessCopy 会把该字段一起拷过来）
+		setInitial(copy, false);
 		let id = linkId(source);
 		if (!id) return;
 		setLinkId(copy, id);
@@ -859,6 +912,7 @@ export const SmartCopyGroup = {
 			this.pre_paths = null;
 			this.pre_roots = null;
 			this.pre_root_origins = null;
+			this.pre_group_transforms = null;
 			this.pre_index = null;
 			this.created_nodes = null;
 			this.edit_attrs_linked = true;
@@ -866,6 +920,14 @@ export const SmartCopyGroup = {
 			return;
 		}
 		let changed = false;
+
+		// 反馈#305 后续①②：gizmo 拖动组节点时 undo aspects 里只有 elements/outliner，没有 groups，
+		// 所以组节点的位移要自己比对快照找出来；同时「成员根被移动 + 属性链接断开」要冻结整棵成员。
+		let changed_groups = this.changedGroups();
+		let frozen_members = this.frozenMembers(changed_groups);
+
+		// 反馈#305 后续③：删除成员根的联动（删除动作会在 finishEdit 前清空 aspects，只能靠快照）
+		changed = this.syncMemberDeletions(aspects) || changed;
 
 		// 反馈#305 复报第 2 点：先把本次编辑造成的结构变化镜像到其它成员，
 		// 保证随后按「下标路径」配对做几何同步时两侧结构已经对齐。
@@ -890,6 +952,10 @@ export const SmartCopyGroup = {
 				// 复报第 1 点：属性链接断开后，组级编辑（移动/枢轴）连子块的位移也不再映射。
 				// 直接编辑组内的块仍然同步（那不是组级编辑）。
 				if (!attrs_linked && group_level) continue;
+				// 后续②：属性链接断开时移动成员根属于组级操作，整棵成员（含块与子组）都不再映射，
+				// 否则对侧的块会单独跑到镜像位置、在没动的组里错位（用户看到的「对面子组跟着动」）。
+				let element_root = memberRootOf(element);
+				if (element_root && frozen_members.has(element_root.uuid)) continue;
 				if (!MirrorModeling.cached_elements[element.uuid]?.smart_pair) continue;
 				for (let counterpart of this.equivalents(element)) {
 					if (!(counterpart instanceof OutlinerElement) || counterpart === element) continue;
@@ -897,8 +963,10 @@ export const SmartCopyGroup = {
 					if (edited_elements.has(counterpart.uuid)) continue;
 					MirrorModeling.cached_elements[element.uuid].counterpart = counterpart;
 					// 反馈#305 复报第 4 轮④：以两侧成员根的相对位置为镜像基准（断开后一侧被挪走时
-					// 不再把对侧的块写到全局镜像位置）
-					MirrorModeling.cached_elements[element.uuid].mirror_center = pairCenterBetween(element, counterpart);
+					// 不再把对侧的块写到全局镜像位置）；后续④：镜像轴也按成员相对位置判定。
+					let mirror = pairMirror(element, counterpart);
+					MirrorModeling.cached_elements[element.uuid].mirror_center = mirror.center;
+					MirrorModeling.cached_elements[element.uuid].mirror_axis = mirror.axis;
 					MirrorModeling.createClone(element, aspects);
 					changed = true;
 				}
@@ -909,6 +977,18 @@ export const SmartCopyGroup = {
 			for (let group of aspects.groups.slice()) {
 				let partners = this.equivalents(group).filter(node => node instanceof Group) as Group[];
 				if (!Group.all.includes(group)) {
+					// 反馈#305 后续③：删除成员根时只有「初始组」带走其它复制组；
+					// 删掉复制出来的成员只删它自己，其余成员保持原样（也不能删掉组内块）
+					if (linkId(group)) {
+						if (isInitial(group)) {
+							for (let partner of partners) {
+								if (!Group.all.includes(partner)) continue;
+								this.removeSubtreeWithUndo(partner, aspects);
+								changed = true;
+							}
+						}
+						continue;
+					}
 					// 反馈#288：整棵子树连同结构登记进 undo，撤销才能还原、redo 才能再删
 					for (let partner of partners) {
 						if (!Group.all.includes(partner)) continue;
@@ -936,9 +1016,31 @@ export const SmartCopyGroup = {
 					let before = partner.getChildlessCopy();
 					before.uuid = partner.uuid;
 					MirrorModeling.insertGroupIntoUndo(partner, aspects, before);
-					mirrorGroupTransform(group, partner, pairCenterBetween(group, partner));
+					mirrorGroupTransform(group, partner, pairMirror(group, partner));
 					this.syncName(group, partner, edited_names.get(group.uuid));
 					aspects.groups.safePush(partner);
+					changed = true;
+				}
+			}
+		}
+
+		// 反馈#305 后续①②：拖动组节点时不经过 aspects.groups（gizmo 直接改 origin），
+		// 子组的位移/旋转要按快照比对补同步，否则断开属性链接后对侧只剩块在动、子组不动。
+		// 成员根自身仍走上面的组循环（受链接状态约束）。
+		if (!group_flip) {
+			for (let uuid of changed_groups) {
+				let group = OutlinerNode.uuids[uuid] as OutlinerNode | undefined;
+				if (!(group instanceof Group) || !isInTree(group)) continue;
+				if (this.created_nodes?.has(uuid) || edited_groups.has(uuid)) continue;
+				let root = memberRootOf(group);
+				if (!root || root === group) continue;
+				if (frozen_members.has(root.uuid)) continue;
+				for (let partner of this.equivalents(group).filter(node => node instanceof Group) as Group[]) {
+					if (!isInTree(partner) || changed_groups.has(partner.uuid) || edited_groups.has(partner.uuid)) continue;
+					let before = partner.getChildlessCopy();
+					before.uuid = partner.uuid;
+					MirrorModeling.insertGroupIntoUndo(partner, aspects, before);
+					mirrorGroupTransform(group, partner, pairMirror(group, partner));
 					changed = true;
 				}
 			}
@@ -953,10 +1055,64 @@ export const SmartCopyGroup = {
 		this.pre_paths = null;
 		this.pre_roots = null;
 		this.pre_root_origins = null;
+		this.pre_group_transforms = null;
 		this.pre_index = null;
 		this.created_nodes = null;
 		this.edit_attrs_linked = true;
 		this.edit_group_level = false;
+	},
+
+	/**
+	 * 反馈#305 后续③：成员根被删除时的联动。
+	 * 删除动作会在 finishEdit 之前清空 aspects.elements/groups（outliner.js 的
+	 * `recursive_list.empty()`），所以这里同样靠 initEdit 的结构快照判断哪个成员根没了：
+	 * - 删的是「初始组」→ 其余复制组成员整棵一起删除；
+	 * - 删的是复制成员 → 只删它自己（其余成员与链接原样保留）。
+	 */
+	syncMemberDeletions(aspects: UndoAspects): boolean {
+		if (!this.edit_links) return false;
+		let changed = false;
+		for (let [id, members] of this.edit_links) {
+			let initial = members.find(isInitial) ?? members[0];
+			if (!initial || isInTree(initial) || members.length < 2) continue;
+			for (let partner of members) {
+				if (partner === initial || !isInTree(partner)) continue;
+				this.removeSubtreeWithUndo(partner, aspects);
+				changed = true;
+			}
+		}
+		return changed;
+	},
+
+	/** 本次编辑里位移/旋转/缩放变过的组（与 initEdit 的快照比对；删除的组不算） */
+	changedGroups(): Set<UUID> {
+		let changed = new Set<UUID>();
+		if (!this.pre_group_transforms) return changed;
+		for (let [uuid, before] of this.pre_group_transforms) {
+			let node = OutlinerNode.uuids[uuid] as OutlinerNode | undefined;
+			if (!(node instanceof Group) || !isInTree(node)) continue;
+			let moved = node.origin.some((value, axis) => Math.abs(value - before.origin[axis]) > 1e-6)
+				|| node.rotation.some((value, axis) => Math.abs(value - before.rotation[axis]) > 1e-6)
+				|| (before.scale && node.scale && node.scale.some((value, axis) => Math.abs(value - before.scale[axis]) > 1e-6));
+			if (moved) changed.add(uuid);
+		}
+		return changed;
+	},
+
+	/**
+	 * 反馈#305 后续②：属性链接断开时，被移动的成员根属于「组级编辑」，它整棵子树都不参与映射。
+	 * 返回这些成员根的 uuid（链接全连着时不冻结，走原有的组级镜像）。
+	 */
+	frozenMembers(changed_groups: Set<UUID>): Set<UUID> {
+		let frozen = new Set<UUID>();
+		if (!this.edit_links) return frozen;
+		for (let members of this.edit_links.values()) {
+			if (members.every(member => attrsLinked(member))) continue;
+			for (let member of members) {
+				if (changed_groups.has(member.uuid)) frozen.add(member.uuid);
+			}
+		}
+		return frozen;
 	},
 
 	/**
@@ -989,6 +1145,8 @@ Blockbench.on('finish_edit', ({aspects}) => {
 
 new Property(Group, 'string', 'smart_copy_id', {default: ''});
 new Property(Group, 'boolean', 'smart_copy_linked', {default: true});
+// 反馈#305 后续③：链接里最初的成员，删除它才会带走全部复制组
+new Property(Group, 'boolean', 'smart_copy_initial', {default: false});
 // 旧版「智能镜像组」字段：保留注册，旧工程载入不报未知属性，值只在 members() 里迁移一次
 new Property(Group, 'string', 'smart_mirror', {default: ''});
 

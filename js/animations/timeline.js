@@ -178,17 +178,30 @@ export const Timeline = {
 					) {
 						if (!Timeline.vue.graph_editor_open) {
 
-							var channel_index = 0 //animator.channels.indexOf(kf.channel);
-							for (var channel in animator.channels) {
-								if (kf.channel == channel) break;
-								if (channels[channel] != false
-									&& Condition(animator.channels[channel].condition, animator)
-									&& (!channels.hide_empty || animator[channel].length)) {
-									channel_index++;
+							// 反馈#331：纵向命中点必须与模板的渲染口径一致。动画器未展开、
+							// 或通道因条件/隐藏空通道而没有独立行时，该通道的关键帧画在
+							// 动画器根行里（模板里根行的 .keyframe_section），命中点要取根行中心；
+							// 只有真正有独立通道行的通道才按「根行 1 行 + 前面通道行数」下移。
+							// 否则根行上的关键帧会被算到展开后的通道行位置，框选范围与实际
+							// 关键帧位置对不上（框住的行选不中、框外一行反而被选中）。
+							let in_channel_row = animator.expanded
+								&& Condition(animator.channels[kf.channel]?.condition, animator);
+							var height;
+							if (!in_channel_row) {
+								height = row.offset + row_height * 0.5;
+							} else {
+								var channel_index = 0 //animator.channels.indexOf(kf.channel);
+								for (var channel in animator.channels) {
+									if (kf.channel == channel) break;
+									if (channels[channel] != false
+										&& Condition(animator.channels[channel].condition, animator)
+										&& (!channels.hide_empty || animator[channel].length)) {
+										channel_index++;
+									}
 								}
+								// 行首 1 行 + channel_index 个通道行，再取该通道行的竖直中心（+0.5 行）
+								height = row.offset + (channel_index + 1.5) * row_height;
 							}
-							// 行首 1 行 + channel_index 个通道行，再取该通道行的竖直中心（+0.5 行）
-							var height = row.offset + (channel_index + 1.5) * row_height;
 
 						} else {
 							var height = Timeline.vue.graph_offset - (kf.display_value || 0) * Timeline.vue.graph_size + Timeline.vue.scroll_top;

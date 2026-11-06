@@ -1691,6 +1691,8 @@
 	"settings.status_bar_modifier_keys.desc": "在状态栏中显示上下文感知的建议更改",
 	"settings.ground_plane": "接地层",
 	"settings.ground_plane.desc": "在模型下面显示接地层",
+	"settings.ground_plane_size": "接地层大小",
+	"settings.ground_plane_size.desc": "接地层的边长（单位：方块）。接地层占满视野时可调小",
 	"settings.preview_paste_behavior": "默认预览粘贴行为",
 	"settings.preview_paste_behavior.desc": "在编辑模式下将内容添加到预览的行为",
 	"settings.preview_paste_behavior.always_ask": "始终询问",

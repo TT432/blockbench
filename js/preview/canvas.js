@@ -1062,15 +1062,27 @@ export function initCanvas() {
 		side: settings.ground_plane_double_side.value ? THREE.DoubleSide : THREE.FrontSide,
 		alphaTest: 0.2
 	})
-	let size = 4096;
-	Canvas.ground_plane = new THREE.Mesh(new THREE.PlaneGeometry(size, size), Canvas.groundPlaneMaterial);
+	Canvas.ground_plane = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), Canvas.groundPlaneMaterial);
 	Canvas.ground_plane.rotation.x = -Math.PI/2;
 	Canvas.ground_plane.position.y = -0.025;
-	Canvas.ground_plane.geometry.attributes.uv.set([0, 4096/16, 4096/16, 4096/16, 0, 0, 4096/16, 0]);
-	Canvas.ground_plane.geometry.attributes.uv.needsUpdate = true;
 	Canvas.ground_plane.visible = settings.ground_plane.value;
 	scene.add(Canvas.ground_plane);
 	Canvas.gizmos.push(Canvas.ground_plane);
+
+	// 反馈#330：接地层尺寸可配置（单位=方块）。旧版固定 4096 单位（=256 方块），
+	// 相机贴近地面时几乎铺满视野并遮挡模型；这里按设置重建几何体，
+	// UV 重复数取方块数，保持每个方块一格网格。mesh 的 scale 仍由格式的
+	// block_size/16 决定（io/format.ts），所以同一数值对所有格式都表示「方块数」。
+	Canvas.buildGroundPlane = function() {
+		if (!Canvas.ground_plane) return;
+		let blocks = Math.clamp(settings.ground_plane_size?.value ?? 256, 1, 8192);
+		let size = blocks * 16;
+		if (Canvas.ground_plane.geometry) Canvas.ground_plane.geometry.dispose();
+		Canvas.ground_plane.geometry = new THREE.PlaneGeometry(size, size);
+		Canvas.ground_plane.geometry.attributes.uv.set([0, blocks, blocks, blocks, 0, 0, blocks, 0]);
+		Canvas.ground_plane.geometry.attributes.uv.needsUpdate = true;
+	}
+	Canvas.buildGroundPlane();
 
 	CustomTheme.updateColors();
 	resizeWindow();

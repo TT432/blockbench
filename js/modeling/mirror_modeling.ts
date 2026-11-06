@@ -38,6 +38,8 @@ export const MirrorModeling = {
 		let mirror_uv = cached_data?.smart_pair ? true : options.mirror_uv;
 		// 反馈#305 复报第 4 轮④：智能复制组按「两侧成员根之间」的基准镜像内容
 		let center = cached_data?.mirror_center ?? (Format.centered_grid ? 0 : 8);
+		// 反馈#305 后续④：镜像轴由智能复制组按成员相对位置判定（左右/前后/上下）
+		let mirror_axis = cached_data?.smart_pair ? (cached_data?.mirror_axis ?? 0) : 0;
 		let mirror_element = cached_data?.counterpart;
 		let element_type_options = MirrorModeling.element_types[original.type];
 		let element_before_snapshot;
@@ -49,7 +51,7 @@ export const MirrorModeling = {
 			element_before_snapshot = mirror_element.getUndoCopy(undo_aspects);
 			mirror_element.extend(original);
 			
-			mirror_element.flip(0, center);
+			mirror_element.flip(mirror_axis, center);
 
 			mirror_element.extend({
 				name: element_before_snapshot.name,
@@ -80,7 +82,7 @@ export const MirrorModeling = {
 				if (parent_b instanceof OutlinerNode == false || parent_b.getTypeBehavior('parent') != true) return;
 
 				let before_snapshot = parent_b instanceof Group ? parent_b.getSaveCopy() : undefined;
-				MirrorModeling.updateParentNodeCounterpart(parent_b, parent, center);
+				MirrorModeling.updateParentNodeCounterpart(parent_b, parent, center, mirror_axis);
 				if (parent_b instanceof Group) MirrorModeling.insertGroupIntoUndo(parent_b, undo_aspects, before_snapshot);
 
 				updateParent(parent, parent_b);
@@ -156,7 +158,7 @@ export const MirrorModeling = {
 	 * 三成员链里有两个成员在同一侧），祖先组必须按「这一对的中轴」镜像，否则内容编辑会
 	 * 顺手把对侧成员根的 origin 翻到全局镜像位置——第三个成员于是和第二个重合。
 	 */
-	updateParentNodeCounterpart(node: OutlinerNode, original: OutlinerNode, center?: number) {
+	updateParentNodeCounterpart(node: OutlinerNode, original: OutlinerNode, center?: number, axis = 0) {
 		node.extend({
 			position: 'position' in original ? original.position : undefined,
 			origin: 'origin' in original ? original.origin : undefined,
@@ -166,13 +168,14 @@ export const MirrorModeling = {
 		});
 
 		if ('origin' in node) {
-			node.origin[0] = center === undefined
-				? MirrorModeling.flipCoord(node.origin[0])
-				: 2 * center - node.origin[0];
+			node.origin[axis] = center === undefined
+				? MirrorModeling.flipCoord(node.origin[axis])
+				: 2 * center - node.origin[axis];
 		}
 		if ('rotation' in node) {
-			node.rotation[1] *= -1;
-			node.rotation[2] *= -1;
+			for (let i = 0; i < 3; i++) {
+				if (i !== axis) node.rotation[i] *= -1;
+			}
 		}
 	},
 	getEditSide(fallback = 1) {
@@ -316,6 +319,7 @@ interface MirrorModelingCachedData {
 	pre_part_connections?: unknown
 	smart_pair?: boolean
 	mirror_center?: number
+	mirror_axis?: number
 }
 interface MirrorModelingElementTypeOptions {
 	check_parent_symmetry?: boolean
