@@ -14,7 +14,6 @@ const FEATURE_EDGE_CACHE_SIZE = 512;	// 特征棱缓存的最大元素数，超�
 const FEATURE_EDGE_CACHE_BUDGET = 65536;	// 缓存内棱数总预算（约 3MB），超出同样按插入顺序淘汰
 const INTERSECTION_MAX_POINTS = 256;	// 单元素追加的交点上限
 const INTERSECTION_MAX_RAYS = 8192;		// 单次调用的射线上限（线段正反两向各计一条）
-const INTERSECTION_MAX_ELEMENTS = 512;	// 元素总数上限，超过则整体跳过
 // 反馈#327：单元素最多追加多少个像素网格交叉点。像素网格每面 (uv 像素数+1)^2 个交点，
 // 正常 16×16 的面约 289 个；纹理很大或 UV 跨很多格时数量会爆炸，超过上限整体跳过。
 const PIXEL_GRID_MAX_POINTS = 4096;
@@ -324,9 +323,14 @@ export const Vertexsnap = {
 	 * 每条线段再正反各投一次：材质多为 FrontSide，射线从背面接近表面时会被背面剔除，
 	 * 只投单向同样会漏点。
 	 *
-	 * 复杂度：元素对先用特征棱世界包围盒相交批量预筛，再逐线段 raycast；
-	 * 单元素最多追加 256 个交点、单次调用最多 8192 条射线，元素总数超过 512 时整体跳过：
-	 * 这种规模的模型上逐线段射线检测会让悬停/选中明显卡顿，而顶点捕捉本身也已不实用。
+	 * 复杂度：元素对先用几何包围盒的世界空间 AABB 做第一层预筛（不取特征棱，O(元素数) 的纯盒子比较），
+	 * 通过后再用特征棱世界包围盒做第二层预筛，最后才逐线段 raycast；
+	 * 单元素最多追加 256 个交点、单次调用最多 8192 条射线。
+	 *
+	 * 反馈#329（大模型上相交点完全不出现）：旧实现按「元素总数 > 512 就整体跳过」兜底，
+	 * 逐元素取特征棱在那之前已经发生，几百个块的角色模型（元素数普遍上千）因此静默失去整个功能——
+	 * 帮助文档里承诺的「相交点可捕捉」在这类模型上完全不成立。现在改成先用几何包围盒预筛，
+	 * 大模型下只有真正与本块包围盒重叠的少数元素才会走到特征棱/射线路径，整体开销与元素总数近似线性且非常数因子极小。
 	 *
 	 * 反馈#253（删面后交点缺失）：方块元素的命中目标换成局部包围盒（见 cast_segment_box），
 	 * 不再用 mesh 三角形。删面只是从 index 里去掉三角形，盒面本身与描边仍在，
@@ -335,7 +339,7 @@ export const Vertexsnap = {
 	addIntersectionVertices(element, vectors) {
 		if (typeof settings === 'undefined' || !settings.community_vertex_snap_intersections?.value) return;
 		if (typeof Toolbox !== 'undefined' && Toolbox.selected?.id !== 'vertex_snap_tool') return;
-		if (typeof Outliner === 'undefined' || Outliner.elements.length > INTERSECTION_MAX_ELEMENTS) return;
+		if (typeof Outliner === 'undefined') return;
 
 		let mesh = element.mesh;
 		let own = Vertexsnap.getFeatureEdges(element);
@@ -343,16 +347,24 @@ export const Vertexsnap = {
 		mesh.updateMatrixWorld();
 		let own_box = Vertexsnap.getFeatureEdgesWorldBox(own, mesh);
 
-		// 元素对预筛：只保留特征棱世界包围盒与本元素相交的其它元素，
-		// 避免对每个元素逐一逐线段投射
+		// 元素对预筛（两层）：
+		// 1) 几何包围盒的世界 AABB——不取特征棱，元素再多也只是纯盒子比较，
+		//    因此无需按元素总数整体跳过（反馈#329）；
+		// 2) 特征棱世界包围盒——几何盒是它的超集，取到特征棱后再精筛一次。
 		let candidates = [];
+		let geometry_box = new THREE.Box3();
 		for (let other of Outliner.elements) {
 			if (other === element || other.visibility === false || other.locked === true) continue;
 			let other_mesh = other.mesh;
-			if (!other_mesh?.geometry?.attributes.position) continue;
+			let other_geometry = other_mesh?.geometry;
+			if (!other_geometry?.attributes?.position) continue;
+			other_mesh.updateMatrixWorld();
+			if (!other_geometry.boundingBox) other_geometry.computeBoundingBox();
+			if (!other_geometry.boundingBox) continue;
+			geometry_box.copy(other_geometry.boundingBox).applyMatrix4(other_mesh.matrixWorld);
+			if (!own_box.intersectsBox(geometry_box)) continue;
 			let other_edges = Vertexsnap.getFeatureEdges(other);
 			if (!other_edges || !other_edges.edges.length) continue;
-			other_mesh.updateMatrixWorld();
 			if (!own_box.intersectsBox(Vertexsnap.getFeatureEdgesWorldBox(other_edges, other_mesh))) continue;
 			candidates.push({
 				mesh: other_mesh,
