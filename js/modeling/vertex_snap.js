@@ -728,8 +728,11 @@ export const Vertexsnap = {
 		function scaleCornersByDelta(global_delta) {
 			let m = CORNER_AXIS_MAP[Vertexsnap.vertex_index];
 			if (!m) return false;
+			// 只处理方块：全是网格/样条时返回 false，让调用方走绕枢轴等比缩放的退化路径
+			let scaled = false;
 			Vertexsnap.elements.forEach(function(obj) {
 				if (obj instanceof Cube == false) return;
+				scaled = true;
 				var q = obj.mesh.getWorldQuaternion(new THREE.Quaternion()).invert()
 				var local_offset = new THREE.Vector3().copy(global_delta).applyQuaternion(q)
 				ignoreVectorAxes(local_offset);
@@ -748,7 +751,7 @@ export const Vertexsnap = {
 					obj.preview_controller.updateUV(obj)
 				}
 			})
-			return true;
+			return scaled;
 		}
 
 		if (Vertexsnap.move_pivot) {
