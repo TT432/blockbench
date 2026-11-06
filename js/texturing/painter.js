@@ -734,7 +734,8 @@ export const Painter = {
 		if (tool.brush?.size || tool.id == 'draw_shape_tool') return tool;
 	},
 	isBrushSizeDragEvent(event) {
-		if (!settings.community_brush_size_rmb_drag.value) return false;
+		// 反馈#328：笔刷直径调整方式由一条下拉框决定，只能启用其中一种
+		if (Settings.get('community_brush_size_adjust') != 'alt_drag') return false;
 		if (!Modes.paint || event.button !== 2 || !(event.altKey || Pressing.alt)) return false;
 		let slider = BarItems.slider_brush_size;
 		if (!slider || typeof slider.get !== 'function') return false;
@@ -788,7 +789,8 @@ export const Painter = {
 	 */
 	handleBrushSizeWheel(event) {
 		if (!Modes.paint || !Pressing.ctrl) return false;
-		if (settings.community_brush_size_ctrl_wheel?.value === false) return false;
+		// 反馈#328：同上，只有把调整方式选成「Ctrl + 滚轮」时才截住滚轮
+		if (Settings.get('community_brush_size_adjust') != 'ctrl_wheel') return false;
 		if (!event || !event.deltaY) return false;
 		let slider = BarItems.slider_brush_size;
 		if (!slider || typeof slider.get !== 'function') return false;
@@ -3640,21 +3642,18 @@ BARS.defineActions(function() {
 			screen_space: true,
 			onStrokeStart({texture, event, x, y, raycast_data}) {
 				if (event.ctrlOrCmd || Pressing.overrides.ctrl) {
-					let size = BarItems.slider_brush_size.get();
-					let aspect_ratio = BarItems.slider_brush_aspect_ratio.get();
+					// 反馈#328：源只记「采样起点 + 采样时的贴图快照」，尺寸/长宽比不冻结——
+					// 复制画笔的落笔大小跟当前笔刷直径走，两种调直径方式（Alt+右键拖动 /
+					// Ctrl+滚轮）调整后立刻生效，图案模式的网格也按当前直径铺。
 					copy_source = {
 						data: Painter.getCanvas(texture).getContext('2d').getImageData(0, 0, texture.width, texture.height).data,
 						width: texture.width,
 						height: texture.height,
-						size,
-						aspect_ratio,
 						x,
 						y,
 					}
 					UVEditor.vue.copy_brush_source = {
 						x, y,
-						size,
-						aspect_ratio,
 						texture: texture.uuid
 					}
 					Preview.all.forEach(preview => {
@@ -3676,12 +3675,9 @@ BARS.defineActions(function() {
 			changePixel(px, py, pxcolor, local_opacity, {opacity,x, y, texture}) {
 				let a = opacity * local_opacity;
 				let mode = BarItems.copy_brush_mode.value;
-				let size = copy_source.size;
-				let sizes = [size, size];
-				if (copy_source.aspect_ratio) {
-					let index = copy_source.aspect_ratio < 0 ? 0 : 1;
-					sizes[index] = Math.round(size / (Math.abs(copy_source.aspect_ratio)+1));
-				}
+				// 反馈#328：尺寸按当前笔刷直径取（不再读采样时冻结的尺寸），
+				// 调完直径后图案模式的网格与落笔大小立即跟着变
+				let sizes = Painter.getBrushDimensions();
 
 				let source_pos;
 				if (mode == 'copy') {

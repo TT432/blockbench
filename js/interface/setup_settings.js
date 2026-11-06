@@ -419,14 +419,26 @@ function setupSettings() {
 		if (typeof UVEditor !== 'undefined' && UVEditor.vue) UVEditor.vue.$forceUpdate();
 	}});
 
-	// 反馈#230：绘画模式按住 Alt 拖动右键调整笔刷直径（PS 风格），默认关闭。
-	// 生效入口见 painter.js startBrushSizeDrag()，由 3D 视口与 UV 编辑器的 pointerdown 调用。
-	new Setting('community_brush_size_rmb_drag', {category: 'community', value: false, group: 'community_group_paint'});
-	// 反馈#324：Ctrl + 滚轮调笔刷直径的开关（默认开启，紧跟上面那条「Alt + 右键拖动」，反馈#324 明确要求挨在一起）。
-	// 关掉后 Ctrl + 滚轮不再调笔刷（3D 视口里普通滚轮缩放照旧；UV 编辑器里 Ctrl + 滚轮本来就是缩放贴图）。
-	// 生效入口见 painter.js handleBrushSizeWheel()。
-	new Setting('community_brush_size_ctrl_wheel', {category: 'community', value: true, group: 'community_group_paint'});
-	// 反馈#248：上一条拖动的灵敏度（1~20，默认 10 = 原实现灵敏度（每 4px 一格）的 1/5，即每 20px 一格）。
+	// 反馈#328：笔刷直径的调整方式只保留一种，由下拉框选择（原来两条独立开关可同时开启）。
+	// - alt_drag：Alt + 右键拖动（反馈#230，原「Alt + 右键拖动笔刷直径」，默认关闭）
+	// - ctrl_wheel：Ctrl + 滚轮（反馈#321/#324，原「Ctrl + 滚轮调整笔刷大小」，默认开启）
+	// - none：都不启用（Ctrl + 滚轮回到缩放）
+	// 老版本两条开关的值在这里迁移一次：老的「Alt + 右键拖动」若是开启的就沿用 alt_drag。
+	// 生效入口见 painter.js startBrushSizeDrag() / handleBrushSizeWheel()。
+	const legacy_brush_size_drag = Settings.stored?.community_brush_size_rmb_drag?.value === true;
+	new Setting('community_brush_size_adjust', {
+		category: 'community',
+		value: legacy_brush_size_drag ? 'alt_drag' : 'ctrl_wheel',
+		type: 'select',
+		group: 'community_group_paint',
+		options: {
+			alt_drag: tl('settings.community_brush_size_adjust.alt_drag'),
+			ctrl_wheel: tl('settings.community_brush_size_adjust.ctrl_wheel'),
+			none: tl('settings.community_brush_size_adjust.none'),
+		},
+	});
+	// 反馈#248：Alt + 右键拖动的灵敏度（1~20，默认 10 = 原实现灵敏度（每 4px 一格）的 1/5，即每 20px 一格）。
+	// 只对「Alt + 右键拖动」这一种调整方式生效，其它方式下这一项不起作用。
 	new Setting('community_brush_size_drag_sensitivity', {category: 'community', value: 10, type: 'number', min: 1, max: 20, step: 1, group: 'community_group_paint'});
 
 	// 反馈#228：顶点捕捉时是否把「与其它块的相交点」也作为捕捉候选（默认关闭，保持上游行为）。

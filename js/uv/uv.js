@@ -4578,12 +4578,13 @@ Interface.definePanels(function() {
 				getCopyBrushOutlineStyle() {
 					if (Toolbox.selected.brush) {
 						var pixel_size = this.inner_width / (this.texture ? this.texture.width : Project.texture_width);
+						// 反馈#328：源框按当前笔刷直径画，Alt+右键拖动 / Ctrl+滚轮调完立即跟着变
+						let size = BarItems.slider_brush_size.get();
+						let dimensions = Painter.getBrushDimensions(size);
 						//pos
-						let offset = this.copy_brush_source.size%2 == 0 && Toolbox.selected.brush?.offset_even_radius ? 0 : 0.5;
+						let offset = size%2 == 0 && Toolbox.selected.brush?.offset_even_radius ? 0 : 0.5;
 						let left = (this.copy_brush_source.x + offset) * pixel_size;
 						let top =  (this.copy_brush_source.y + offset) * pixel_size;
-						//size
-						let dimensions = Painter.getBrushDimensions(this.copy_brush_source.size);
 						return {
 							'--width': (dimensions[0]/2) * pixel_size,
 							'--height': (dimensions[1]/2) * pixel_size,

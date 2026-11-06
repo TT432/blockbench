@@ -80,7 +80,7 @@ export const MirrorModeling = {
 				if (parent_b instanceof OutlinerNode == false || parent_b.getTypeBehavior('parent') != true) return;
 
 				let before_snapshot = parent_b instanceof Group ? parent_b.getSaveCopy() : undefined;
-				MirrorModeling.updateParentNodeCounterpart(parent_b, parent);
+				MirrorModeling.updateParentNodeCounterpart(parent_b, parent, center);
 				if (parent_b instanceof Group) MirrorModeling.insertGroupIntoUndo(parent_b, undo_aspects, before_snapshot);
 
 				updateParent(parent, parent_b);
@@ -150,7 +150,13 @@ export const MirrorModeling = {
 		preview_controller.updateAll(mirror_element);
 		return mirror_element;
 	},
-	updateParentNodeCounterpart(node: OutlinerNode, original: OutlinerNode) {
+	/**
+	 * 反馈#305 复报第 5 轮：`center` 可选，默认沿用全局镜像面。
+	 * 智能复制组的成员根可能并不关于全局镜像面对称（断开后被挪过位置，或 Ctrl+D 出来的
+	 * 三成员链里有两个成员在同一侧），祖先组必须按「这一对的中轴」镜像，否则内容编辑会
+	 * 顺手把对侧成员根的 origin 翻到全局镜像位置——第三个成员于是和第二个重合。
+	 */
+	updateParentNodeCounterpart(node: OutlinerNode, original: OutlinerNode, center?: number) {
 		node.extend({
 			position: 'position' in original ? original.position : undefined,
 			origin: 'origin' in original ? original.origin : undefined,
@@ -160,7 +166,9 @@ export const MirrorModeling = {
 		});
 
 		if ('origin' in node) {
-			node.origin[0] = MirrorModeling.flipCoord(node.origin[0]);
+			node.origin[0] = center === undefined
+				? MirrorModeling.flipCoord(node.origin[0])
+				: 2 * center - node.origin[0];
 		}
 		if ('rotation' in node) {
 			node.rotation[1] *= -1;

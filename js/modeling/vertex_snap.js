@@ -606,6 +606,8 @@ export const Vertexsnap = {
 		Vertexsnap.step1 = true;
 		delete Vertexsnap.vertex_pos;
 		delete Vertexsnap.vertex_index;
+		delete Vertexsnap.vertex_element;
+		delete Vertexsnap.vertex_local;
 		delete Vertexsnap.move_pivot;
 		delete Vertexsnap.elements;
 		delete Vertexsnap.groups;
@@ -633,6 +635,13 @@ export const Vertexsnap = {
 			Vertexsnap.step1 = false;
 			Vertexsnap.vertex_pos = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
 			Vertexsnap.vertex_index = data.vertex_index;
+			// 反馈#323：旋转后再按「缩放模式」口径缩放时，要从这个元素旋转后的实时姿态
+			// 取被抓顶点的新位置（世界位移 = 目标点 − 新位置），所以记住它来自哪个元素、
+			// 以及它在元素上的局部坐标（clearVertexGizmos 会删掉 vertex_points，之后取不到）
+			Vertexsnap.vertex_element = data.element;
+			Vertexsnap.vertex_local = data.vertex instanceof Array
+				? data.vertex.slice()
+				: (typeof data.vertex == 'string' ? data.element.vertices?.[data.vertex]?.slice() : undefined);
 			Vertexsnap.move_pivot = data.vertex instanceof Array ? data.vertex.allEqual(0) : data.vertex == undefined;
 			Vertexsnap.elements = Outliner.selected.slice();
 			Vertexsnap.groups = Group.multi_selected.slice();
@@ -710,6 +719,38 @@ export const Vertexsnap = {
 			})
 		}
 
+		/**
+		 * 反馈#323：缩放模式与「自动缩放至顶点」共用的缩放执行体。
+		 * 按被抓顶点所在的 8 角点轴表逐轴伸缩：世界位移换到每个方块自身的局部轴，
+		 * corner[i] === 1 的轴推 to、为 0 的轴推 from（与缩放模式完全同一口径）。
+		 * 多选时同一个世界位移作用于每个方块各自对应的角点（不是把每个角点都搬到目标点）。
+		 */
+		function scaleCornersByDelta(global_delta) {
+			let m = CORNER_AXIS_MAP[Vertexsnap.vertex_index];
+			if (!m) return false;
+			Vertexsnap.elements.forEach(function(obj) {
+				if (obj instanceof Cube == false) return;
+				var q = obj.mesh.getWorldQuaternion(new THREE.Quaternion()).invert()
+				var local_offset = new THREE.Vector3().copy(global_delta).applyQuaternion(q)
+				ignoreVectorAxes(local_offset);
+
+				for (let i=0; i<3; i++) {
+					if (m[i] === 1) {
+						obj.to[i] = obj.to[i] + local_offset.getComponent(i);
+					} else {
+						obj.from[i] = obj.from[i] + local_offset.getComponent(i);
+					}
+				}
+				if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
+					Format.cube_size_limiter.clamp(obj)
+				}
+				if (obj.box_uv && obj.visibility) {
+					obj.preview_controller.updateUV(obj)
+				}
+			})
+			return true;
+		}
+
 		if (Vertexsnap.move_pivot) {
 			let world_pos = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
 			let pivot_targets = Vertexsnap.groups.length ? Vertexsnap.groups : Vertexsnap.elements;
@@ -737,32 +778,8 @@ export const Vertexsnap = {
 
 			if (mode === 'scale' && !Format.integer_size && Vertexsnap.elements[0] instanceof Cube) {
 				//Scale
-
-				// 反馈#323：与旋转模式的自动缩放共用同一张角点轴表
-				let m = CORNER_AXIS_MAP[Vertexsnap.vertex_index];
-
-				if (m) {
-					Vertexsnap.elements.forEach(function(obj) {
-						if (obj instanceof Cube == false) return;
-						var q = obj.mesh.getWorldQuaternion(new THREE.Quaternion()).invert()
-						var local_offset = new THREE.Vector3().copy(global_delta).applyQuaternion(q)
-						ignoreVectorAxes(local_offset);
-
-						for (let i=0; i<3; i++) {
-							if (m[i] === 1) {
-								obj.to[i] = obj.to[i] + local_offset.getComponent(i);
-							} else {
-								obj.from[i] = obj.from[i] + local_offset.getComponent(i);
-							}
-						}
-						if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
-							Format.cube_size_limiter.clamp(obj)
-						}
-						if (obj.box_uv && obj.visibility) {
-							obj.preview_controller.updateUV(obj)
-						}
-					})
-				} else {
+				// 反馈#323：与旋转模式的自动缩放共用同一份执行体（同一张角点轴表、同一套逐轴口径）
+				if (!scaleCornersByDelta(global_delta)) {
 					// 反馈#228：交点候选的 vertex_index 落在 0..7 角点轴表之外。
 					// 没有轴向信息就无法决定从哪一侧缩放（旧代码会拿 undefined 下标表直接抛错），
 					// 保守地整块平移（与 move 模式一致）：pivot 走 move_pivot 分支，不会到这里。
@@ -771,55 +788,17 @@ export const Vertexsnap = {
 			} else if (mode === 'move') {
 				moveElements(global_delta);
 			} else if (mode == 'rotate') {
-				// 反馈#323：先按最短弧把被抓顶点的方向转到目标方向。「自动缩放至顶点」是独立开关
-				// （不再是对齐下拉的一项），打开后让顶点真正落到目标点上：
-				// 方块按「缩放模式」的口径逐轴把该角点对应的那侧边界推到目标（from / to 各轴
-				// 独立伸缩，不是整体等比）；其它元素没有可拆的轴边界，退化为绕枢轴等比缩放。
+				// 反馈#323：先按「对齐」方式把被抓顶点的方向转到目标方向；「自动缩放至顶点」打开后，
+				// 再按「缩放模式」的同一套口径（抓到的角点 + 目标点两个顶点的世界位移，逐轴推
+				// from/to）把方块拉长到目标点上——等价于旋转完再手动切缩放模式点这两个顶点。
 				const auto_scale = !!options.auto_scale;
-				function scaleCornersToTarget(obj) {
-					const corner = CORNER_AXIS_MAP[Vertexsnap.vertex_index];
-					if (!corner || !(obj instanceof Cube)) return false;
-					// 合批 cube 的 mesh 矩阵由批处理器维护（matrixAutoUpdate=false），
-					// 旋转后只改 quaternion 不会反映到 matrixWorld，worldToLocal 会拿到旧姿态
-					obj.mesh.updateMatrix();
-					obj.mesh.updateWorldMatrix(true, false);
-					const local_target = obj.mesh.worldToLocal(new THREE.Vector3().copy(global_target_pos));
-					for (let i = 0; i < 3; i++) {
-						if (options.ignore_axis?.['xyz'[i]]) continue;
-						const target = local_target.getComponent(i);
-						if (!Number.isFinite(target)) continue;
-						if (corner[i]) {
-							if (target < obj.from[i]) {
-								// 角点被拉到另一侧：交换这条轴的两端（块在这条轴上翻转），
-								// 直接写 to 会得到负尺寸、被尺寸限制器夹掉，顶点就落不到目标上
-								const from = obj.from[i];
-								obj.from[i] = target;
-								obj.to[i] = from;
-							} else {
-								obj.to[i] = target;
-							}
-						} else if (target > obj.to[i]) {
-							const to = obj.to[i];
-							obj.to[i] = target;
-							obj.from[i] = to;
-						} else {
-							obj.from[i] = target;
-						}
-					}
-					if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
-						Format.cube_size_limiter.clamp(obj);
-					}
-					obj.preview_controller?.updateGeometry?.(obj);
-					if (obj.box_uv && obj.visibility) obj.preview_controller?.updateUV?.(obj);
-					return true;
-				}
 				function scaleAboutPivot(obj, factor) {
 					if (!factor || !isFinite(factor) || factor <= 0) return;
 					let pivot = new THREE.Vector3();
 					obj.mesh.getWorldPosition(pivot);
 					if (obj.mesh.parent) {
 						obj.mesh.parent.updateWorldMatrix(true, false);
-						obj.mesh.parent.worldToLocal(pivot);
+						pivot = obj.mesh.parent.worldToLocal(pivot);
 					} else {
 						pivot.sub(Canvas.scene.position);
 					}
@@ -846,6 +825,8 @@ export const Vertexsnap = {
 					obj.preview_controller?.updateGeometry?.(obj);
 					if (obj.box_uv && obj.visibility) obj.preview_controller?.updateUV?.(obj);
 				}
+				// 旋转前的起点距离，非方块元素（没有可拆的轴边界）按等比缩放落到目标
+				let rotate_distances = new Map();
 				Vertexsnap.elements.forEach((obj) => {
 					let local_start = obj.mesh.worldToLocal(new THREE.Vector3().copy(Vertexsnap.vertex_pos));
 					let local_target = obj.mesh.worldToLocal(new THREE.Vector3().copy(global_target_pos));
@@ -855,8 +836,14 @@ export const Vertexsnap = {
 
 					let start_distance = local_start.length();
 					let end_distance = local_target.length();
+					rotate_distances.set(obj.uuid, {start: start_distance, end: end_distance});
 
-					if (!auto_scale && (options.align != 'direction' || !amended)) {
+					// 反馈#323 后续②：对齐方式必须真的作用在模型上。早前用 `|| !amended` 把
+					// 「面板还没提交过」当成用默认最长轴，于是记住的「从枢轴的方向」在第一次
+					// 捕捉时被忽略——面板显示一套、模型算另一套。现在只要不是「从枢轴的方向」，
+					// 每次都按所选轴修正起点（首捕与 amend 一致）；开着「自动缩放至顶点」时
+					// 也一样——旋转仍按所选对齐方式，随后的缩放只负责把顶点拉到目标上。
+					if (options.align != 'direction') {
 						let target_distance = local_target.length();
 						let longest_axis = 'x';
 						if ('xyz'.includes(options.align)) {
@@ -867,7 +854,10 @@ export const Vertexsnap = {
 						}
 
 						let off_axes = ['x', 'y', 'z'].filter(l => l != longest_axis);
-						local_start[longest_axis] = Math.sqrt(target_distance**2 - local_start[off_axes[0]]**2 - local_start[off_axes[1]]**2);
+						// 目标比两个非主轴的偏移还短时开方得 NaN，会把整个旋转写成 NaN 坏模型；
+						// 这种情况保持原起点长度（等价于「从枢轴的方向」）
+						let fixed = Math.sqrt(target_distance**2 - local_start[off_axes[0]]**2 - local_start[off_axes[1]]**2);
+						if (Number.isFinite(fixed)) local_start[longest_axis] = fixed;
 					}
 					local_start.normalize();
 					local_target.normalize();
@@ -876,10 +866,33 @@ export const Vertexsnap = {
 					obj.mesh.quaternion.multiply(rot_diff);
 					let modified_rotation = obj.mesh.rotation.toArray().slice(0, 3).map(Math.radToDeg);
 					obj.extend({rotation: modified_rotation});
-					if (!auto_scale) return;
-					if (scaleCornersToTarget(obj)) return;
-					scaleAboutPivot(obj, end_distance / start_distance);
 				})
+				if (auto_scale) {
+					// 合批 cube 的 mesh 矩阵由批处理器维护（matrixAutoUpdate=false），旋转后只改
+					// quaternion 不会反映到 matrixWorld，取「旋转后」的顶点位置前必须先刷矩阵
+					Vertexsnap.elements.forEach((obj) => {
+						obj.mesh.updateMatrix();
+						obj.mesh.updateWorldMatrix(true, false);
+					});
+					// 旋转后被抓顶点的新世界位置 → 与目标点的世界位移。缩放模式正是把这个位移
+					// 逐轴摊到每个方块对应的角点上（多选时各块按自己的角点平移同一段位移），
+					// 所以这里直接复用同一个执行体：旋转 + 缩放合成一次操作（反馈#323 后续①）。
+					let grabbed_local = Vertexsnap.vertex_local;
+					let grabbed_now = (grabbed_local && Vertexsnap.vertex_element)
+						? Vertexsnap.getGlobalVertexPos(Vertexsnap.vertex_element, grabbed_local)
+						: new THREE.Vector3().copy(Vertexsnap.vertex_pos);
+					let auto_delta = new THREE.Vector3().copy(global_target_pos).sub(grabbed_now);
+					let scaled = scaleCornersByDelta(auto_delta);
+					if (!scaled) {
+						// 不是方块（网格/样条）或抓到的不是 8 角点之一：没有可拆的轴边界，
+						// 退化为绕枢轴等比缩放
+						Vertexsnap.elements.forEach((obj) => {
+							let distances = rotate_distances.get(obj.uuid);
+							if (!distances || !distances.start) return;
+							scaleAboutPivot(obj, distances.end / distances.start);
+						});
+					}
+				}
 			}
 		}
 
