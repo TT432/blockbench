@@ -891,7 +891,9 @@ export function moveSelectionInWorldAxis(difference, world_axis) {
 export function centerElements(axis, update) {
 	if (!Outliner.selected.length) return;
 	let center = getSelectionCenter()[axis];
-	var difference = (Format.centered_grid ? 0 : 8) - center
+	// 反馈#337：居中目标是「当前的翻转轴面（对称轴）」，不是画布中心。
+	// 轴面偏移为 0 时与旧行为完全一致；改过轴面后居中也跟着新轴走。
+	var difference = FlipPlane.position(axis) - center
 	let world_delta = new THREE.Vector3();
 	world_delta.setComponent(axis, difference);
 
@@ -1326,8 +1328,26 @@ export function getParentTransformSpace() {
  * 1e-3° 远小于属性显示的 4 位小数精度，也远小于任何有意义的建模角度，直接吸附到 0。
  */
 function snapCompensationAngle(deg) {
-	let rounded = Math.roundTo(deg, 4);
-	return Math.abs(rounded) < 1e-3 ? 0 : rounded;
+	return Math.abs(deg) < 1e-3 ? 0 : deg;
+}
+/**
+ * 反馈#336（复报）：一次「粘贴旋转向量」= 三个轴各写一次，每次写入都整组补偿一遍，
+ * 补偿结果按 4 位小数落回属性，下一步再从这个量化后的值继续合成——量化误差逐步累积，
+ * 于是块本该停在 60° / 80°，实际停在 59.9999° / 79.9999°。
+ * 这里按 uuid 暂存「未量化」的精确角度：属性仍等于上次写回的量化值时直接从未量化的值
+ * 继续合成（属性被用户或其它逻辑改写后自动失效），属性里落盘的仍是 4 位小数。
+ */
+const fwp_exact_rotations = new Map();
+function getCompensationBaseRotation(child) {
+	let current = [child.rotation[0], child.rotation[1], child.rotation[2]];
+	let cached = fwp_exact_rotations.get(child.uuid);
+	if (cached
+		&& cached.rounded[0] === current[0]
+		&& cached.rounded[1] === current[1]
+		&& cached.rounded[2] === current[2]) {
+		return cached.exact;
+	}
+	return current;
 }
 /**
  * 编号68「固定世界位置」：组旋转时让后代吸收逆旋转，世界几何保持不变。
@@ -1360,19 +1380,24 @@ export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
 		let new_rotation;
 		if (rotatable && child.rotation) {
 			let child_order = child.mesh?.rotation?.order || order;
+			let base = getCompensationBaseRotation(child);
 			let qc = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-				Math.degToRad(child.rotation[0]),
-				Math.degToRad(child.rotation[1]),
-				Math.degToRad(child.rotation[2]),
+				Math.degToRad(base[0]),
+				Math.degToRad(base[1]),
+				Math.degToRad(base[2]),
 				child_order
 			));
 			qc.premultiply(q_tilde);
 			let e = new THREE.Euler().setFromQuaternion(qc, child_order);
-			new_rotation = [
+			let exact = [
 				snapCompensationAngle(Math.radToDeg(e.x)),
 				snapCompensationAngle(Math.radToDeg(e.y)),
 				snapCompensationAngle(Math.radToDeg(e.z))
 			];
+			new_rotation = exact.map(value => Math.roundTo(value, 4));
+			// 精确值留在缓存里供下一次连续补偿复用；属性被改写后这条缓存自动失效
+			if (fwp_exact_rotations.size > 20000) fwp_exact_rotations.clear();
+			fwp_exact_rotations.set(child.uuid, {exact, rounded: new_rotation.slice()});
 		}
 		// 单轴旋转限制格式的块无法表达任意补偿旋转：放弃补偿（随组刚性旋转），
 		// 给出明确提示，而不是写入非法欧拉角造成静默变形
