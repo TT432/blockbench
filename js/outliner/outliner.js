@@ -575,6 +575,11 @@ export function moveOutlinerSelectionTo(item, target, order = 0, options = {}) {
 		updateSelection();
 		return;
 	}
+	// 反馈#335：「固定世界位置」打开时，拖进带旋转/偏移的组也保持世界位置与姿态——
+	// 等价于始终勾选「调整位置」，写入的是补偿后的局部值，世界矩阵不变，
+	// 因此不会再弹 amend 面板（只有世界真的变了才需要那个勾选）。
+	let adjust_position = !!options.adjust_position
+		|| (Modes.edit && !!BarItems.fixed_world_position?.value);
 	if (duplicate) {
 		Undo.initEdit({elements: [], groups: [], outliner: true, selection: true}, options.amended);
 		Outliner.selected.empty();
@@ -582,8 +587,8 @@ export function moveOutlinerSelectionTo(item, target, order = 0, options = {}) {
 		Undo.initEdit({
 			outliner: true,
 			selection: true,
-			elements: options.adjust_position ? Outliner.selected : undefined,
-			groups: options.adjust_position ? Group.all.filter(g => g.selected) : null,
+			elements: adjust_position ? Outliner.selected : undefined,
+			groups: adjust_position ? Group.all.filter(g => g.selected) : null,
 		}, options.amended);
 	}
 	function updateTransformRecursive(item) {
@@ -627,7 +632,7 @@ export function moveOutlinerSelectionTo(item, target, order = 0, options = {}) {
 			}
 		}
 
-		if (options.adjust_position) {
+		if (adjust_position) {
 
 			// Calculate matrix
 			scene_object.parent.updateMatrixWorld(true);

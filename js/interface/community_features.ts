@@ -149,6 +149,10 @@ const MANUAL_CSS = `
 	margin: 0;
 	line-height: 1.65;
 }
+/* 反馈#334：条目说明改成逐条列表后按换行显示（区域列表里的摘要仍是单段，不受影响） */
+.cf_content p.cf_summary {
+	white-space: pre-line;
+}
 .cf_entry {
 	font-family: var(--font-code, monospace);
 	font-size: 12.5px;
@@ -346,7 +350,7 @@ BARS.defineActions(() => {
 									<h4 class="cf_section_title">${ tl('community_features.entry') }</h4>
 									<p class="cf_entry">{{ current_feature.entry }}</p>
 									<h4 class="cf_section_title">${ tl('community_features.summary') }</h4>
-									<p>{{ current_feature.summary }}</p>
+									<p class="cf_summary">{{ current_feature.summary }}</p>
 									<template v-if="current_feature.compare">
 										<h4 class="cf_section_title">${ tl('community_features.compare') }</h4>
 										<p>{{ current_feature.compare }}</p>

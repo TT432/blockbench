@@ -37,9 +37,11 @@ export const MirrorModeling = {
 		let cached_data = MirrorModeling.cached_elements[original.uuid];
 		let mirror_uv = cached_data?.smart_pair ? true : options.mirror_uv;
 		// 反馈#305 复报第 4 轮④：智能复制组按「两侧成员根之间」的基准镜像内容
-		let center = cached_data?.mirror_center ?? (Format.centered_grid ? 0 : 8);
-		// 反馈#305 后续④：镜像轴由智能复制组按成员相对位置判定（左右/前后/上下）
-		let mirror_axis = cached_data?.smart_pair ? (cached_data?.mirror_axis ?? 0) : 0;
+		let center = Format.centered_grid ? 0 : 8;
+		// 反馈#305 后续③：镜像轴与各轴基准由智能复制组按成员相对位置逐轴判定
+		// （左右只翻 X、前后只翻 Z、对角两轴都翻）
+		let mirror_axes: number[] = cached_data?.smart_pair ? (cached_data.mirror_axes ?? [0]) : [0];
+		let mirror_centers: number[] = cached_data?.smart_pair ? (cached_data.mirror_centers ?? []) : [];
 		let mirror_element = cached_data?.counterpart;
 		let element_type_options = MirrorModeling.element_types[original.type];
 		let element_before_snapshot;
@@ -51,7 +53,9 @@ export const MirrorModeling = {
 			element_before_snapshot = mirror_element.getUndoCopy(undo_aspects);
 			mirror_element.extend(original);
 			
-			mirror_element.flip(mirror_axis, center);
+			for (let axis of mirror_axes) {
+				mirror_element.flip(axis, mirror_centers[axis] ?? center);
+			}
 
 			mirror_element.extend({
 				name: element_before_snapshot.name,
@@ -82,7 +86,8 @@ export const MirrorModeling = {
 				if (parent_b instanceof OutlinerNode == false || parent_b.getTypeBehavior('parent') != true) return;
 
 				let before_snapshot = parent_b instanceof Group ? parent_b.getSaveCopy() : undefined;
-				MirrorModeling.updateParentNodeCounterpart(parent_b, parent, center, mirror_axis);
+				MirrorModeling.updateParentNodeCounterpart(parent_b, parent,
+					mirror_centers.length ? mirror_centers : undefined, mirror_axes);
 				if (parent_b instanceof Group) MirrorModeling.insertGroupIntoUndo(parent_b, undo_aspects, before_snapshot);
 
 				updateParent(parent, parent_b);
@@ -153,12 +158,13 @@ export const MirrorModeling = {
 		return mirror_element;
 	},
 	/**
-	 * 反馈#305 复报第 5 轮：`center` 可选，默认沿用全局镜像面。
+	 * 反馈#305 复报第 5 轮：`centers` 可选，默认沿用全局镜像面。
 	 * 智能复制组的成员根可能并不关于全局镜像面对称（断开后被挪过位置，或 Ctrl+D 出来的
 	 * 三成员链里有两个成员在同一侧），祖先组必须按「这一对的中轴」镜像，否则内容编辑会
 	 * 顺手把对侧成员根的 origin 翻到全局镜像位置——第三个成员于是和第二个重合。
+	 * 反馈#305 后续③：`axes` 是参与镜像的轴列表（对角对称有两轴），旋转按轴向量规则换算。
 	 */
-	updateParentNodeCounterpart(node: OutlinerNode, original: OutlinerNode, center?: number, axis = 0) {
+	updateParentNodeCounterpart(node: OutlinerNode, original: OutlinerNode, centers?: number[], axes: number[] = [0]) {
 		node.extend({
 			position: 'position' in original ? original.position : undefined,
 			origin: 'origin' in original ? original.origin : undefined,
@@ -168,13 +174,17 @@ export const MirrorModeling = {
 		});
 
 		if ('origin' in node) {
-			node.origin[axis] = center === undefined
-				? MirrorModeling.flipCoord(node.origin[axis])
-				: 2 * center - node.origin[axis];
+			for (let axis of axes) {
+				node.origin[axis] = centers === undefined
+					? MirrorModeling.flipCoord(node.origin[axis])
+					: 2 * centers[axis] - node.origin[axis];
+			}
 		}
 		if ('rotation' in node) {
+			// det(S)·sign_i：单轴镜像时该轴旋转分量保留、另两轴取反；双轴镜像时反过来
+			let det = axes.length % 2 ? -1 : 1;
 			for (let i = 0; i < 3; i++) {
-				if (i !== axis) node.rotation[i] *= -1;
+				node.rotation[i] = det * (axes.includes(i) ? -1 : 1) * node.rotation[i];
 			}
 		}
 	},
@@ -308,8 +318,8 @@ export const MirrorModeling = {
 }
 /**
  * 镜像建模的缓存条目。smart_pair 相关字段由 SmartCopyGroup 写入。
- * mirror_center：反馈#305 复报第 4 轮④——智能复制组的内容镜像基准（两侧成员根原点的中点），
- * 不填时按全局镜像面（centered_grid ? 0 : 8）。
+ * mirror_axes / mirror_centers：反馈#305 复报第 4 轮④ + 后续③——智能复制组的内容镜像基准
+ * 与参与镜像的轴（逐个轴 flip，对角对称会有两个轴），不填时按全局镜像面绕 X 轴镜像。
  */
 interface MirrorModelingCachedData {
 	counterpart?: OutlinerElement | false
@@ -318,8 +328,8 @@ interface MirrorModelingCachedData {
 	edit_side?: number
 	pre_part_connections?: unknown
 	smart_pair?: boolean
-	mirror_center?: number
-	mirror_axis?: number
+	mirror_axes?: number[]
+	mirror_centers?: number[]
 }
 interface MirrorModelingElementTypeOptions {
 	check_parent_symmetry?: boolean

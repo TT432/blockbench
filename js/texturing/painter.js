@@ -4319,11 +4319,21 @@ BARS.defineActions(function() {
 	function getFaceUVBasis(face) {
 		return face.getUVBasis();
 	}
+	// 反馈#333：两个镜像补救动作只作用于「选中的 UV 面」，没有选中面时按钮不该常驻笔刷工具栏。
+	// 箱型 UV 的方块没有「选中面」的概念（整块六个面一起参与），保持可见；
+	// 逐面 UV 的方块要等到 UV 面板里选中至少一个面才出现。
+	function hasSelectedMirrorFaces() {
+		let elements = (Project.selected_elements && Project.selected_elements.length)
+			? Project.selected_elements
+			: (Painter.current.element ? [Painter.current.element] : []);
+		return elements.some(element => element instanceof Cube
+			&& (element.box_uv || UVEditor.getSelectedFaces(element).length > 0));
+	}
 	// #127 对称纹理：把所选面 UV 区域的贴图内容复制到同方块对面的 UV（按面的真实局部方向做镜像）。
 	new Action('paint_symmetric_texture', {
 		icon: 'flip_to_back',
 		category: 'paint',
-		condition: () => (Modes.paint || Modes.edit) && Texture.getDefault(),
+		condition: () => (Modes.paint || Modes.edit) && Texture.getDefault() && hasSelectedMirrorFaces(),
 		click() {
 			let texture = Texture.getDefault();
 			let faces = getMirrorRemedyFaces(texture);
@@ -4419,7 +4429,7 @@ BARS.defineActions(function() {
 	new Action('paint_face_mirror_copy', {
 		icon: 'flip',
 		category: 'paint',
-		condition: () => (Modes.paint || Modes.edit) && Texture.getDefault(),
+		condition: () => (Modes.paint || Modes.edit) && Texture.getDefault() && hasSelectedMirrorFaces(),
 		click() {
 			let texture = Texture.getDefault();
 			let faces = getMirrorRemedyFaces(texture);

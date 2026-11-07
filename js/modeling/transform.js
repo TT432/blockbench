@@ -1321,6 +1321,15 @@ export function getParentTransformSpace() {
 	return bone instanceof OutlinerNode ? bone : 0;
 }
 /**
+ * 反馈#336：补偿旋转的浮点残差。四元数乘法 + 欧拉分解在「应得 0°」时可能留下 0.0001 级别的
+ * 残差（三个轴都带 4 位小数时最容易出现），写回属性后用户看到某个轴不是 0 而是 0.0001。
+ * 1e-3° 远小于属性显示的 4 位小数精度，也远小于任何有意义的建模角度，直接吸附到 0。
+ */
+function snapCompensationAngle(deg) {
+	let rounded = Math.roundTo(deg, 4);
+	return Math.abs(rounded) < 1e-3 ? 0 : rounded;
+}
+/**
  * 编号68「固定世界位置」：组旋转时让后代吸收逆旋转，世界几何保持不变。
  * q̃ = q_new⁻¹·q_old（组局部旋转增量的逆）。直接子级：origin 绕组枢轴施加 q̃，
  * rotation 属性左乘 q̃（旋转值变化，但世界位置与姿态不变）；from/to/vertices 是
@@ -1360,9 +1369,9 @@ export function compensateGroupRotationFixedWorld(group, q_old, q_new) {
 			qc.premultiply(q_tilde);
 			let e = new THREE.Euler().setFromQuaternion(qc, child_order);
 			new_rotation = [
-				Math.roundTo(Math.radToDeg(e.x), 4),
-				Math.roundTo(Math.radToDeg(e.y), 4),
-				Math.roundTo(Math.radToDeg(e.z), 4)
+				snapCompensationAngle(Math.radToDeg(e.x)),
+				snapCompensationAngle(Math.radToDeg(e.y)),
+				snapCompensationAngle(Math.radToDeg(e.z))
 			];
 		}
 		// 单轴旋转限制格式的块无法表达任意补偿旋转：放弃补偿（随组刚性旋转），

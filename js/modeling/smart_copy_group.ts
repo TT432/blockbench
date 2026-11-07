@@ -20,7 +20,6 @@
  */
 import { MirrorModeling } from "./mirror_modeling";
 import { nameOnOtherSide, sideAxisOf, uniqueName } from "./mirror_naming";
-import { flipNameOnAxis } from "./transform";
 import { guid } from "../util/math_util";
 
 /** 组上的智能复制组字段（由下方 Property 注册，随工程保存） */
@@ -80,26 +79,50 @@ function preRootOrigin(group: Group): number[] {
 	return pre ? pre : group.origin;
 }
 
-function pairMirror(source_node: OutlinerNode, target_node: OutlinerNode | 'root'): {axis: number, center: number} {
+/**
+ * 一对成员之间的镜像关系（反馈#305 后续③：不再只支持单轴）。
+ *
+ * 每个轴独立判定：两个成员根在编辑前的原点在该轴上分得开（差值非零）就镜像该轴，
+ * 否则原样沿用源坐标。于是
+ * - 左右对称（只在 X 分得开）→ 只镜像 X，结果与旧行为一致；
+ * - 前后对称（副本被挪到模型前方，只在 Z 分得开）→ 镜像 Z；
+ * - 对角（X 与 Z 都分得开，leftfront ↔ rightback）→ 两轴一起镜像，等价于绕中点的 180° 中心对称。
+ *
+ * `axes` 同时给元素镜像用（逐个轴 flip）。
+ */
+interface MirrorSpec {
+	/** 每轴符号：-1 = 该轴镜像，1 = 原样沿用 */
+	signs: number[]
+	/** 每轴的镜像面坐标（仅 signs 为 -1 的轴有意义） */
+	centers: number[]
+	/** 参与镜像的轴（升序），元素镜像按它逐个 flip */
+	axes: number[]
+}
+
+function pairMirror(source_node: OutlinerNode, target_node: OutlinerNode | 'root'): MirrorSpec {
 	let source_root = memberRootOf(source_node);
 	let target_root = target_node instanceof OutlinerNode ? memberRootOf(target_node) : undefined;
-	if (!source_root || !target_root || source_root === target_root) {
-		return {axis: 0, center: mirrorCenter()};
-	}
+	// 两侧原点完全重合（Ctrl+D 就地复制、不在成员里、或成员根恰好同位置）时无从判定轴向，
+	// 退回 X 轴 + 全局镜像面（与旧行为一致）
+	let fallback_spec = (): MirrorSpec => ({
+		signs: [-1, 1, 1],
+		centers: [mirrorCenter(), 0, 0],
+		axes: [0],
+	});
+	if (!source_root || !target_root || source_root === target_root) return fallback_spec();
 	let source = preRootOrigin(source_root);
 	let target = preRootOrigin(target_root);
-	let axis = 0;
-	let largest = 0;
+	let spec = fallback_spec();
+	spec.signs = [1, 1, 1];
+	spec.axes = [];
 	for (let i = 0; i < 3; i++) {
-		let delta = Math.abs(source[i] - target[i]);
-		if (delta > largest + 1e-6) {
-			largest = delta;
-			axis = i;
+		if (Math.abs(source[i] - target[i]) > 1e-6) {
+			spec.signs[i] = -1;
+			spec.centers[i] = (source[i] + target[i]) / 2;
+			spec.axes.push(i);
 		}
 	}
-	// 两侧原点重合（居中网格上关于 0 左右对称的组）时无从判定轴向，退回 X 轴 + 全局镜像面
-	if (largest < 1e-6) return {axis: 0, center: mirrorCenter()};
-	return {axis, center: (source[axis] + target[axis]) / 2};
+	return spec.axes.length ? spec : fallback_spec();
 }
 
 function membersOf(id: UUID): Group[] {
@@ -190,12 +213,14 @@ function placeAtIndex(node: OutlinerNode, parent: Group, index: number) {
 	node.addTo(parent, Math.max(0, Math.min(index, parent.children.length)));
 }
 
-function mirrorGroupTransform(source: Group, counterpart: Group, mirror: {axis: number, center: number}) {
-	// 沿 axis 取反（镜像面在 center），其余轴直接抄源值；旋转向量只有 axis 分量保留，
-	// 另外两个分量取反——与 Cube.flip 同一约定，左右对称时结果与旧实现完全一致。
+function mirrorGroupTransform(source: Group, counterpart: Group, mirror: MirrorSpec) {
+	// 逐轴按镜像关系换算（反馈#305 后续③）：镜像轴绕中轴取反，非镜像轴原样沿用源值。
+	// 旋转是轴向量：绕 S 集合镜像后 r_i = det(S)·sign_i·r_i——单轴镜像时等价于
+	// 「该轴保留、另两轴取反」（与 Cube.flip 同一约定），双轴镜像时两轴取反、第三轴保留。
+	let det = mirror.signs[0] * mirror.signs[1] * mirror.signs[2];
 	for (let i = 0; i < 3; i++) {
-		counterpart.origin[i] = i === mirror.axis ? 2 * mirror.center - source.origin[i] : source.origin[i];
-		counterpart.rotation[i] = i === mirror.axis ? source.rotation[i] : -source.rotation[i];
+		counterpart.origin[i] = mirror.signs[i] === -1 ? 2 * mirror.centers[i] - source.origin[i] : source.origin[i];
+		counterpart.rotation[i] = det * mirror.signs[i] * source.rotation[i];
 	}
 	// scale 只有骨骼格式的组才有
 	if (source.scale && counterpart.scale) {
@@ -624,14 +649,17 @@ export const SmartCopyGroup = {
 
 	/**
 	 * 反馈#305 第 2 点 / 后续⑤：复制出来的组按「软件自带镜像翻转」的规则改名——
-	 * 名字里带该镜像轴的侧别字样时翻到对侧（左右对称翻 left→right，前后对称翻 front→back），
-	 * 再按 Ctrl+D 的唯一命名进位去重。`exclude` 是刚建出来的副本自己，不算占用。
+	 * 名字里带镜像轴的侧别字样时翻到对侧（左右对称翻 left→right，前后对称翻 front→back，
+	 * 对角对称两轴一起翻 leftfront→rightback），再按 Ctrl+D 的唯一命名进位去重。
+	 * `exclude` 是刚建出来的副本自己，不算占用。
 	 */
-	mirroredName(source: string, axis: number, exclude?: Group): string {
-		let probe = {name: source};
-		flipNameOnAxis(probe as unknown as OutlinerNode, axis, null, source);
+	mirroredName(source: string, mirror: MirrorSpec, exclude?: Group): string {
+		let name = source;
+		for (let axis of mirror.axes) {
+			name = nameOnOtherSide(name, axis);
+		}
 		let taken = new Set(Group.all.filter(group => group !== exclude).map(group => group.name.toLowerCase()));
-		return uniqueName(probe.name, taken);
+		return uniqueName(name, taken);
 	},
 
 	/**
@@ -671,7 +699,7 @@ export const SmartCopyGroup = {
 			clone.addTo(parent);
 			clone.init();
 			// 反馈#305 后续⑤⑥：子组/新组也要按镜像轴翻名并去重，否则对侧会出现同名组
-			clone.name = this.mirroredName(node.name, mirror.axis, clone as Group);
+			clone.name = this.mirroredName(node.name, mirror, clone as Group);
 			if (deep) {
 				for (let child of node.children) {
 					this.cloneMirrored(child, clone);
@@ -685,7 +713,10 @@ export const SmartCopyGroup = {
 		clone.addTo(parent);
 		clone.init();
 		// 反馈#288：UV 随几何一起镜像（两侧读同一块纹理区域、取样方向相反）
-		clone.flip(mirror.axis, mirror.center);
+		// 反馈#305 后续③：对角对称要在两个轴上逐个 flip（等价于绕中点的 180° 中心对称）
+		for (let axis of mirror.axes) {
+			clone.flip(axis, mirror.centers[axis]);
+		}
 		clone.name = node.name;
 		return clone;
 	},
@@ -766,7 +797,10 @@ export const SmartCopyGroup = {
 		let aspects: UndoAspects = {
 			outliner: true,
 			elements: removed.filter(node => node instanceof OutlinerElement),
-			groups: [group, ...removed.filter(node => node instanceof Group)],
+			// 反馈#305 后续④：链接 id 写在每个成员身上，快照必须覆盖全部成员——
+			// 只写当前组时撤销回来只有它自己恢复链接，其余成员仍停在断开态，
+			// 表现为「复制组没恢复、恢复出来的组也取消不掉」。
+			groups: members.concat(removed.filter(node => node instanceof Group && !members.includes(node))),
 		};
 		this.suspended = true;
 		Undo.initEdit(aspects, amended);
@@ -963,10 +997,10 @@ export const SmartCopyGroup = {
 					if (edited_elements.has(counterpart.uuid)) continue;
 					MirrorModeling.cached_elements[element.uuid].counterpart = counterpart;
 					// 反馈#305 复报第 4 轮④：以两侧成员根的相对位置为镜像基准（断开后一侧被挪走时
-					// 不再把对侧的块写到全局镜像位置）；后续④：镜像轴也按成员相对位置判定。
+					// 不再把对侧的块写到全局镜像位置）；后续③：逐轴判定镜像关系，对角对称两轴一起翻。
 					let mirror = pairMirror(element, counterpart);
-					MirrorModeling.cached_elements[element.uuid].mirror_center = mirror.center;
-					MirrorModeling.cached_elements[element.uuid].mirror_axis = mirror.axis;
+					MirrorModeling.cached_elements[element.uuid].mirror_axes = mirror.axes;
+					MirrorModeling.cached_elements[element.uuid].mirror_centers = mirror.centers;
 					MirrorModeling.createClone(element, aspects);
 					changed = true;
 				}
@@ -1013,6 +1047,11 @@ export const SmartCopyGroup = {
 					let source_is_root = memberRootOf(group) === group;
 					let partner_is_root = memberRootOf(partner) === partner;
 					if ((source_is_root || partner_is_root) && (!source_link.linked || !partner_link.linked)) continue;
+					// 反馈#305 后续②：属性链接断开时移动成员根，整棵成员冻结——包括其中的子组。
+					// 少了这一条时，成员根被移动后子组仍在 aspects.groups 里，会以「组内内容」
+					// 的名义同步到对侧，对侧就成了「根组不动、子组单独飞过去」（复报第 4 轮②）。
+					let group_root = memberRootOf(group);
+					if (group_root && frozen_members.has(group_root.uuid)) continue;
 					let before = partner.getChildlessCopy();
 					before.uuid = partner.uuid;
 					MirrorModeling.insertGroupIntoUndo(partner, aspects, before);
@@ -1116,14 +1155,23 @@ export const SmartCopyGroup = {
 	},
 
 	/**
-	 * 反馈#305 第 6 点：改名同步到对侧。名字带 left/right、front/back 时翻到另一侧，
-	 * 没有侧别字样时按 Ctrl+D 的唯一命名规则进位（同级已被占用的名字 → `name2`、`name3`…）。
+	 * 反馈#305 第 6 点 / 后续⑤：改名同步到对侧。
+	 * 按「这一对的镜像轴」翻名字：左右对称翻 left↔right、前后对称翻 front↔back，
+	 * 对角对称两轴都翻（leftfront↔rightback）。名字里的侧别与成员根的实际相对位置对不上时
+	 * （例如左右对称的那对被人改成了 Front…），退回「按名字里的侧别翻转」，保持旧行为。
+	 * 两处都对不上（名字里没有侧别字样）时按 Ctrl+D 的唯一命名规则进位（`name2`、`name3`…）。
 	 */
 	syncName(group: Group, partner: Group, previous?: string) {
 		if (previous === undefined || previous === group.name) return;
-		let axis = sideAxisOf(group.name);
+		let axes = pairMirror(group, partner).axes.filter(axis => nameOnOtherSide(group.name, axis) !== group.name);
+		if (!axes.length) {
+			let name_axis = sideAxisOf(group.name);
+			if (name_axis != null) axes = [name_axis];
+		}
+		let name = group.name;
+		for (let axis of axes) name = nameOnOtherSide(name, axis);
 		let taken = new Set(Group.all.filter(node => node !== partner).map(node => node.name.toLowerCase()));
-		partner.name = uniqueName(axis == null ? group.name : nameOnOtherSide(group.name, axis), taken);
+		partner.name = uniqueName(name, taken);
 	},
 };
 
