@@ -276,7 +276,9 @@
 		top: 420px;
 		z-index: 100;
 		min-width: 150px;
-		max-width: 250px;
+		/* 反馈#344：250px 时「翻转轴有旋转，无法居中元素（把该轴面的旋转调回 0 后再居中）」
+		   这类中文长句会折到第三行，放宽到 400px（窄窗口下按 90vw 收缩）。 */
+		max-width: min(400px, 90vw);
 		width: fit-content;
 		padding: 0 12px;
 		background-color: var(--color-bright_ui);

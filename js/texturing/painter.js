@@ -3624,6 +3624,104 @@ BARS.defineActions(function() {
 	})
 	let copy_source;
 	let stroke_start_pos;
+	// 反馈#343：镜像落笔时的采样映射。
+	// 键 = `${element.uuid}|${face}`（镜像目标所在的面），值 = {
+	//   origin: [x, y]  该面上「落笔起点」的镜像位置（图集像素）
+	//   inverse: [[a, b], [c, d]] | null  该面像素 → 落笔面像素 的逆线性变换
+	// }
+	let copy_mirror_maps = null;
+
+	function getCopyMirrorFaceKey(element, face) {
+		return element && face ? `${element.uuid}|${face}` : null;
+	}
+	/**
+	 * 反馈#343：镜像侧落笔时，源像素必须按「镜像映射」换算，而不能沿用落笔面的绝对图集偏移。
+	 * 旧实现在镜像面上用 `copy_source + (镜像像素 − 落笔起点)` 采样，偏移量横跨两块互不相干的
+	 * UV 区域（差几百像素），采到的是无关内容——表现为镜像侧出现错位的碎条。
+	 *
+	 * 这里在落笔时用 3 次镜像映射（起点 / +1px / +1px）数值求出「该面像素 → 落笔面像素」的仿射
+	 * 变换：与镜像绘画的具体模式无关（UV 镜像与世界空间物理镜像都走同一条映射），旋转过、
+	 * 朝向不同、UV 大小不同的面都适用；反射（det<0）时复制内容随之水平翻转，镜像两侧才对称。
+	 */
+	function setupCopyMirrorMaps(texture, x, y, uvTag, raycast_data, mirror_targets) {
+		copy_mirror_maps = null;
+		if (!mirror_targets || !mirror_targets.length || !uvTag || !stroke_start_pos) return;
+		let scale_x = texture.width / texture.getUVWidth();
+		let scale_y = texture.display_height / texture.getUVHeight();
+		let min_x = Math.min(uvTag[0], uvTag[2]) * scale_x;
+		let max_x = Math.max(uvTag[0], uvTag[2]) * scale_x;
+		let min_y = Math.min(uvTag[1], uvTag[3]) * scale_y;
+		let max_y = Math.max(uvTag[1], uvTag[3]) * scale_y;
+
+		function findPartner(list, target) {
+			if (!list || !list.length) return;
+			let best, best_distance = Infinity;
+			for (let other of list) {
+				if (!other || other.element !== target.element || other.face !== target.face) continue;
+				let distance = Math.pow(other.x - target.x, 2) + Math.pow(other.y - target.y, 2);
+				if (distance < best_distance) {
+					best = other;
+					best_distance = distance;
+				}
+			}
+			return best;
+		}
+		function getProbe(axis) {
+			for (let step of [1, -1]) {
+				let probe_x = axis == 'x' ? x + step : x;
+				let probe_y = axis == 'y' ? y + step : y;
+				if (probe_x < min_x || probe_x > max_x || probe_y < min_y || probe_y > max_y) continue;
+				let list = Painter.getStrokeMirrorTargets(texture, probe_x, probe_y, uvTag, raycast_data, false);
+				if (list && list.length) return {step, list};
+			}
+		}
+		let probe_x = getProbe('x');
+		let probe_y = getProbe('y');
+
+		let maps = {};
+		let has_any = false;
+		for (let target of mirror_targets) {
+			if (!target) continue;
+			let key = getCopyMirrorFaceKey(target.element, target.face);
+			if (!key) continue;
+			let entry = {origin: [target.x, target.y], inverse: null};
+			let target_x = probe_x && findPartner(probe_x.list, target);
+			let target_y = probe_y && findPartner(probe_y.list, target);
+			if (target_x && target_y) {
+				let a = (target_x.x - target.x) / probe_x.step;
+				let b = (target_y.x - target.x) / probe_y.step;
+				let c = (target_x.y - target.y) / probe_x.step;
+				let d = (target_y.y - target.y) / probe_y.step;
+				let determinant = a * d - b * c;
+				// 探针必须给出稳定、量级合理的仿射关系；退化值（面边界外、换到别的面）退化为平移
+				if (Math.abs(determinant) > 1e-6 && Math.abs(determinant) < 16 &&
+					Math.abs(a) < 4 && Math.abs(b) < 4 && Math.abs(c) < 4 && Math.abs(d) < 4) {
+					entry.inverse = [[d / determinant, -b / determinant], [-c / determinant, a / determinant]];
+				}
+			}
+			maps[key] = entry;
+			has_any = true;
+		}
+		if (has_any) copy_mirror_maps = maps;
+	}
+	/** 反馈#343：把当前（可能是镜像目标）面上的图集像素换算成落笔面的图集像素；无映射时原样返回。 */
+	function toCopySourcePixel(px, py) {
+		let key = getCopyMirrorFaceKey(Painter.current.element, Painter.current.face);
+		let entry = key && copy_mirror_maps && copy_mirror_maps[key];
+		if (!entry) return [px, py];
+		let offset_x = px - entry.origin[0];
+		let offset_y = py - entry.origin[1];
+		if (entry.inverse) {
+			return [
+				Math.round(stroke_start_pos[0] + entry.inverse[0][0] * offset_x + entry.inverse[0][1] * offset_y),
+				Math.round(stroke_start_pos[1] + entry.inverse[1][0] * offset_x + entry.inverse[1][1] * offset_y),
+			];
+		}
+		return [
+			Math.round(stroke_start_pos[0] + offset_x),
+			Math.round(stroke_start_pos[1] + offset_y),
+		];
+	}
 	new Tool('copy_brush', {
 		icon: 'fa-stamp',
 		category: 'tools',
@@ -3640,7 +3738,7 @@ BARS.defineActions(function() {
 			aspect_ratio: true,
 			offset_even_radius: true,
 			screen_space: true,
-			onStrokeStart({texture, event, x, y, raycast_data}) {
+			onStrokeStart({texture, event, x, y, uv, raycast_data, mirror_targets}) {
 				if (event.ctrlOrCmd || Pressing.overrides.ctrl) {
 					// 反馈#328：源只记「采样起点 + 采样时的贴图快照」，尺寸/长宽比不冻结——
 					// 复制画笔的落笔大小跟当前笔刷直径走，两种调直径方式（Alt+右键拖动 /
@@ -3670,6 +3768,8 @@ BARS.defineActions(function() {
 				} else {
 					if (!copy_source) return false;
 					stroke_start_pos = [x, y]
+					// 反馈#343：镜像侧的采样映射按落笔起点建立一次，随后整笔复用
+					setupCopyMirrorMaps(texture, x, y, uv, raycast_data, mirror_targets);
 				}
 			},
 			changePixel(px, py, pxcolor, local_opacity, {opacity,x, y, texture}) {
@@ -3678,12 +3778,15 @@ BARS.defineActions(function() {
 				// 反馈#328：尺寸按当前笔刷直径取（不再读采样时冻结的尺寸），
 				// 调完直径后图案模式的网格与落笔大小立即跟着变
 				let sizes = Painter.getBrushDimensions();
+				// 反馈#343：镜像落笔时把像素换算回落笔面坐标，三种模式都从落笔面的同一份源取内容
+				let [source_px, source_py] = toCopySourcePixel(px, py);
+				let [source_x, source_y] = toCopySourcePixel(x, y);
 
 				let source_pos;
 				if (mode == 'copy') {
 					source_pos = [
-						Math.round(copy_source.x + (px - stroke_start_pos[0])),
-						Math.round(copy_source.y + (py - stroke_start_pos[1])),
+						Math.round(copy_source.x + (source_px - stroke_start_pos[0])),
+						Math.round(copy_source.y + (source_py - stroke_start_pos[1])),
 					]
 				} else if (mode == 'pattern') {
 					let grid_start = [
@@ -3691,13 +3794,13 @@ BARS.defineActions(function() {
 						copy_source.y - sizes[1]/2,
 					]
 					source_pos = [
-						Math.floor(grid_start[0] + ((px + sizes[0]*200 - (grid_start[0] % sizes[0])) % sizes[0])),
-						Math.floor(grid_start[1] + ((py + sizes[1]*200 - (grid_start[1] % sizes[1])) % sizes[1])),
+						Math.floor(grid_start[0] + ((source_px + sizes[0]*200 - (grid_start[0] % sizes[0])) % sizes[0])),
+						Math.floor(grid_start[1] + ((source_py + sizes[1]*200 - (grid_start[1] % sizes[1])) % sizes[1])),
 					]
 				} else {
 					source_pos = [
-						Math.round(copy_source.x + (px - x)),
-						Math.round(copy_source.y + (py - y)),
+						Math.round(copy_source.x + (source_px - source_x)),
+						Math.round(copy_source.y + (source_py - source_y)),
 					]
 				}
 				if (source_pos[0] < 0 || source_pos[0] >= copy_source.width || source_pos[1] < 0 || source_pos[1] >= copy_source.height) {

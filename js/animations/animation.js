@@ -2168,12 +2168,12 @@ Interface.definePanels(function() {
 
 					let group_name_key = this.group_animations_by_file ? 'path' : 'group_name';
 
-					let drag_items = [anim];
-					if (anim.multi_selected) {
-						let all_of_type = (anim instanceof AnimationController) ? AnimationController.all : Animation.all;
-						let selected_set = all_of_type.filter(a => a.selected || a.multi_selected);
-						if (selected_set.length > 1) drag_items = selected_set;
-					}
+					// 反馈#342：多选时「当前激活项」只有 selected 标记、没有 multi_selected（shift/ctrl 多选
+					// 不会改写它），从激活项开始拖时旧逻辑只带动它自己，表现为「有时只能拖动一个」。
+					// 改为按当前选择集合判定：按下的项属于选择集合且集合超过 1 个，就整体拖动。
+					let all_of_type = (anim instanceof AnimationController) ? AnimationController.all : Animation.all;
+					let selected_set = all_of_type.filter(a => a.selected || a.multi_selected);
+					let drag_items = (selected_set.includes(anim) && selected_set.length > 1) ? selected_set : [anim];
 
 					function move(e2) {
 						convertTouchEvent(e2);
