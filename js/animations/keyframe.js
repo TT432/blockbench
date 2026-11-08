@@ -1513,7 +1513,7 @@ Interface.definePanels(function() {
 							extensions: ['json'],
 							type: 'Bedrock Particle',
 							startpath: keyframe.data_points[0].resolvedFile
-						}, function(files) {
+						}, (files) => {
 
 							let json = autoParseJSON(files[0].content, {file_path: files[0].path});
 							if (!json || !json.particle_effect) {
@@ -1524,11 +1524,15 @@ Interface.definePanels(function() {
 							Undo.initEdit({keyframes: [keyframe], particles: existing ? [existing] : []})
 							let asset = ParticleAsset.importFromFile(files[0]);
 							data_point.file = asset.getRef();
-							// 反馈#340：效果名取粒子文件名（去掉最后一个扩展名）。旧写法是 `split('.')[0]` 再剥掉
-							// 非 ASCII 字符，中文文件名（如「暴雪粒子.json」）会被剥成空串，效果栏一直空着、
-							// 导出时该粒子帧被静默丢弃。
-							if (!data_point.effect) data_point.effect = files[0].name.replace(/\.[^./\\]+$/, '').toLowerCase();
+							// 反馈#340：效果名取粒子文件名（去掉最后一个扩展名）。
+							// 旧写法 `split('.')[0]` 再剥掉非 ASCII 字符，中文文件名（如「暴雪粒子.json」）
+							// 会被剥成空串；导出时该粒子帧被静默丢弃。
+							if (!data_point.effect) data_point.effect = files[0].name ? pathToName(files[0].name, false) : asset.name;
 							Undo.finishEdit('Change keyframe particle file', {particles: [asset]});
+							// 反馈#340（复报）：Keyframe/KeyframeDataPoint 是 __v_skip 非响应式对象，
+							// 直接写 data_point 不会触发重渲染——导入后效果与文件路径两栏仍显示旧值，
+							// 用户看到"效果一栏没自动写入"。与 applyFileRef/addDataPoint 同样显式刷新。
+							this.$forceUpdate();
 
 							if (!asset.texture) {
 								asset.changeTexture();
@@ -1541,7 +1545,7 @@ Interface.definePanels(function() {
 							type: 'Audio File',
 							readtype: 'binary',
 							startpath: keyframe.data_points[0].resolvedFile
-						}, function(files) {
+						}, (files) => {
 
 							let existing = isApp && files[0].path && SoundAsset.all.find(a => a.path === files[0].path);
 							Undo.initEdit({keyframes: [keyframe], sounds: existing ? [existing] : []})
@@ -1553,6 +1557,8 @@ Interface.definePanels(function() {
 							data_point.file = asset.getRef();
 							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().replace(/\.[a-z]+$/, '').replace(/[^a-z0-9._]+/g, '');
 							Undo.finishEdit('Change keyframe audio file', {sounds: [asset]})
+							// 与粒子分支同理：非响应式 data_point 写入后需显式刷新面板
+							this.$forceUpdate();
 						})
 					}
 				},
