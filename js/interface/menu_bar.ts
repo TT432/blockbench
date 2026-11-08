@@ -303,6 +303,7 @@ export const MenuBar = {
 			'negative_outline',
 			new MenuSeparator('modify_elements'),
 			'duplicate',
+			'batch_duplicate',
 			'rename',
 			'find_replace',
 			'unlock_everything',

@@ -2273,7 +2273,8 @@ Interface.definePanels(() => {
 						// Property.copy replaces array items during initEdit; re-find by uuid
 						particle_entry = state.particles.find(p => p.uuid == particle_entry.uuid) || particle_entry;
 						particle_entry.file = asset.getRef();
-						if (!particle_entry.effect) particle_entry.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
+						// 反馈#340：与关键帧面板同一口径，效果名取文件名去掉扩展名（保留中文）
+						if (!particle_entry.effect) particle_entry.effect = files[0].name.replace(/\.[^./\\]+$/, '').toLowerCase();
 						Undo.finishEdit('Change animation controller particle file', {particles: [asset]});
 
 						if (!asset.texture) {

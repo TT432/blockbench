@@ -6,6 +6,8 @@ import { radToDeg } from "three/src/math/MathUtils"
 import { PointerTarget } from "../interface/pointer_target"
 import { markerColors } from "../marker_colors"
 import { ScopeColors } from "../multi_file_editing"
+// #338：molang 变量数字后缀同步抽成独立模块，Ctrl+D 复制与批量复制共用
+import { renameMolangVarSuffixInAnimator } from "./molang_var_suffix"
 
 export const Outliner = {
 	ROOT: 'root',
@@ -951,44 +953,8 @@ SharedActions.add('delete', {
 		Undo.finishEdit('Delete outliner selection')
 	}
 })
-// 社区版 #136：复制骨骼动画时，若新旧骨骼名尾部数字不同（createUniqueName 只改末位数字，
-// 如 sword1→sword2、sword-1-1→sword-1-2），把复制出的关键帧里 molang 变量
-// （v.xxxNN / temp.xxxNN）的两位数字后缀同步替换。只动新关键帧（Keyframe 构造已深拷贝），原骨骼不受影响。
-function renameMolangVarSuffixInAnimator(animator, orig_name, new_name) {
-	function trailingNumbers(name) {
-		let match = name.match(/\d+(?:-\d+)*$/);
-		return match ? match[0].split('-') : null;
-	}
-	let orig_nums = trailingNumbers(orig_name);
-	let new_nums = trailingNumbers(new_name);
-	if (!orig_nums || !new_nums) return 0;
-	let idx = -1;
-	let len = Math.min(orig_nums.length, new_nums.length);
-	for (let i = 0; i < len; i++) {
-		if (orig_nums[i] != new_nums[i]) { idx = i; break; }
-	}
-	if (idx == -1) return 0;
-	let old_suffix = orig_nums[idx].padStart(2, '0');
-	let new_suffix = new_nums[idx].padStart(2, '0');
-	if (old_suffix == new_suffix) return 0;
-	// 变量名结尾恰为旧两位后缀、且后缀前一位不是数字（避免误伤 v.xx001）
-	let regex = new RegExp(`\\b(v|temp)\\.([A-Za-z_][A-Za-z0-9_]*?)(?<![0-9])${old_suffix}\\b`, 'g');
-	let count = 0;
-	for (let kf of animator.keyframes) {
-		for (let data_point of kf.data_points) {
-			for (let axis of ['x', 'y', 'z']) {
-				let value = data_point[axis];
-				if (typeof value != 'string' || !value.includes(old_suffix)) continue;
-				let replaced = value.replace(regex, `$1.$2${new_suffix}`);
-				if (replaced != value) {
-					data_point[axis] = replaced;
-					count++;
-				}
-			}
-		}
-	}
-	return count;
-}
+// 社区版 #136：复制出的骨骼关键帧里 molang 变量数字后缀同步（#338 起抽到 molang_var_suffix.ts，
+// 批量复制与 Ctrl+D 共用同一套口径）
 SharedActions.add('duplicate', {
 	subject: 'outliner',
 	condition: () => Modes.edit && Group.first_selected,

@@ -698,7 +698,10 @@ export class Plugin {
 				// 开代理环境下直连 jsDelivr 卡死并被 10s 超时掐断。
 				let controller = new AbortController();
 				let timeout = setTimeout(() => controller.abort(), 1000 * (Number(ExperimentalSettings.get('plugin_load_timeout')) || 10));
-				fetch(url, {signal: controller.signal}).then(async response => {
+				// 插件商店更新取到旧文件（反馈 fb_mw5ujc5rd5cp）：插件 URL 是 jsDelivr 的分支地址、不带任何 revision，
+				// 默认缓存策略会命中 Chromium 的 HTTP 缓存，purge 过的 CDN 新文件被本地旧副本顶掉。
+				// no-store 同时跳过读取与写入，保证更新一定拿网络上的当前内容。
+				fetch(url, {signal: controller.signal, cache: 'no-store'}).then(async response => {
 					try {
 						if (!response.ok) {
 							fail(new Error(`Could not load plugin resource "${origin_filename}" from "${url}", error ${response.status}`));
@@ -851,7 +854,7 @@ export class Plugin {
 			}
 			if (isApp) {
 				// 同 copyFileToDrive：fetch 走 Chromium 网络栈，遵循系统代理
-				let response = await fetch(url);
+				let response = await fetch(url, {cache: 'no-store'});
 				if (!response.ok) {
 					console.error(`Could not load plugin ${this.id} from`, url);
 				} else {
@@ -1122,7 +1125,7 @@ export class Plugin {
 				}
 			}
 			let url = `${this.getSourceApiPath()}/${this.id}/about.md`;
-			let result = await fetch(url).catch(() => {
+			let result = await fetch(url, {cache: 'no-store'}).catch(() => {
 				console.error('about.md missing for plugin ' + this.id);
 			});
 			if (result && result.ok) {
@@ -1152,7 +1155,7 @@ export class Plugin {
 				}
 			}
 			let url = `${this.getSourceApiPath()}/${this.id}/changelog.json`;
-			let result = await fetch(url).catch(() => {
+			let result = await fetch(url, {cache: 'no-store'}).catch(() => {
 				console.error('changelog.json missing for plugin ' + this.id);
 			});
 			if (result && result.ok) {

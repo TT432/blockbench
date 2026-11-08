@@ -1524,7 +1524,10 @@ Interface.definePanels(function() {
 							Undo.initEdit({keyframes: [keyframe], particles: existing ? [existing] : []})
 							let asset = ParticleAsset.importFromFile(files[0]);
 							data_point.file = asset.getRef();
-							if (!data_point.effect) data_point.effect = files[0].name.toLowerCase().split('.')[0].replace(/[^a-z0-9._]+/g, '');
+							// 反馈#340：效果名取粒子文件名（去掉最后一个扩展名）。旧写法是 `split('.')[0]` 再剥掉
+							// 非 ASCII 字符，中文文件名（如「暴雪粒子.json」）会被剥成空串，效果栏一直空着、
+							// 导出时该粒子帧被静默丢弃。
+							if (!data_point.effect) data_point.effect = files[0].name.replace(/\.[^./\\]+$/, '').toLowerCase();
 							Undo.finishEdit('Change keyframe particle file', {particles: [asset]});
 
 							if (!asset.texture) {

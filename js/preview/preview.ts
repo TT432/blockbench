@@ -2208,6 +2208,7 @@ interface PreviewOptionsFormResult {
 	shading: boolean
 	grids: boolean
 	ground_plane: boolean
+	ground_plane_size: number
 	pixel_grid: boolean
 	painting_grid: boolean
 	show_gizmos: boolean
@@ -2253,6 +2254,8 @@ export const ViewOptionsDialog = new ConfigDialog('preview_view_options', {
 		shading: { label: 'settings.shading', type: 'checkbox', style: 'toggle_switch' },
 		grids: { label: 'settings.grids', type: 'checkbox', style: 'toggle_switch' },
 		ground_plane: { label: 'settings.ground_plane', type: 'checkbox', style: 'toggle_switch' },
+		// 反馈#341：把「接地层大小」搬进预览选项，接地层打开时当场可调（设置窗口里的条目保留）
+		ground_plane_size: { label: 'settings.ground_plane_size', type: 'number', min: 1, max: 8192, step: 1, condition: result => result.ground_plane !== false },
 		pixel_grid: { label: 'settings.pixel_grid', condition: () => !Modes.paint, type: 'checkbox', style: 'toggle_switch' },
 		painting_grid: { label: 'settings.painting_grid', condition: () => Modes.paint, type: 'checkbox', style: 'toggle_switch' },
 		show_element_markers: { label: 'dialog.preview_options.show_element_markers', type: 'checkbox', style: 'toggle_switch', value: true, description: 'dialog.preview_options.show_element_markers.desc' },
@@ -2267,6 +2270,7 @@ export const ViewOptionsDialog = new ConfigDialog('preview_view_options', {
 			shading: settings.shading.value,
 			grids: settings.grids.value,
 			ground_plane: settings.ground_plane.value,
+			ground_plane_size: settings.ground_plane_size.value,
 			pixel_grid: settings.pixel_grid.value,
 			painting_grid: settings.painting_grid.value,
 			show_gizmos: Canvas.show_gizmos,
@@ -2300,6 +2304,9 @@ export const ViewOptionsDialog = new ConfigDialog('preview_view_options', {
 		}
 		if (settings.ground_plane.value != result.ground_plane) {
 			settings.ground_plane.set(result.ground_plane);
+		}
+		if (typeof result.ground_plane_size == 'number' && settings.ground_plane_size.value != result.ground_plane_size) {
+			settings.ground_plane_size.set(result.ground_plane_size);
 		}
 		if (settings.grids.value != result.grids) {
 			settings.grids.set(result.grids);

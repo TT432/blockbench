@@ -888,6 +888,16 @@ export function moveSelectionInWorldAxis(difference, world_axis) {
 		selection: true,
 	});
 }
+/**
+ * 反馈#339：轴面被单轴旋转后，元素在该轴上的「居中位置」不再唯一确定（倾斜的对称平面
+ * 与选区的关系不是一个沿轴的位移），因此这时的居中动作直接拒绝并提示。
+ * 只在轴面绕自身法线转过角度时成立；旋转回 0（`isAligned`）后恢复原行为。
+ */
+function flipPlaneBlocksCentering(axes) {
+	if (axes.every(axis => FlipPlane.isAligned(axis))) return false;
+	Blockbench.showQuickMessage(tl('message.center.flip_plane_rotated'), 2500);
+	return true;
+}
 export function centerElements(axis, update) {
 	if (!Outliner.selected.length) return;
 	let center = getSelectionCenter()[axis];
@@ -3065,6 +3075,7 @@ BARS.defineActions(function() {
 		color: 'x',
 		category: 'transform',
 		click() {
+			if (flipPlaneBlocksCentering([0])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(0, true);
 			Undo.finishEdit('Center selection on X axis')
@@ -3076,6 +3087,7 @@ BARS.defineActions(function() {
 		color: 'y',
 		category: 'transform',
 		click() {
+			if (flipPlaneBlocksCentering([1])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(1, true);
 			Undo.finishEdit('Center selection on Y axis')
@@ -3087,6 +3099,7 @@ BARS.defineActions(function() {
 		color: 'z',
 		category: 'transform',
 		click() {
+			if (flipPlaneBlocksCentering([2])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(2, true);
 			Undo.finishEdit('Center selection on Z axis')
@@ -3096,6 +3109,7 @@ BARS.defineActions(function() {
 		icon: 'filter_center_focus',
 		category: 'transform',
 		click() {
+			if (flipPlaneBlocksCentering([0, 2])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(0, false);
 			centerElements(2, true);
