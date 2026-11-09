@@ -1001,6 +1001,8 @@
 	"action.slider_pos.desc": "在 %0 轴移动块",
 	"action.slider_size": "%0 轴尺寸",
 	"action.slider_size.desc": "在 %0 轴调整块的大小",
+	"action.size_slider_pivot_scale": "以枢轴点缩放",
+	"action.size_slider_pivot_scale.desc": "启用后，拖动尺寸滑块会围绕所选对象的枢轴点缩放，且枢轴点在缩放中保持不动。禁用时方块从起始边缩放、网格从所选顶点中心缩放。",
 	"action.slider_rotation": "%0 轴旋转",
 	"action.slider_rotation.desc": "绕 %0 轴旋转块",
 	"action.slider_origin": "%0 轴向枢轴",

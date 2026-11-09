@@ -571,6 +571,8 @@ export const BARS = {
 				'slider_origin_z',
 				'origin_to_geometry',
 				'origin_slider_direct_values',
+				// 反馈#345：尺寸滑块是否围绕枢轴点缩放（枢轴相关，与枢轴控件同行）
+				'size_slider_pivot_scale',
 			]
 		})
 		Toolbars.element_rotation = new Toolbar({

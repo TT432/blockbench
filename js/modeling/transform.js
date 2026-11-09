@@ -2050,16 +2050,36 @@ BARS.defineActions(function() {
 			smart_group.preview_controller.updateTransform(smart_group);
 			return;
 		}
+		// 反馈#345：尺寸滑块的可选基准——开启后围绕枢轴点缩放（枢轴点在缩放中保持不动）
+		const scale_around_pivot = BarItems.size_slider_pivot_scale.value;
 		Outliner.selected.forEach(function(obj, i) {
 			if (obj.getTypeBehavior('resizable')) {
 				let bidirectional = obj instanceof Mesh;
 				let center = (obj.from && obj.to) && Math.lerp(obj.from[axis], obj.to[axis], 0.5);
-				obj.resize(modify, axis, false, true, bidirectional);
-				if (obj.from && obj.to && settings.transform_cube_from_center.value) {
-					let offset = Math.lerp(obj.from[axis], obj.to[axis], 0.5) - center;
-					obj.from[axis] -= offset;
-					obj.to[axis] -= offset;
-					obj.preview_controller.updateGeometry(obj);
+				let pivot = (scale_around_pivot && obj.origin) ? obj.origin : null;
+				let old_from = obj.from && obj.from[axis];
+				let old_to = obj.to && obj.to[axis];
+				obj.resize(modify, axis, false, true, bidirectional, pivot);
+				if (obj.from && obj.to) {
+					if (pivot && old_from !== undefined && Math.abs(old_to - old_from) > 1e-8) {
+						// 方块类元素先按原逻辑缩放，再把 from/to 整体平移，使枢轴点保持原位：
+						// 新 from = 枢轴 + (旧 from − 枢轴) × 缩放比，尺寸沿用缩放后的实际值
+						let new_size = obj.size(axis);
+						let factor = new_size / (old_to - old_from);
+						let from = pivot[axis] + (old_from - pivot[axis]) * factor;
+						if (Format.integer_size) from = Math.round(from);
+						obj.from[axis] = from;
+						obj.to[axis] = from + new_size;
+						if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
+							Format.cube_size_limiter.clamp(obj, {}, axis, null);
+						}
+						obj.preview_controller.updateGeometry(obj);
+					} else if (settings.transform_cube_from_center.value) {
+						let offset = Math.lerp(obj.from[axis], obj.to[axis], 0.5) - center;
+						obj.from[axis] -= offset;
+						obj.to[axis] -= offset;
+						obj.preview_controller.updateGeometry(obj);
+					}
 				}
 			} else if (obj.getTypeBehavior('scalable')) {
 				obj.scale[axis] = modify(obj.scale[axis]);
@@ -2161,6 +2181,14 @@ BARS.defineActions(function() {
 	})
 	let slider_vector_size = [BarItems.slider_size_x, BarItems.slider_size_y, BarItems.slider_size_z];
 	slider_vector_size.forEach(slider => slider.slider_vector = slider_vector_size);
+	// 反馈#345：以枢轴点缩放——开启后尺寸滑块围绕所选对象的枢轴点缩放；
+	// 关闭时保持原版手感（方块从起始边缩放、网格从所选顶点中心缩放）
+	new Toggle('size_slider_pivot_scale', {
+		icon: 'center_focus_weak',
+		default: false,
+		category: 'transform',
+		condition: () => ((getSmartInstanceTransformGroup() || (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')))) && Modes.edit),
+	})
 	//Inflate
 	new NumSlider('slider_inflate', {
 		category: 'transform',

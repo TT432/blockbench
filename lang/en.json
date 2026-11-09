@@ -1635,6 +1635,8 @@
 	"action.slider_size.desc": "Resize elements on the %0 axis",
 	"action.slider_inflate": "Inflate",
 	"action.slider_inflate.desc": "Inflate cubes in all directions without changing the UV",
+	"action.size_slider_pivot_scale": "Scale Around Pivot",
+	"action.size_slider_pivot_scale.desc": "When enabled, dragging the size sliders scales the selection around its pivot point, and the pivot stays in place. When disabled, cubes resize from their minimum edge and meshes from the center of the selected vertices.",
 	"action.slider_stretch": "Stretch",
 	"action.slider_stretch.desc": "Stretches cubes multiplicatively on the %0 axis without changing the UV",
 	"action.slider_rotation": "Rotation %0",

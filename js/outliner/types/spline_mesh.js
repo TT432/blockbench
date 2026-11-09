@@ -918,7 +918,7 @@ export class SplineMesh extends OutlinerElement {
 		}
     }
     // Taken nearly as-is from Mesh
-    resize(val, axis, negative, allow_negative, bidirectional) {
+    resize(val, axis, negative, allow_negative, bidirectional, pivot) {
         let source_vertices = typeof val == 'number' ? this.temp_data.oldVertices : this.vertices;
         let selected_vertices = Project.spline_selection[this.uuid]?.vertices || Object.keys(this.vertices);
         let range = [Infinity, -Infinity];
@@ -931,7 +931,10 @@ export class SplineMesh extends OutlinerElement {
             range[1] = Math.max(range[1], vec1.getComponent(axis));
         })
 
-        let center = bidirectional ? (range[0] + range[1]) / 2 : (negative ? range[1] : range[0]);
+        // 反馈#345：传入枢轴点时以它为缩放基准（换算到与顶点相同的旋转坐标系），否则沿用所选顶点范围的中点/端点
+        let center = pivot
+            ? Reusable.vec3.set(pivot[0], pivot[1], pivot[2]).applyEuler(rotation_inverted).getComponent(axis)
+            : (bidirectional ? (range[0] + range[1]) / 2 : (negative ? range[1] : range[0]));
         let size = Math.abs(range[1] - range[0]);
         if (typeof val !== 'number') {
             val = val(size) - size;
