@@ -1288,7 +1288,19 @@ export const Painter = {
 					x: point_on_uv[0],
 					y: point_on_uv[1],
 					uv_tag: face.uv,
-					face: fkey
+					face: fkey,
+					/**
+					 * 反馈#343（复报）：该落点用的是「连续坐标（像素边界）」约定，相对像素回文多偏了这个量。
+					 *
+					 * 偶数直径的硬笔刷脚印是不对称的（`offset_even_radius`：直径 s 覆盖 x-s/2 .. x+s/2-1，
+					 * 即笔刷中心在像素**边界**上），所以镜像落点要比像素回文多 1 格，镜像笔画的覆盖域才
+					 * 正好是源侧覆盖域的镜像——这一格不能去掉，否则偶数直径的镜像笔迹整体偏 1 像素。
+					 *
+					 * 但镜像侧**内容**必须按像素回文对应（镜像像素 q ← 源像素 min_s + max_t - 1 - q），
+					 * 否则复制画笔的镜像图案会与源侧错开 1 像素（#343 复报的现象）。这里把多偏的量报给
+					 * 按像素取内容的工具（复制画笔），由它从内容映射里扣掉。
+					 */
+					center_offset: [even_brush_size ? 1 : 0, 0]
 				}
 	
 			} else if (mirror_element instanceof Mesh) {
@@ -1466,7 +1478,9 @@ export const Painter = {
 						element: spatial.element,
 						x: spatial.x,
 						y: spatial.y + (frame - texture.currentFrame) * texture.display_height,
-						face: spatial.face
+						face: spatial.face,
+						// 反馈#343（复报）：序列帧落点沿用空间镜像落点的偏移量
+						center_offset: spatial.center_offset
 					});
 				})
 			}
@@ -2145,7 +2159,10 @@ export const Painter = {
 							x: point_on_uv[0],
 							y: point_on_uv[1],
 							uv_tag: face.uv,
-							face: fkey
+							face: fkey,
+							// 反馈#343（复报）：偶数直径按连续坐标（像素边界）取点，落点比像素回文多偏 1 格；
+							// 内容取样必须扣掉这一格，见 getMirrorPaintTargets 同名字段的说明。
+							center_offset: [even_brush_size ? 1 : 0, 0]
 						}
 					})
 				}
@@ -3684,7 +3701,10 @@ BARS.defineActions(function() {
 			if (!target) continue;
 			let key = getCopyMirrorFaceKey(target.element, target.face);
 			if (!key) continue;
-			let entry = {origin: [target.x, target.y], inverse: null};
+			// 反馈#343（复报）：镜像落点里「相对像素回文多偏的一格」（偶数直径按连续坐标取点）不能进内容映射，
+			// 否则镜像侧图案整体错开 1 像素——覆盖域要这一格、内容对应不要这一格。
+			let center_offset = target.center_offset || [0, 0];
+			let entry = {origin: [target.x, target.y], inverse: null, center_offset};
 			let target_x = probe_x && findPartner(probe_x.list, target);
 			let target_y = probe_y && findPartner(probe_y.list, target);
 			if (target_x && target_y) {
@@ -3709,17 +3729,19 @@ BARS.defineActions(function() {
 		let key = getCopyMirrorFaceKey(Painter.current.element, Painter.current.face);
 		let entry = key && copy_mirror_maps && copy_mirror_maps[key];
 		if (!entry) return [px, py];
+		// 反馈#343（复报）：镜像落点用的是「连续坐标」约定，比像素回文多偏了 entry.center_offset；
+		// 内容对应必须回到像素回文，所以换算结果要扣掉它（否则偶数直径下镜像图案错开 1 像素）。
 		let offset_x = px - entry.origin[0];
 		let offset_y = py - entry.origin[1];
 		if (entry.inverse) {
 			return [
-				Math.round(stroke_start_pos[0] + entry.inverse[0][0] * offset_x + entry.inverse[0][1] * offset_y),
-				Math.round(stroke_start_pos[1] + entry.inverse[1][0] * offset_x + entry.inverse[1][1] * offset_y),
+				Math.round(stroke_start_pos[0] + entry.inverse[0][0] * offset_x + entry.inverse[0][1] * offset_y) - entry.center_offset[0],
+				Math.round(stroke_start_pos[1] + entry.inverse[1][0] * offset_x + entry.inverse[1][1] * offset_y) - entry.center_offset[1],
 			];
 		}
 		return [
-			Math.round(stroke_start_pos[0] + offset_x),
-			Math.round(stroke_start_pos[1] + offset_y),
+			Math.round(stroke_start_pos[0] + offset_x) - entry.center_offset[0],
+			Math.round(stroke_start_pos[1] + offset_y) - entry.center_offset[1],
 		];
 	}
 	new Tool('copy_brush', {
