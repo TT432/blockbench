@@ -669,6 +669,7 @@ export const BARS = {
 				'vertex_snap_mode',
 				'vertex_snap_intersections',
 				'vertex_snap_pixel_grid',
+				'vertex_snap_group_pivot_follow',
 				'selection_mode',
 				'spline_selection_mode',
 				'spline_handle_mode',

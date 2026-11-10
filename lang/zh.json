@@ -3097,6 +3097,8 @@
 	"settings.community_vertex_snap_intersections.desc": "顶点捕捉时额外显示与其它方块相交的点",
 	"settings.community_vertex_snap_pixel_grid": "像素网格交叉点",
 	"settings.community_vertex_snap_pixel_grid.desc": "顶点捕捉时额外显示方块表面上像素网格的交叉点",
+	"settings.community_vertex_snap_group_pivot_follow": "捕捉时组枢轴点跟随",
+	"settings.community_vertex_snap_group_pivot_follow.desc": "顶点捕捉平移组内元素时，所选组的枢轴点跟着一起平移；关闭时枢轴点留在原地（原版行为）",
 	"settings.community_brush_size_adjust": "笔刷大小调整方式",
 	"settings.community_brush_size_adjust.desc": "绘画模式下用哪种方式调整笔刷直径（只能选一种，画笔与复制画笔都支持）。「Alt + 右键拖动」：按住 Alt 拖动右键，上拖变大、下拖变小；「Ctrl + 滚轮」：按住 Ctrl 在 3D 视口里滚动滚轮（UV 编辑器里始终是缩放贴图预览）；「关闭」：两种都不启用，Ctrl + 滚轮回到缩放",
 	"settings.community_brush_size_adjust.alt_drag": "Alt + 右键拖动",

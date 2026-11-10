@@ -1566,6 +1566,8 @@
 	"settings.community_vertex_snap_intersections.desc": "Additionally show points where the cursor intersects other cubes while vertex snapping",
 	"settings.community_vertex_snap_pixel_grid": "Pixel Grid Intersections",
 	"settings.community_vertex_snap_pixel_grid.desc": "Additionally show the intersections of the pixel grid on cube surfaces while vertex snapping",
+	"settings.community_vertex_snap_group_pivot_follow": "Snap Moves Group Pivot",
+	"settings.community_vertex_snap_group_pivot_follow.desc": "When vertex snapping moves the elements of a selected group, move the group pivot along with them (off: the pivot stays where it was)",
 	"settings.community_brush_size_adjust": "Brush Size Adjustment",
 	"settings.community_brush_size_adjust.desc": "How to adjust the brush diameter in paint mode (only one method at a time; works for brush tools including the copy brush). \"Alt + Right-Click Drag\": hold Alt and drag the right mouse button, drag up to grow and down to shrink. \"Ctrl + Wheel\": hold Ctrl and scroll the wheel in the 3D viewport (the UV editor always zooms the texture preview). \"Off\": neither, so Ctrl + wheel zooms as before",
 	"settings.community_brush_size_adjust.alt_drag": "Alt + Right-Click Drag",

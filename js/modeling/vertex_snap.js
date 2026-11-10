@@ -47,6 +47,42 @@ function saveRotateOptions(form) {
 // 1 = 该轴用 to（正侧），0 = 用 from（负侧）。
 const CORNER_AXIS_MAP = [[1,1,1],[1,1,0],[1,0,1],[1,0,0],[0,1,0],[0,1,1],[0,0,0],[0,0,1]];
 
+/**
+ * 反馈#346：把已选中组的枢轴点整体平移一段世界位移（「顶点捕捉时组枢轴点跟随」）。
+ *
+ * 元素与组的坐标都是绝对存储的（骨骼格式下子节点由自身 origin 定位，mesh 局部坐标按父组
+ * origin 反算），所以只改组的 origin 不会带动内容——平移元素的是调用方，这里只负责让枢轴点
+ * 跟着走，两边都是同一段位移，枢轴点相对内容的偏移因此保持不变。
+ *
+ * 世界位移 → 存储坐标的换算与 snap() 里「移动枢轴点」分支（transferOrigin）完全同一套：
+ * 先按 mesh 父级的逆变换取父空间坐标，父节点用绝对位置存法时再加回父 origin。
+ * 两阶段执行（先全部算好新值再写入）：同时选中父子组时，先改父组 origin 会让子组的
+ * mesh 世界坐标带上这段位移，逐个写入会算成两段。
+ */
+function translateGroupPivots(world_delta) {
+	let targets = [];
+	Vertexsnap.groups.forEach((group) => {
+		if (!group.mesh) return;
+		group.mesh.updateWorldMatrix(true, false);
+		let vec = group.mesh.getWorldPosition(new THREE.Vector3()).add(world_delta);
+		if (group.mesh.parent) {
+			group.mesh.parent.updateWorldMatrix(true, false);
+			group.mesh.parent.worldToLocal(vec);
+		} else {
+			vec.sub(Canvas.scene.position);
+		}
+		if (group.parent instanceof OutlinerNode && group.parent.getTypeBehavior('use_absolute_position')) {
+			vec.x += group.parent.origin[0];
+			vec.y += group.parent.origin[1];
+			vec.z += group.parent.origin[2];
+		}
+		targets.push([group, vec]);
+	});
+	targets.forEach(([group, vec]) => {
+		group.origin.V3_set(vec.toArray());
+	});
+}
+
 export const Vertexsnap = {
 	step1: true,
 	vertex_gizmos: new THREE.Object3D(),
@@ -697,6 +733,7 @@ export const Vertexsnap = {
 		}
 
 		function moveElements(global_delta) {
+			let moved = false;
 			Vertexsnap.elements.forEach(function(obj) {
 				var local_offset = new THREE.Vector3().copy(global_delta)
 
@@ -709,6 +746,7 @@ export const Vertexsnap = {
 					vertices.forEach(vkey => {
 						if (obj.vertices[vkey]) obj.vertices[vkey].V3_add(local_offset_array);
 					})
+					moved = true;
 
 				} else {
 					if (Format.bone_rig && obj.parent instanceof Group) {
@@ -727,8 +765,13 @@ export const Vertexsnap = {
 					} else if (obj.position) {
 						obj.position.V3_add(local_offset.toArray());
 					}
+					moved = true;
 				}
 			})
+			// 反馈#346：内容确实平移了才动组枢轴点——空组或元素没被移动时不该让枢轴点自己跑
+			if (moved && Vertexsnap.groups.length && settings.community_vertex_snap_group_pivot_follow.value) {
+				translateGroupPivots(global_delta);
+			}
 		}
 
 		/**
@@ -976,6 +1019,13 @@ new Toggle('vertex_snap_pixel_grid', {
 	category: 'edit',
 	icon: 'grid_on',
 	linked_setting: 'community_vertex_snap_pixel_grid',
+})
+
+// 反馈#346：顶点捕捉平移组内元素时，所选组的枢轴点是否跟着一起走（默认关闭，保持原版语义）
+new Toggle('vertex_snap_group_pivot_follow', {
+	category: 'edit',
+	icon: 'my_location',
+	linked_setting: 'community_vertex_snap_group_pivot_follow',
 })
 
 Object.assign(window, {

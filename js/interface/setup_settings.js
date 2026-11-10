@@ -458,6 +458,10 @@ function setupSettings() {
 		if (typeof Toolbox !== 'undefined' && Toolbox.selected?.id === 'vertex_snap_tool' && typeof Vertexsnap !== 'undefined') Vertexsnap.select();
 	}});
 
+	// 反馈#346：顶点捕捉平移组内元素时，所选组的枢轴点是否跟着一起平移（默认关闭，保持上游语义：
+	// 枢轴点留在原地）。生效点见 vertex_snap.js moveElements() → translateGroupPivots()。
+	new Setting('community_vertex_snap_group_pivot_follow', {category: 'community', value: false});
+
 	new Setting('community_paste_with_textures', {category: 'community', value: true});
 	// 反馈#271：基岩版导出时把不合规名称自动换成合规名称（骨骼/定位器/动画/动画控制器），
 	// 关闭后按原名称导出、不弹名称报告。生效点见 export_names.js buildBedrockExportNames()。
