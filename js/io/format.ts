@@ -420,13 +420,13 @@ export class ModelFormat implements FormatOptions {
 		Canvas.buildGrid()
 		if (Format.centered_grid) {
 			scene.position.set(0, 0, 0);
-			Canvas.ground_plane.position.x = Canvas.ground_plane.position.z = Format.block_size/2;
 		} else {
 			scene.position.set(-Format.block_size/2, 0, -Format.block_size/2);
-			Canvas.ground_plane.position.x = Canvas.ground_plane.position.z = 0;
 		}
 		let ground_plane_scale = Format.block_size / 16;
 		Canvas.ground_plane.scale.set(ground_plane_scale, ground_plane_scale, ground_plane_scale);
+		// 反馈#347：接地面中心跟随画布网格中心（世界原点），UV 按格式做半格对齐
+		Canvas.buildGroundPlane?.();
 
 		PreviewModel.getActiveModels().forEach(model => {
 			model.update();

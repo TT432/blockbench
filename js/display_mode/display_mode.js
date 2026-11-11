@@ -869,6 +869,7 @@ export function enterDisplaySettings() {		//Enterung Display Setting Mode, chang
 		Project.model_3d.position.y = -8;
 	}
 	scene.position.set(0, 0, 0);
+	Canvas.updateGroundPlanePosition?.();
 
 	resizeWindow() //Update panels and sidebars so that the camera can be loaded with the correct aspect ratio
 	DisplayMode.load(DisplayMode.display_slot)
@@ -889,6 +890,7 @@ export function exitDisplaySettings() {		//Enterung Display Setting Mode, change
 	Canvas.updateShading();
 	scene.remove(display_area)
 	if (!Format.centered_grid) scene.position.set(-8, 0, -8);
+	Canvas.updateGroundPlanePosition?.();
 	display_base.children.forEachReverse(child => {
 		display_base.remove(child);
 		child.position.set(0, 0, 0);

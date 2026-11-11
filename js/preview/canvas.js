@@ -1073,14 +1073,27 @@ export function initCanvas() {
 	// 相机贴近地面时几乎铺满视野并遮挡模型；这里按设置重建几何体，
 	// UV 重复数取方块数，保持每个方块一格网格。mesh 的 scale 仍由格式的
 	// block_size/16 决定（io/format.ts），所以同一数值对所有格式都表示「方块数」。
+	// 反馈#347：接地面必须以画布网格中心（世界原点）为中心。旧代码把 mesh 固定
+	// 偏移 ±block_size/2（居中网格 +8、其它格式 scene 平移后 -8），也就是整体偏半格；
+	// 4096 的固定尺寸看不出，尺寸可调后小接地层会明显偏到模型一侧。
+	// scene.position 由格式/显示模式切换，所以这里按 scene 反推，保持世界中心为 0。
+	Canvas.updateGroundPlanePosition = function() {
+		if (!Canvas.ground_plane) return;
+		Canvas.ground_plane.position.x = Canvas.ground_plane.position.z = -scene.position.x;
+	}
 	Canvas.buildGroundPlane = function() {
 		if (!Canvas.ground_plane) return;
 		let blocks = Math.clamp(settings.ground_plane_size?.value ?? 256, 1, 8192);
 		let size = blocks * 16;
+		// 方块边界的世界坐标：居中网格格式在 ±block_size/2（半个方块），其它格式在整格上。
+		// 接地面居中于世界原点后，UV 起点要相应平移半格，否则贴图格线与方块边界差半格。
+		let offset = -blocks / 2 - (Format && Format.centered_grid ? 0.5 : 0);
+		offset -= Math.floor(offset);
 		if (Canvas.ground_plane.geometry) Canvas.ground_plane.geometry.dispose();
 		Canvas.ground_plane.geometry = new THREE.PlaneGeometry(size, size);
-		Canvas.ground_plane.geometry.attributes.uv.set([0, blocks, blocks, blocks, 0, 0, blocks, 0]);
+		Canvas.ground_plane.geometry.attributes.uv.set([offset, blocks, blocks+offset, blocks, offset, 0, blocks+offset, 0]);
 		Canvas.ground_plane.geometry.attributes.uv.needsUpdate = true;
+		Canvas.updateGroundPlanePosition();
 	}
 	Canvas.buildGroundPlane();
 
