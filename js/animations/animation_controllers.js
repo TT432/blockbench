@@ -1629,7 +1629,16 @@ Interface.definePanels(() => {
 						animation.key = anim.getShortName();
 						animation.animation = anim.uuid;
 					}
+					// 移除条目置顶（反馈 #348）：长列表下不必滚到底部才能移除
 					let list = [
+						{id: 'remove', name: 'generic.remove', icon: 'clear', click() {
+							Undo.initEdit({animation_controller_state: state});
+							// Property.copy 在 initEdit 期间会替换数组元素，按 uuid 重查
+							animation = state.animations.find(t => t.uuid == animation.uuid);
+							state.animations.remove(animation);
+							Undo.finishEdit('Remove animation from controller state');
+						}},
+						'_',
 						{
 							name: 'generic.unset',
 							icon: animation.animation == '' ? 'far.fa-dot-circle' : 'far.fa-circle',
@@ -1649,15 +1658,6 @@ Interface.definePanels(() => {
 							click: () => apply(anim)
 						})
 					})
-					list.push(
-						'_',
-						{id: 'remove', name: 'generic.remove', icon: 'clear', click() {
-							Undo.initEdit({animation_controller_state: state});
-							animation = state.animations.find(t => t.uuid == animation.uuid);
-							state.animations.remove(animation);
-							Undo.finishEdit('Remove animation from controller state');
-						}}
-					);
 					let menu = new Menu('controller_state_animations', list, {searchable: list.length > 7});
 					menu.open(target);
 				},
