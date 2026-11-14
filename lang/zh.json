@@ -3421,6 +3421,7 @@
 	"message.macro.log_skipped_selection": "跳过步骤「%0」：录制时选中的组/元素在当前模型里不存在",
 	"message.macro.log_missing_nodes": "录制时选中的这些节点在当前模型里不存在：%0",
 	"message.macro.log_skipped_condition": "跳过步骤「%0」：当前状态下该动作不可用",
+	"message.macro.log_step_failed": "步骤「%0」执行出错，已继续下一步",
 	"message.macro.log_missing_action": "找不到动作：%0",
 	"message.macro.log_missing_mode": "找不到模式：%0",
 	"message.macro.log_desktop_only": "步骤「%0」只能在桌面版执行（需要直接写文件）",

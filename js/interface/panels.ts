@@ -991,7 +991,10 @@ export class Panel extends EventSystem {
 				this.container.style.height = this.height + 'px';
 				this.container.classList.remove('bottommost_panel');
 				this.container.classList.remove('topmost_panel');
-			} else {
+			} else if (slot !== 'hidden') {
+				// 只清掉侧栏/上下栏残留的浮动定位；hidden 不动 left/top——面板位置按 UI 模式
+				// 分开存储，关闭文件时模式会短暂切到 start，那一帧的面板用的是默认位置数据
+				// （slot: hidden），清空定位会让浮动面板闪到左上角（反馈#364）。
 				this.container.style.width = this.container.style.left = this.container.style.top = null;
 			}
 			if (Blockbench.isMobile) {

@@ -15,17 +15,20 @@
  *   里的原始值，回放时写回后触发组件的 `change()` 再确认，效果与录制时一致。
  * - **选择状态**：每一步记下当时选中的组/元素名字，回放前按名字重建选区——所以「删掉 root 组」
  *   这类步骤换到别的模型上仍然删的是那个同名组；名字一个都对不上时跳过该步骤并记日志，
- *   不会拿别的选中物去执行删除。
+ *   不会拿别的选中物去执行删除。录到的是「全选」时只记这个意图（反馈#359），回放时按全选
+ *   重建，不比对节点名——「全选 → 创建材质」这类批量操作才不会在每个模型上都被跳过。
  * - **导出与截屏**：录制时记下实际落盘的路径（导出 → `export` 步骤，图片 → `screenshot` 步骤），
  *   路径里可以用 `${name}`（模型名）与 `${file}`（模型文件路径）占位；批量处理时按模型替换，
- *   因此一套宏可以给整批模型各自输出到不同文件。默认文件名就是模型名，录制时这一段自动换成
- *   `${name}`，避免所有模型都写同一个文件互相顶掉（用户自己改过的文件名保持原样）。
+ *   因此一套宏可以给整批模型各自输出到不同文件。文件名整段换成 `${name}`、只保留扩展名
+ *   （反馈#361）：用户改过的固定文件名会让整批模型互相顶掉。
  * - **模式切换**：编辑/绘制/动画模式切换记成独立步骤，回放按录制顺序切换。
  *
  * ## 回放
- * - 顺序执行，每步之间让出事件循环；面板高亮当前步骤，失败/跳过的步骤写进面板日志。
+ * - 顺序执行，每步都等它真正做完（对话框关闭 + undo 事务结束）再走下一步（反馈#365）。
+ *   面板高亮当前步骤，失败/跳过的步骤写进面板日志。
  * - 批量：选一个文件夹，逐个打开其中的 `.bbmodel` 后重放同一套步骤，导出/截屏按占位符
- *   替换后的路径写盘。宏里没有导出步骤时批量只改内存里的模型，不会回写原文件。
+ *   替换后的路径写盘。打开后等模型载入（贴图解码）完成再重放，否则截图是空白（反馈#363）。
+ *   宏里没有导出步骤时批量只改内存里的模型，不会回写原文件。
  */
 import { fs } from "../native_apis";
 import type { FormResultValue } from "./form";
@@ -37,6 +40,11 @@ export type MacroComponentValue = string | number | boolean;
 export interface MacroSelection {
 	groups: string[]
 	elements: {name: string, type: string}[]
+	/**
+	 * 录制时选区就是「全选」（反馈#359）：回放时按全选重建，不按名字逐个匹配。
+	 * 名字只对录制它的那个模型有意义，全选对任何模型都等价，所以这里存意图而不是节点。
+	 */
+	all?: boolean
 }
 
 export interface MacroStep {
@@ -105,11 +113,29 @@ function wait(ms: number) {
 	setTimeout(resolve, ms);
 	return promise;
 }
+/**
+ * 录制时的选区是否等于「全选」（反馈#359）。判定口径与 `SharedActions.select_all` 一致：
+ * 全部未锁定元素 + 全部根组。全选状态下节点名字对别的模型毫无意义，照原样录下来会让
+ * 「全选 → 创建材质」这类批量操作在每个模型上都因为名字对不上而被跳过。
+ */
+function isEverythingSelected(selection: MacroSelection): boolean {
+	if (typeof Outliner == 'undefined') return false;
+	let selectable_elements = Outliner.elements.filter(element => !element.isEffectivelyLocked());
+	let root_groups = Outliner.root.filter(node => node instanceof Group);
+	if (!selectable_elements.length && !root_groups.length) return false;
+	if (selection.elements.length != selectable_elements.length) return false;
+	if (selection.groups.length != root_groups.length) return false;
+	let element_keys = new Set(selectable_elements.map(element => element.type + ':' + element.name));
+	if (!selection.elements.every(entry => element_keys.has(entry.type + ':' + entry.name))) return false;
+	let group_names = new Set(root_groups.map(group => group.name));
+	return selection.groups.every(name => group_names.has(name));
+}
 function snapshotSelection(): MacroSelection {
 	let selection: MacroSelection = {groups: [], elements: []};
 	if (typeof Outliner == 'undefined') return selection;
 	selection.groups = Group.multi_selected.map(group => group.name);
 	selection.elements = Outliner.selected.map(element => ({name: element.name, type: element.type}));
+	if (isEverythingSelected(selection)) selection.all = true;
 	return selection;
 }
 /**
@@ -133,20 +159,18 @@ function snapshotComponentState(vue: unknown): Record<string, MacroComponentValu
 	return count ? state : undefined;
 }
 /**
- * 把录制下来的落盘路径里「以当前模型名命名的文件名」换成 `${name}` 占位符（反馈#357）。
- * 导出/截屏的默认文件名就是模型名，照原样记下来会让所有模型都往同一个文件写、
- * 互相顶掉；换成占位符后一套宏给整批模型跑，每个模型落到自己的文件名上。
- * 用户自己改过名的文件保持原样（那是明确的意图）。`ModelA.geo.json` 这类多段扩展名
- * 也按「模型名 + 第一个点之后」拼接，`Armor.png` 这种同前缀的其它名字不会被误换。
+ * 把录制下来的落盘路径里的文件名整段换成 `${name}` 占位符，只保留目录和扩展名（反馈#361）。
+ * 导出/截屏默认文件名就是模型名，而用户改过的文件名（`render.png`、`output.geo.json`）
+ * 照原样记下来会让整批模型都写同一个文件、互相顶掉；批量处理的意义就是每个模型各出一份。
+ * 扩展名按「文件名里第一个点之后」保留，`ModelA.geo.json` 这类多段扩展名不会丢。
  */
-function replaceModelNamePlaceholder(path: string, model_name: string): string {
-	if (!model_name) return path;
+function replaceFileNameWithPlaceholder(path: string): string {
 	let separator_index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
 	let filename = path.slice(separator_index + 1);
-	if (filename.slice(0, model_name.length) != model_name) return path;
-	let rest = filename.slice(model_name.length);
-	if (rest !== '' && rest[0] != '.') return path;
-	return path.slice(0, separator_index + 1) + '${name}' + rest;
+	if (!filename) return path;
+	let extension_index = filename.indexOf('.');
+	let suffix = extension_index < 0 ? '' : filename.slice(extension_index);
+	return path.slice(0, separator_index + 1) + '${name}' + suffix;
 }
 /** 从 .bbmodel JSON 里取出模型格式 id（批量打开时先按它建一个干净工程） */
 function readModelFormat(data: unknown): string | undefined {
@@ -207,6 +231,7 @@ const MacroRecorder = {
 		this.subscribeActions();
 		Blockbench.showQuickMessage(tl('message.macro.recording_started'), 2000);
 		this.changed();
+		this.refreshToolbar();
 	},
 	stop() {
 		if (!this.recording) return;
@@ -215,6 +240,7 @@ const MacroRecorder = {
 		this.pending_step = null;
 		Blockbench.showQuickMessage(tl('message.macro.recording_stopped', [this.steps.length]), 2500);
 		this.changed();
+		this.refreshToolbar();
 	},
 	toggleRecord() {
 		if (this.recording) this.stop();
@@ -377,7 +403,7 @@ const MacroRecorder = {
 		}
 		if (options?.savetype == 'image') {
 			step.type = 'screenshot';
-			step.path = replaceModelNamePlaceholder(path, Project?.name ?? '');
+			step.path = replaceFileNameWithPlaceholder(path);
 			this.changed();
 			return;
 		}
@@ -396,7 +422,7 @@ const MacroRecorder = {
 		}
 		step.type = 'export';
 		step.codec_id = codec.id;
-		step.path = replaceModelNamePlaceholder(path, Project?.name ?? '');
+		step.path = replaceFileNameWithPlaceholder(path);
 		this.changed();
 	},
 
@@ -411,8 +437,16 @@ const MacroRecorder = {
 	 * 按录制的名字重建选区。录制时没选中任何东西、或录制的节点**全部**都在时返回 true。
 	 * 只命中一部分时不执行该步骤：拿别的选中物去跑删除/剪切这类动作，改的就是另一个模型了；
 	 * 批量处理里「有的模型没有 root 组」正是靠这条规则变成「跳过并记日志」。
+	 * 录的是「全选」时按意图重建（反馈#359）：名字只对录制的那个模型有意义，
+	 * 全选对任何模型都等价，不该因为节点名不同就把整个步骤跳过。
 	 */
 	applySelection(selection: MacroSelection): boolean {
+		if (selection.all) {
+			SharedActions.run('unselect_all');
+			SharedActions.run('select_all');
+			updateSelection();
+			return true;
+		}
 		let missing: string[] = [];
 		// 先元素后组：选中组内的元素会把组本身标记成未选中，反过来的话「删掉这个组」就会
 		// 退化成「只删掉组里那个块」，组留在原地（选中的顺序就是执行顺序的语义）
@@ -498,6 +532,24 @@ const MacroRecorder = {
 			this.pushLog(tl('message.macro.log_export_failed', [String(error)]));
 		}
 	},
+	/**
+	 * 等本步骤真正做完再走下一步（反馈#365）。固定延时不可靠：动作可能弹对话框，确认之后
+	 * 它自己的收尾仍是异步的（「创建纹理」在确认后还要生成贴图，耗时随模型大小波动），
+	 * 下一步紧接着执行会把前一步打断（表现为材质刚建一半就被「一键镜像组」截断而失败）。
+	 * 判定信号：先看有没有对话框弹出（有就等它关闭），再看 undo 事务是否还开着。
+	 */
+	async waitForStepSettled(step: MacroStep) {
+		let dialog_expected = !!(step.form || step.component_state);
+		let probe_deadline = performance.now() + (dialog_expected ? 300 : 80);
+		while (!Dialog.open && performance.now() < probe_deadline) await wait(15);
+		if (Dialog.open) {
+			let dialog_deadline = performance.now() + 5000;
+			while (Dialog.open && performance.now() < dialog_deadline) await wait(20);
+		}
+		let undo_deadline = performance.now() + 3000;
+		while (typeof Undo != 'undefined' && Undo.current_save && performance.now() < undo_deadline) await wait(20);
+		await wait(40);
+	},
 	async runStep(step: MacroStep) {
 		let context = this.current_context;
 		// 回放是无人值守的：上一步残留的对话框会让后续动作的界面条件恒为假（删除、选择类动作
@@ -540,11 +592,39 @@ const MacroRecorder = {
 			this.pushLog(tl('message.macro.log_skipped_condition', [this.stepLabel(step)]));
 			return;
 		}
-		item.trigger();
-		// 动作可能同步弹对话框、也可能异步继续：给后续流程一点时间
-		await wait((step.form || step.component_state) ? 120 : 60);
+		try {
+			item.trigger();
+			await this.waitForStepSettled(step);
+		} catch (error) {
+			// 单步报错不该把整段宏打断、把界面留在半路的播放态（反馈#362）：记日志后继续下一步
+			console.error(error);
+			this.pushLog(tl('message.macro.log_step_failed', [this.stepLabel(step)]));
+		}
 	},
-	async play(context: {file?: string, name?: string} | null = null) {
+	/**
+	 * 等工程载入完成再回放（反馈#363）。批量打开模型走的是「新建工程 + 解析」，贴图是异步
+	 * 解码的：解析刚返回就截图，画布上还没有内容，`autoCrop` 只能裁出 1×1 空白图。这里等所有
+	 * 贴图就绪（或失败）再补一次视图更新，之后的重放（截图、导出）看到的就是已渲染的模型。
+	 */
+	async waitForProjectReady() {
+		if (typeof Project != 'object' || typeof Canvas == 'undefined') return;
+		let deadline = performance.now() + 5000;
+		while (performance.now() < deadline) {
+			let pending = typeof Texture != 'undefined' && Texture.all.some(texture => (
+				texture.img && !texture.img.complete && !texture.error
+			));
+			if (!pending) break;
+			await wait(50);
+		}
+		Canvas.updateView({elements: Project.elements, element_aspects: {transform: true, geometry: true, faces: true}});
+		await wait(30);
+	},
+	/** 录制/播放状态会改掉工具栏按钮的显示条件，界面不会自己刷新——手动刷一次（反馈#360/#362） */
+	refreshToolbar() {
+		if (typeof BARS == 'undefined') return;
+		BARS.updateConditions();
+	},
+	async play(context: {file?: string; name?: string} | null = null) {
 		if (this.playing) return;
 		if (this.recording) this.stop();
 		if (!this.steps.length) {
@@ -555,6 +635,8 @@ const MacroRecorder = {
 		this.playing = true;
 		this.current_context = context;
 		this.clearLog();
+		this.refreshToolbar();
+		await this.waitForProjectReady();
 		try {
 			for (let i = 0; i < this.steps.length; i++) {
 				this.step_index = i;
@@ -568,6 +650,7 @@ const MacroRecorder = {
 			this.playing = false;
 			this.current_context = null;
 			this.changed();
+			this.refreshToolbar();
 		}
 		Blockbench.showQuickMessage(tl('message.macro.played', [this.steps.length]), 2500);
 	},
@@ -619,6 +702,7 @@ const MacroRecorder = {
 		Blockbench.setProgress(0);
 		Blockbench.setStatusBarText('');
 		this.pushLog(tl('message.macro.batch_done', [files.length]));
+		this.refreshToolbar();
 	},
 
 	// MARK: 文件

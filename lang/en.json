@@ -3641,6 +3641,7 @@
 	"message.macro.log_skipped_selection": "Skipped step \"%0\": the recorded groups/elements do not exist in this model",
 	"message.macro.log_missing_nodes": "These nodes selected while recording do not exist in this model: %0",
 	"message.macro.log_skipped_condition": "Skipped step \"%0\": that action is unavailable in the current state",
+	"message.macro.log_step_failed": "Step \"%0\" failed, continuing with the next step",
 	"message.macro.log_missing_action": "Action not found: %0",
 	"message.macro.log_missing_mode": "Mode not found: %0",
 	"message.macro.log_desktop_only": "Step \"%0\" only runs in the desktop app (needs direct file writing)",
