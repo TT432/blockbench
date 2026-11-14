@@ -3570,3 +3570,93 @@ span.controller_state_section_info {
 		background-color: var(--color-light);
 	}
 }
+
+/* 宏录制面板（反馈#354） */
+#macro_panel {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow-y: auto;
+	padding: 0 6px 6px;
+	box-sizing: border-box;
+}
+#macro_panel .macro_status {
+	margin: 4px 0;
+	color: var(--color-error, #d9534f);
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+#macro_panel .macro_status .material-icons {
+	font-size: 14px;
+	animation: macro_recording_blink 1.2s ease-in-out infinite;
+}
+@keyframes macro_recording_blink {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.25; }
+}
+#macro_panel .macro_steps {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+#macro_panel .macro_step {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 4px;
+	border-radius: 4px;
+	flex-wrap: wrap;
+}
+#macro_panel .macro_step:hover {
+	background-color: var(--color-back);
+}
+#macro_panel .macro_step.playing {
+	outline: 1px solid var(--color-accent, var(--color-light));
+}
+#macro_panel .macro_step_index {
+	min-width: 18px;
+	opacity: 0.6;
+	text-align: right;
+}
+#macro_panel .macro_step_icon {
+	font-size: 16px;
+	opacity: 0.8;
+}
+#macro_panel .macro_step_label {
+	flex: 1 1 120px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+#macro_panel .macro_step_path {
+	flex: 1 1 100%;
+	font-size: 11px;
+}
+#macro_panel .macro_step_controls {
+	display: flex;
+	opacity: 0;
+	transition: opacity 120ms;
+}
+#macro_panel .macro_step:hover .macro_step_controls {
+	opacity: 0.7;
+}
+#macro_panel .macro_step_controls .material-icons {
+	font-size: 14px;
+	cursor: pointer;
+	padding: 0 1px;
+}
+#macro_panel .macro_step_controls .material-icons:hover {
+	color: var(--color-light);
+}
+#macro_panel .macro_hint {
+	opacity: 0.6;
+	font-size: 11px;
+	margin: 4px 2px;
+}
+#macro_panel .macro_log {
+	margin: 0;
+	padding-left: 16px;
+	font-size: 11px;
+	opacity: 0.75;
+}

@@ -59,7 +59,7 @@ const CORNER_AXIS_MAP = [[1,1,1],[1,1,0],[1,0,1],[1,0,0],[0,1,0],[0,1,1],[0,0,0]
  * 两阶段执行（先全部算好新值再写入）：同时选中父子组时，先改父组 origin 会让子组的
  * mesh 世界坐标带上这段位移，逐个写入会算成两段。
  */
-function translateGroupPivots(world_delta) {
+function translateGroupPivots(world_delta, ignore_axis) {
 	let targets = [];
 	Vertexsnap.groups.forEach((group) => {
 		if (!group.mesh) return;
@@ -76,11 +76,24 @@ function translateGroupPivots(world_delta) {
 			vec.y += group.parent.origin[1];
 			vec.z += group.parent.origin[2];
 		}
-		targets.push([group, vec]);
+		targets.push([group, clampIgnoredAxes(vec, group, ignore_axis)]);
 	});
 	targets.forEach(([group, vec]) => {
-		group.origin.V3_set(vec.toArray());
+		group.origin.V3_set(vec);
 	});
+}
+
+/**
+ * 反馈#350：把被忽略的轴固定回节点当前的 origin 坐标，只让其余轴跟随目标点/位移。
+ * `vec` 与 `node.origin` 处在同一坐标系（父空间；父节点用绝对位置时已加回父 origin）。
+ */
+function clampIgnoredAxes(vec, node, ignore_axis) {
+	let array = vec.toArray ? vec.toArray() : vec;
+	if (!ignore_axis || !Array.isArray(node.origin)) return array;
+	['x', 'y', 'z'].forEach((axis, i) => {
+		if (ignore_axis[axis]) array[i] = node.origin[i];
+	});
+	return array;
 }
 
 export const Vertexsnap = {
@@ -753,10 +766,12 @@ export const Vertexsnap = {
 						var q = obj.mesh.parent.getWorldQuaternion(Reusable.quat1).invert();
 						local_offset.applyQuaternion(q);
 					}
+					// 反馈#350：忽略轴必须在写 origin 之前生效——否则方块的枢轴点在被忽略的轴上
+					// 仍然跟着走，与「忽略该轴」的语义相反（几何不动、枢轴点漂走）
+					ignoreVectorAxes(local_offset);
 					if (obj instanceof Cube && Format.rotate_cubes) {
 						obj.origin.V3_add(local_offset);
 					}
-					ignoreVectorAxes(local_offset);
 					if (obj.moveVector) {
 						var in_box = obj.moveVector(local_offset.toArray());
 						if (!in_box && Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
@@ -770,7 +785,8 @@ export const Vertexsnap = {
 			})
 			// 反馈#346：内容确实平移了才动组枢轴点——空组或元素没被移动时不该让枢轴点自己跑
 			if (moved && Vertexsnap.groups.length && settings.community_vertex_snap_group_pivot_follow.value) {
-				translateGroupPivots(global_delta);
+				// 反馈#350：忽略的轴同样不能带着组枢轴点走
+				translateGroupPivots(global_delta, options.ignore_axis);
 			}
 		}
 
@@ -827,7 +843,8 @@ export const Vertexsnap = {
 					vec.y += node.parent.origin[1];
 					vec.z += node.parent.origin[2];
 				}
-				node.transferOrigin(vec.toArray());
+				// 反馈#350：忽略轴要把枢轴点留在原坐标上，只让其余轴落到目标顶点
+				node.transferOrigin(clampIgnoredAxes(vec, node, options.ignore_axis));
 			}
 		} else {
 

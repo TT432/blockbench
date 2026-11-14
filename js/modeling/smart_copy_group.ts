@@ -51,6 +51,22 @@ function setInitial(group: Group, initial: boolean) {
 	(group as unknown as SmartCopyFields).smart_copy_initial = initial;
 }
 
+/**
+ * 反馈#351/#352：与模型结构无关的编辑不参与智能复制组同步。
+ *
+ * - 只有 `visibility` 字段的编辑（「仅显示所选项」/批量隐藏）：可见性是**每侧独立**的
+ *   显示状态，镜像到对侧会让独显把两侧全部隐藏，功能整体失效（#351）。
+ * - 不含元素/组、也不带 outliner 快照的编辑（画笔、橡皮、油漆桶、调色板、图层）：画笔
+ *   不改模型几何，但早前会顺手给这条 undo 记一份完整 outliner 快照，撤销时
+ *   `Outliner.loadJSON` 重建节点，动画模式下的骨骼姿态随之丢失（#352）。
+ */
+function syncSkipEdit(aspects: UndoAspects): boolean {
+	let touches_nodes = aspects.elements != null || aspects.groups != null || aspects.group != null || !!aspects.outliner;
+	if (!touches_nodes) return true;
+	let fields = aspects.element_fields as string[] | undefined;
+	return !!fields?.length && fields.every(field => field == 'visibility');
+}
+
 /** 镜像面坐标：与镜像建模共用同一约定 */
 function mirrorCenter(): number {
 	return Format.centered_grid ? 0 : 8;
@@ -269,6 +285,12 @@ export const SmartCopyGroup = {
 	edit_group_level: false,
 	/** 本次编辑由本模块新建的对侧节点，避免结构同步与几何同步重复处理 */
 	created_nodes: null as Set<UUID> | null,
+	/**
+	 * 反馈#349：initEdit 为对侧节点写过 pre 快照的节点。
+	 * 删除动作会在 finishEdit 之前清空 aspects 列表，pre 快照里的对侧节点于是「pre 有、post 没有」，
+	 * undo 系统会把它们当成要删除的节点——重做时幸存组的内容跟着一起消失。收尾时把仍活着的补进 post。
+	 */
+	pre_snapshots: null as {elements: OutlinerElement[], groups: Group[]} | null,
 
 	/** 由 transform.js 的翻转路径调用：本次编辑的组级改动不传播到对侧 */
 	markGroupFlip() {
@@ -763,7 +785,20 @@ export const SmartCopyGroup = {
 	 */
 	remove(group: Group) {
 		let members = this.members(group);
-		if (members.length < 2) return;
+		if (members.length < 2) {
+			// 反馈#349：链接里只剩自己（旧工程里对侧已被删除时留下的孤立链接）也要能取消，
+			// 否则 `condition` 为真的「取消智能复制组」点了完全没反应。
+			if (!linkId(group)) return;
+			let aspects: UndoAspects = {outliner: true, groups: [group]};
+			this.suspended = true;
+			Undo.initEdit(aspects);
+			this.unlinkSurvivor(group, aspects);
+			Undo.finishEdit('Unlink smart copy group', aspects);
+			this.suspended = false;
+			updateSelection();
+			Blockbench.showQuickMessage(tl('message.smart_copy.auto_unlinked'), 2500);
+			return;
+		}
 		let group_uuid = group.uuid;
 		let member_uuids = members.map(member => member.uuid);
 		this.applyRemoval(group_uuid, member_uuids, false, false);
@@ -846,7 +881,9 @@ export const SmartCopyGroup = {
 	initEdit(aspects: UndoAspects) {
 		// 上一次编辑残留的翻转标记不能带到这一条
 		this.group_flip = false;
-		if (this.suspended) {
+		// 本模块自己的操作（suspended）与显示/画笔类编辑（syncSkipEdit）都不记录同步状态：
+		// 两者都不改模型结构，记下来只会污染 undo 快照。
+		if (this.suspended || syncSkipEdit(aspects)) {
 			this.edited_elements = null;
 			this.edited_groups = null;
 			this.edited_names = null;
@@ -856,11 +893,13 @@ export const SmartCopyGroup = {
 			this.pre_root_origins = null;
 			this.pre_index = null;
 			this.created_nodes = null;
+			this.pre_snapshots = null;
 			this.edit_attrs_linked = true;
 			this.edit_group_level = false;
 			return;
 		}
 		if (typeof Group == 'undefined' || !Group.all.length) return;
+		this.pre_snapshots = {elements: [], groups: []};
 		// aspects 里的数组可能正是「活选区」本身（`mirrorSelected` 传的是 Outliner.selected）。
 		// 下面登记对侧节点时不再往这些数组里写，所以不必再换引用：上游存在「initEdit 先传空
 		// 数组、之后向同一个数组 push」的用法（元素复制 `Duplicate elements`），换引用会让
@@ -902,6 +941,7 @@ export const SmartCopyGroup = {
 					// 只登记 pre：post 记录留到 finishEdit（那时才确定最终状态），不要往
 					// aspects.elements 里写，见 insertElementPreSnapshot 的说明（反馈#325）
 					MirrorModeling.insertElementPreSnapshot(counterpart, counterpart.getUndoCopy(aspects));
+					this.pre_snapshots?.elements.push(counterpart);
 				}
 			}
 		}
@@ -918,6 +958,7 @@ export const SmartCopyGroup = {
 					let before = counterpart.getChildlessCopy();
 					before.uuid = counterpart.uuid;
 					MirrorModeling.insertGroupPreSnapshot(before);
+					this.pre_snapshots?.groups.push(counterpart);
 				}
 			}
 		}
@@ -949,6 +990,7 @@ export const SmartCopyGroup = {
 			this.pre_group_transforms = null;
 			this.pre_index = null;
 			this.created_nodes = null;
+			this.pre_snapshots = null;
 			this.edit_attrs_linked = true;
 			this.edit_group_level = false;
 			return;
@@ -1085,6 +1127,23 @@ export const SmartCopyGroup = {
 			}
 		}
 
+		// 反馈#349：initEdit 写过 pre 快照、且仍然活着的对侧节点，post 里也必须有记录。
+		// 删除动作在 finishEdit 之前清空了 aspects 列表，这些节点于是「pre 有、post 没有」，
+		// 重做时会被当成待删除节点——幸存组里的块跟着一起消失。
+		let pre_snapshots = this.pre_snapshots;
+		if (pre_snapshots) {
+			for (let element of pre_snapshots.elements) {
+				if (isInTree(element) && aspects.elements && !aspects.elements.includes(element)) {
+					aspects.elements.safePush(element);
+				}
+			}
+			for (let group of pre_snapshots.groups) {
+				if (isInTree(group) && aspects.groups && !aspects.groups.includes(group)) {
+					aspects.groups.safePush(group);
+				}
+			}
+		}
+
 		if (changed) {
 			Canvas.updateAllBones();
 			updateSelection();
@@ -1097,6 +1156,7 @@ export const SmartCopyGroup = {
 		this.pre_group_transforms = null;
 		this.pre_index = null;
 		this.created_nodes = null;
+		this.pre_snapshots = null;
 		this.edit_attrs_linked = true;
 		this.edit_group_level = false;
 	},
@@ -1112,15 +1172,44 @@ export const SmartCopyGroup = {
 		if (!this.edit_links) return false;
 		let changed = false;
 		for (let [id, members] of this.edit_links) {
+			let alive = members.filter(member => isInTree(member));
+			if (alive.length === members.length) continue;
 			let initial = members.find(isInitial) ?? members[0];
-			if (!initial || isInTree(initial) || members.length < 2) continue;
-			for (let partner of members) {
-				if (partner === initial || !isInTree(partner)) continue;
-				this.removeSubtreeWithUndo(partner, aspects);
-				changed = true;
+			if (!initial || !isInTree(initial)) {
+				// 删的是「初始组」→ 其余复制成员的整棵子树一起删除
+				for (let partner of alive) {
+					this.removeSubtreeWithUndo(partner, aspects);
+					changed = true;
+				}
+				continue;
+			}
+			// 反馈#349：删掉的是复制成员，而链接里只剩最后一方——它已经没有对侧，
+			// 智能复制组身份随之失效，就地解除链接。不解除时 `members()` 只剩它自己，
+			// 「取消智能复制组」会因成员不足直接返回，用户永远取消不掉；它的链接 id 还会
+			// 留在 undo 的 pre 里，重做时把幸存的那个组一起删掉。
+			if (alive.length < 2) {
+				for (let survivor of alive) {
+					this.unlinkSurvivor(survivor, aspects);
+					changed = true;
+				}
+				Blockbench.showQuickMessage(tl('message.smart_copy.auto_unlinked'), 2500);
 			}
 		}
 		return changed;
+	},
+
+	/**
+	 * 反馈#349：解除一个已无对侧的成员的链接。
+	 * pre 快照必须在清除字段**之前**写入，撤销才能连同链接一起还原；成员同时进 post 的
+	 * groups 列表，重做后它也保持「已解除」而不是又带着孤立链接回来。
+	 */
+	unlinkSurvivor(survivor: Group, aspects: UndoAspects) {
+		let before = survivor.getChildlessCopy();
+		before.uuid = survivor.uuid;
+		MirrorModeling.insertGroupIntoUndo(survivor, aspects, before);
+		setLinkId(survivor, '');
+		setInitial(survivor, false);
+		setAttrsLinked(survivor, true);
 	},
 
 	/** 本次编辑里位移/旋转/缩放变过的组（与 initEdit 的快照比对；删除的组不算） */
