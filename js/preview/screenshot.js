@@ -467,6 +467,11 @@ export const Screencam = {
 		Preview.selected.screenshot(options, cb)
 	},
 	gif_crop: {top: 0, left: 0, right: 0, bottom: 0},
+	/**
+	 * 当前录制浮层的控制句柄（反馈#358）：宏回放时用它开始/结束录制，与用户点浮层按钮走同一套
+	 * 函数；浮层结束或取消后置空，回放据此判断「这一轮录完了」。
+	 */
+	gif_control: null,
 
 	async createGif(options = {}, cb) {
 		if (!options.format) options.format = 'gif';
@@ -549,6 +554,9 @@ export const Screencam = {
 			NoAAPreview.setProjectionMode(vars.preview.isOrtho);
 
 			vars.recording = true;
+			// 反馈#358：录制宏时把「点了录制按钮」记进宏步骤；回放时由宏调用同一个函数，
+			// 两边的录制路径完全一致
+			window.MacroRecorder?.onGifRecordingStart?.();
 			vars.loop = setInterval(() => {
 				if (vars.animation && options.play) {
 					Timeline.setTime((Timeline.playback_speed/100) * vars.interval*vars.frames / 1000);
@@ -643,6 +651,10 @@ export const Screencam = {
 			if (options.turnspeed) {
 				vars.preview.controls.autoRotate = false;
 			}
+			// 反馈#358：宏录制拿到的帧数=真实录进 GIF 的帧数，回放才能录出同样长度；
+			// 用户取消（render 为假）时宏那边会把这一步整个去掉
+			window.MacroRecorder?.onGifRecordingEnd?.({render: !!render, frames: vars.frames});
+			Screencam.gif_control = null;
 
 			// Render
 			if (!render) return;
@@ -656,6 +668,9 @@ export const Screencam = {
 		function cancel() {
 			vars.frame.remove();
 			key_listener.delete();
+			// 还没开始录就取消：这一步不会产出任何东西（反馈#358）
+			window.MacroRecorder?.onGifRecordingEnd?.({render: false});
+			Screencam.gif_control = null;
 		}
 		function updateCrop() {
 			if (!options.resolution) {
@@ -767,6 +782,13 @@ export const Screencam = {
 			vars.recording ? endRecording(false) : cancel();
 		})
 		controls.append(cancel_button);
+
+		Screencam.gif_control = {
+			start: startRecording,
+			stop: () => { if (vars.recording) endRecording(true); },
+			is_recording: () => vars.recording,
+			frames: () => vars.frames,
+		};
 	},
 	recordTimelapse(options) {
 		if (!options.destination) return;

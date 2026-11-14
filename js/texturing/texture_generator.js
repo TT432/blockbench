@@ -549,7 +549,22 @@ export const TextureGenerator = {
 		}
 	},
 	//Face Template
-	async generateTemplate(options, makeTexture) {
+	/**
+	 * 异步生成任务计数（反馈#365）：模板贴图生成是异步的（等贴图解码 + 逐面绘制），且不经
+	 * undo 事务，宏回放原先只能靠固定延时猜——大模型上「创建材质」还没画完就被下一步打断。
+	 * 宏回放读这个计数等它真正做完。
+	 */
+	pending_generations: 0,
+	trackAsyncGeneration(promise) {
+		this.pending_generations++;
+		let done = () => { this.pending_generations = Math.max(0, this.pending_generations - 1); };
+		Promise.resolve(promise).then(done, done);
+		return promise;
+	},
+	generateTemplate(options, makeTexture) {
+		return this.trackAsyncGeneration(this._generateTemplate(options, makeTexture));
+	},
+	async _generateTemplate(options, makeTexture) {
 		let res_multiple;
 		let background_color = options.color;
 		let new_resolution = [];

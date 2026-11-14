@@ -997,6 +997,12 @@ export class Panel extends EventSystem {
 				// （slot: hidden），清空定位会让浮动面板闪到左上角（反馈#364）。
 				this.container.style.width = this.container.style.left = this.container.style.top = null;
 			}
+			if (slot == 'hidden' && this.container.isConnected) {
+				// 不在任何 slot 里就离开 DOM（反馈#364 复报）：容器留在 work_screen 上时仍带着上一次
+				// 模式的浮动定位与 size，模式切到 start 的那几帧只要 work_screen 还在显示就会被画
+				// 出来。`updateSlot` 对 hidden 本来就是移除节点，这里补齐「不经过 moveTo 的模式切换」。
+				this.container.remove();
+			}
 			if (Blockbench.isMobile) {
 				this.width = this.container.clientWidth;
 			} else if (slot == 'left_bar') {
