@@ -11,12 +11,15 @@
  *   开关类（`Toggle`/`BarSelect`）连当时的取值一起记，回放时先把取值设回去再触发。
  * - **对话框参数**：动作弹出对话框时，用户点确认那一刻把整张表单的填写值记进这一步；
  *   回放时自动填表并确认（导出选项、创建纹理、转换格式等），不需要人工再点一遍。
+ *   没有表单的**组件式对话框**（纹理的亮度/对比度、饱和度/色调调整等）记的是组件 data
+ *   里的原始值，回放时写回后触发组件的 `change()` 再确认，效果与录制时一致。
  * - **选择状态**：每一步记下当时选中的组/元素名字，回放前按名字重建选区——所以「删掉 root 组」
  *   这类步骤换到别的模型上仍然删的是那个同名组；名字一个都对不上时跳过该步骤并记日志，
  *   不会拿别的选中物去执行删除。
  * - **导出与截屏**：录制时记下实际落盘的路径（导出 → `export` 步骤，图片 → `screenshot` 步骤），
  *   路径里可以用 `${name}`（模型名）与 `${file}`（模型文件路径）占位；批量处理时按模型替换，
- *   因此一套宏可以给整批模型各自输出到不同文件。
+ *   因此一套宏可以给整批模型各自输出到不同文件。默认文件名就是模型名，录制时这一段自动换成
+ *   `${name}`，避免所有模型都写同一个文件互相顶掉（用户自己改过的文件名保持原样）。
  * - **模式切换**：编辑/绘制/动画模式切换记成独立步骤，回放按录制顺序切换。
  *
  * ## 回放
@@ -28,6 +31,8 @@ import { fs } from "../native_apis";
 import type { FormResultValue } from "./form";
 
 export type MacroStepType = 'action' | 'mode' | 'export' | 'screenshot';
+/** 组件式对话框的参数字面量：只记原始类型，对象（纹理列表、画布等）回放时由动作自己重建 */
+export type MacroComponentValue = string | number | boolean;
 
 export interface MacroSelection {
 	groups: string[]
@@ -46,6 +51,13 @@ export interface MacroStep {
 	form?: Record<string, FormResultValue>
 	/** 表单所属对话框 id，避免把值填进回放途中弹出的其它对话框 */
 	dialog_id?: string
+	/**
+	 * 组件式对话框（`component` 而非 `form`）录制时的内容状态（反馈#356）：
+	 * 这类对话框的表单就是组件自身（纹理的亮度/对比度/饱和度调整等），参数挂在
+	 * `content_vue` 的 data 上，没有 `dialog.form` 可读。回放时先写回这些值再触发组件的
+	 * `change()`，最后确认对话框。
+	 */
+	component_state?: Record<string, MacroComponentValue>
 	/** 录制时选中的组/元素（按名字） */
 	selection?: MacroSelection
 	/** export / screenshot：落盘路径，支持 ${name} ${file} 占位 */
@@ -99,6 +111,42 @@ function snapshotSelection(): MacroSelection {
 	selection.groups = Group.multi_selected.map(group => group.name);
 	selection.elements = Outliner.selected.map(element => ({name: element.name, type: element.type}));
 	return selection;
+}
+/**
+ * 组件式对话框（反馈#356）的参数快照：只收 `content_vue` data 里的原始值。
+ * 纹理列表、画布、对话框自身的引用一律跳过——它们由动作在回放时重新构造，
+ * 记下来既无意义又会让 `.bbmacro` 反序列化后指向旧对象。
+ */
+function snapshotComponentState(vue: unknown): Record<string, MacroComponentValue> | undefined {
+	if (!vue || typeof vue != 'object' || !('$data' in vue)) return undefined;
+	let data = (vue as {$data: Record<string, unknown>}).$data;
+	if (!data || typeof data != 'object') return undefined;
+	let state: Record<string, MacroComponentValue> = {};
+	let count = 0;
+	for (let key in data) {
+		let value = data[key];
+		if (typeof value == 'string' || typeof value == 'number' || typeof value == 'boolean') {
+			state[key] = value;
+			count++;
+		}
+	}
+	return count ? state : undefined;
+}
+/**
+ * 把录制下来的落盘路径里「以当前模型名命名的文件名」换成 `${name}` 占位符（反馈#357）。
+ * 导出/截屏的默认文件名就是模型名，照原样记下来会让所有模型都往同一个文件写、
+ * 互相顶掉；换成占位符后一套宏给整批模型跑，每个模型落到自己的文件名上。
+ * 用户自己改过名的文件保持原样（那是明确的意图）。`ModelA.geo.json` 这类多段扩展名
+ * 也按「模型名 + 第一个点之后」拼接，`Armor.png` 这种同前缀的其它名字不会被误换。
+ */
+function replaceModelNamePlaceholder(path: string, model_name: string): string {
+	if (!model_name) return path;
+	let separator_index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+	let filename = path.slice(separator_index + 1);
+	if (filename.slice(0, model_name.length) != model_name) return path;
+	let rest = filename.slice(model_name.length);
+	if (rest !== '' && rest[0] != '.') return path;
+	return path.slice(0, separator_index + 1) + '${name}' + rest;
 }
 /** 从 .bbmodel JSON 里取出模型格式 id（批量打开时先按它建一个干净工程） */
 function readModelFormat(data: unknown): string | undefined {
@@ -262,14 +310,23 @@ const MacroRecorder = {
 	},
 	/** 录制：确认时把表单值记进当前步骤；回放：按记录值填表并自动确认 */
 	onDialogShown(dialog: Dialog) {
-		if (this.recording && this.pending_step && dialog.form) {
+		if (this.recording && this.pending_step && (dialog.form || dialog.content_vue)) {
 			let step = this.pending_step;
-			if (step.form) return;
+			if (step.form || step.component_state) return;
 			let original_close = dialog.close.bind(dialog);
 			dialog.close = (button?: number, event?: Event) => {
 				if (button === dialog.confirmIndex) {
-					step.form = dialog.getFormResult();
-					step.dialog_id = dialog.id;
+					if (dialog.form) {
+						step.form = dialog.getFormResult();
+						step.dialog_id = dialog.id;
+					} else {
+						// 组件式对话框没有 form（反馈#356）：参数在 content_vue 的 data 上
+						let state = snapshotComponentState(dialog.content_vue);
+						if (state) {
+							step.component_state = state;
+							step.dialog_id = dialog.id;
+						}
+					}
 					this.changed();
 				}
 				return original_close(button, event);
@@ -278,11 +335,31 @@ const MacroRecorder = {
 		}
 		if (!this.playing || !this.current_step) return;
 		let step = this.current_step;
-		if (!step.form || !dialog.form) return;
+		if (!dialog.form && !dialog.content_vue) return;
 		if (step.dialog_id && step.dialog_id != dialog.id) return;
+		if (dialog.form) {
+			if (!step.form) return;
+			setTimeout(() => {
+				try {
+					dialog.setFormValues(step.form!, false);
+					dialog.confirm();
+				} catch (error) {
+					this.pushLog(tl('message.macro.log_dialog_failed', [step.name ?? step.id ?? '']));
+				}
+			}, 0);
+			return;
+		}
+		// 组件式对话框（反馈#356）：先写回录制时的参数，再让组件按新参数重算——调整类对话框的
+		// 实际改动发生在 change() 里，最后 confirm 由对话框自己的 onConfirm 收尾（提交 undo）
+		if (!step.component_state) return;
+		let component_state = step.component_state;
 		setTimeout(() => {
 			try {
-				dialog.setFormValues(step.form, false);
+				let vue = dialog.content_vue as unknown as Record<string, unknown> & {change?: () => void};
+				for (let key in component_state) {
+					if (key in vue) vue[key] = component_state[key];
+				}
+				vue.change?.();
 				dialog.confirm();
 			} catch (error) {
 				this.pushLog(tl('message.macro.log_dialog_failed', [step.name ?? step.id ?? '']));
@@ -300,7 +377,7 @@ const MacroRecorder = {
 		}
 		if (options?.savetype == 'image') {
 			step.type = 'screenshot';
-			step.path = path;
+			step.path = replaceModelNamePlaceholder(path, Project?.name ?? '');
 			this.changed();
 			return;
 		}
@@ -319,7 +396,7 @@ const MacroRecorder = {
 		}
 		step.type = 'export';
 		step.codec_id = codec.id;
-		step.path = path;
+		step.path = replaceModelNamePlaceholder(path, Project?.name ?? '');
 		this.changed();
 	},
 
@@ -336,32 +413,46 @@ const MacroRecorder = {
 	 * 批量处理里「有的模型没有 root 组」正是靠这条规则变成「跳过并记日志」。
 	 */
 	applySelection(selection: MacroSelection): boolean {
-		// 直接跑底层实现：`unselect_all` / `delete` 这类动作的界面条件会被残留对话框挡住
-		SharedActions.run('unselect_all');
 		let missing: string[] = [];
 		// 先元素后组：选中组内的元素会把组本身标记成未选中，反过来的话「删掉这个组」就会
 		// 退化成「只删掉组里那个块」，组留在原地（选中的顺序就是执行顺序的语义）
+		let nodes: OutlinerNode[] = [];
 		for (let entry of selection.elements ?? []) {
-			let element = Outliner.elements.find(node => node.name === entry.name && node.type === entry.type);
-			if (!element) {
+			let node: OutlinerNode | undefined = Outliner.elements.find(candidate => (
+				candidate.name === entry.name && candidate.type === entry.type
+			)) ?? Group.all.find(candidate => candidate.name === entry.name);
+			if (!node) {
 				missing.push(entry.name);
 				continue;
 			}
-			element.select?.();
+			nodes.push(node);
 		}
+		let groups: Group[] = [];
 		for (let name of selection.groups ?? []) {
 			let group = Group.all.find(node => node.name === name);
 			if (!group) {
 				missing.push(name);
 				continue;
 			}
-			group.multiSelect();
+			groups.push(group);
 		}
-		updateSelection();
+		// 先全部解析、再统一落地：缺节点时前面已经改过的选区会让「跳过该步骤」变成半成品状态
 		if (missing.length) {
 			this.pushLog(tl('message.macro.log_missing_nodes', [missing.join(', ')]));
 			return false;
 		}
+		// 直接跑底层实现：`unselect_all` / `delete` 这类动作的界面条件会被残留对话框挡住
+		SharedActions.run('unselect_all');
+		// 反馈#355：不能逐个调用 `node.select()`——它每调一次都会先取消其它选中项（录制的多选
+		// 最后只剩一个节点），并且在默认设置 `outliner_reveal_on_select` 下每调一次都排一个
+		// 大纲自动滚动动画，几百个节点连发时大纲会来回猛抖（回放「全选」后的步骤就是这个现象）。
+		// 这里按节点直接标记选中，最后统一 `updateSelection()`，选区与滚动位置都与数量无关。
+		for (let node of nodes) {
+			if (node instanceof Group) node.multiSelect();
+			else node.markAsSelected();
+		}
+		for (let group of groups) group.multiSelect();
+		updateSelection();
 		return true;
 	},
 	exportToPath(step: MacroStep, context: {file?: string, name?: string} | null) {
@@ -451,7 +542,7 @@ const MacroRecorder = {
 		}
 		item.trigger();
 		// 动作可能同步弹对话框、也可能异步继续：给后续流程一点时间
-		await wait(step.form ? 120 : 60);
+		await wait((step.form || step.component_state) ? 120 : 60);
 	},
 	async play(context: {file?: string, name?: string} | null = null) {
 		if (this.playing) return;
