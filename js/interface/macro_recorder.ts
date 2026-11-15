@@ -18,6 +18,10 @@
  *   这类步骤换到别的模型上仍然删的是那个同名组；名字一个都对不上时跳过该步骤并记日志，
  *   不会拿别的选中物去执行删除。录到的是「全选」时只记这个意图（反馈#359），回放时按全选
  *   重建，不比对节点名——「全选 → 创建材质」这类批量操作才不会在每个模型上都被跳过。
+ * - **贴图删除**（反馈#369）：纹理面板里的「删除」记成独立的 `texture_delete` 步骤，只记被删
+ *   贴图的名字（贴图选中态不是大纲选区，回放时重建不出来）。回放按名字找同名贴图再删，
+ *   同名多个时删面板里最顶上的那个；名字对不上就跳过该步并记日志，与组/元素名字对不上的
+ *   处理口径一致。
  * - **导出与截屏**：录制时记下实际落盘的路径（导出 → `export` 步骤，图片 → `screenshot` 步骤），
  *   路径里可以用 `${name}`（模型名）与 `${file}`（模型文件路径）占位；批量处理时按模型替换，
  *   因此一套宏可以给整批模型各自输出到不同文件。文件名整段换成 `${name}`、只保留扩展名
@@ -44,7 +48,7 @@
 import { fs } from "../native_apis";
 import type { FormResultValue } from "./form";
 
-export type MacroStepType = 'action' | 'mode' | 'export' | 'screenshot' | 'gif';
+export type MacroStepType = 'action' | 'mode' | 'export' | 'screenshot' | 'gif' | 'texture_delete';
 /**
  * 组件式对话框的参数字面量：只记可 JSON 化的原始数据结构，对象（纹理列表、画布等）回放时由
  * 动作自己重建。数组/对象在这里是有意义的（反馈#368）：曲线调整的 `graphs.rgb.points` 就是
@@ -93,6 +97,11 @@ export interface MacroStep {
 	 */
 	frames?: number
 	duration?: number
+	/**
+	 * texture_delete（反馈#369）：录制时被删掉的贴图名字。贴图选中态不属于大纲选区，
+	 * 名字是回放时唯一能对上号的锚点——同名多个时删面板里最顶上的那个。
+	 */
+	textures?: string[]
 }
 
 interface MacroFile {
@@ -178,6 +187,20 @@ function snapshotSelection(): MacroSelection {
 	selection.elements = Outliner.selected.map(element => ({name: element.name, type: element.type}));
 	if (isEverythingSelected(selection)) selection.all = true;
 	return selection;
+}
+/**
+ * 这一步是否会删掉贴图（反馈#369）。`delete` 是共享动作：纹理面板里它删的是选中的贴图，
+ * 大纲里删的是选中的组/元素。录制时按「当前面板 + 有选中贴图」判成前者（纹理处理器的条件
+ * 就是这两项，优先级高于大纲处理器），把名字按面板顺序记下来——同名多个时回放删最顶上的
+ * 那个，也就是这里列表里的第一个。返回 null 表示这不是一次贴图删除。
+ */
+function snapshotTextureDeletion(item: BarItem): string[] | null {
+	if (item.id != 'delete') return null;
+	if (typeof Texture == 'undefined' || typeof Prop == 'undefined' || Prop.active_panel != 'textures') return null;
+	if (!Texture.selected) return null;
+	let textures = Texture.all.filter(texture => texture.selected || texture.multi_selected);
+	if (!textures.length) return null;
+	return textures.map(texture => texture.name);
 }
 /**
  * 组件式对话框（反馈#356/#368）的参数快照：只收 `content_vue` data 里能 JSON 化的值。
@@ -408,6 +431,15 @@ const MacroRecorder = {
 			step.value = item.value;
 		} else if (typeof BarSelect != 'undefined' && item instanceof BarSelect) {
 			step.value = item.get();
+		}
+		let textures = snapshotTextureDeletion(item);
+		if (textures) {
+			// 删贴图单独成步（反馈#369）：`delete` 是共享动作，删哪张贴图由「纹理面板里选中的
+			// 贴图」决定，而选区快照只记大纲的组/元素——回放时重建不出贴图选中态，动作落到
+			// 别的处理器上，贴图一条都没删掉。所以不记选区，只记要删的名字。
+			step.type = 'texture_delete';
+			step.textures = textures;
+			step.selection = undefined;
 		}
 		this.pending_step = this.pushStep(step);
 	},
@@ -859,6 +891,32 @@ const MacroRecorder = {
 		}
 		await wait(40);
 	},
+	/**
+	 * 回放贴图删除步骤（反馈#369）：只按名字删同名的贴图，同名多个时删面板里最顶上的那个
+	 * （遍历顺序就是面板顺序）。名字对不上就整步跳过并写日志——拿别的贴图去删，改的是
+	 * 另一个模型的内容，和「组/元素名字对不上就跳过」是同一条口径。
+	 */
+	replayTextureDelete(step: MacroStep) {
+		if (typeof Texture == 'undefined' || typeof Project == 'undefined') return;
+		let names = step.textures ?? [];
+		if (!names.length) {
+			this.pushLog(tl('message.macro.log_texture_delete_empty', [this.stepLabel(step)]));
+			return;
+		}
+		let missing: string[] = [];
+		for (let name of names) {
+			let texture = Texture.all.find(candidate => candidate.name === name);
+			if (!texture) {
+				missing.push(name);
+				continue;
+			}
+			// `remove()` 自带 undo 事务与画布/面板刷新（与纹理面板里删除走同一段实现）
+			texture.remove();
+		}
+		if (missing.length) {
+			this.pushLog(tl('message.macro.log_missing_textures', [missing.join(', ')]));
+		}
+	},
 	async runStep(step: MacroStep) {
 		let context = this.current_context;
 		// 回放是无人值守的：上一步残留的对话框会让后续动作的界面条件恒为假（删除、选择类动作
@@ -888,6 +946,16 @@ const MacroRecorder = {
 		if (step.type == 'gif') {
 			try {
 				await this.replayGifStep(step);
+			} catch (error) {
+				console.error(error);
+				this.pushLog(tl('message.macro.log_step_failed', [this.stepLabel(step)]));
+			}
+			return;
+		}
+		if (step.type == 'texture_delete') {
+			try {
+				this.replayTextureDelete(step);
+				await this.waitForStepSettled(step);
 			} catch (error) {
 				console.error(error);
 				this.pushLog(tl('message.macro.log_step_failed', [this.stepLabel(step)]));
@@ -1082,6 +1150,9 @@ const MacroRecorder = {
 	stepLabel(step: MacroStep): string {
 		if (step.type == 'export') return tl('macro.step.export') + ' → ' + (step.path ?? '');
 		if (step.type == 'screenshot') return tl('macro.step.screenshot') + ' → ' + (step.path ?? '');
+		if (step.type == 'texture_delete') {
+			return tl('macro.step.texture_delete') + ': ' + (step.textures ?? []).join(', ');
+		}
 		if (step.type == 'gif') {
 			let parts = [tl('macro.step.gif')];
 			if (step.frames) parts.push(tl('message.macro.gif_frames', [step.frames]));
@@ -1094,6 +1165,7 @@ const MacroRecorder = {
 	stepIcon(step: MacroStep): string {
 		if (step.type == 'export') return 'save_alt';
 		if (step.type == 'screenshot') return 'photo_camera';
+		if (step.type == 'texture_delete') return 'delete';
 		if (step.type == 'gif') return 'gif_box';
 		if (step.type == 'mode') return 'dashboard';
 		return 'play_circle_outline';
