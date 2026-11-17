@@ -477,6 +477,10 @@ function setupSettings() {
 	// 开启 = 每个被旋转的子树绕自身枢轴自转（选组绕该组枢轴、选单个方块绕该方块 origin）。
 	// 旋转轴方向跟随「旋转空间」工具栏选项（全局/父级/自身，见 transform.js getRotate90Space）。
 	new Setting('community_rotate_own_pivot', {category: 'community', value: false});
+	// 反馈#376：翻转（工具栏「翻转 X/Y/Z」与「就地翻转 X/Y/Z」）时是否忽略父组的旋转，
+	// 按世界坐标轴做真实镜像。关闭（默认）= 上游行为：在方块自己的局部坐标系里镜像。
+	// 生效点见 transform.js flipCubeIgnoringGroupRotation()（方块；组/网格仍按原行为）。
+	new Setting('community_flip_ignore_group_rotation', {category: 'community', value: false});
 	// 反馈#303：「跟随」空间模式（#275/#281/#290/#294）做成社区版开关，默认关闭。
 	// 关闭时移动/旋转工具栏的下拉里不出现「跟随」、已选中的跟随态回落全局、跟随源清空；
 	// 生效点见 transform.js 两个 BarSelect 的 follow 选项条件与 follow_space.ts isFollowSelected()。

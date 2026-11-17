@@ -34,10 +34,47 @@ export const TextureGenerator = {
 		for (let key in resolution_presets) {
 			resolution_presets[key] = (Format.block_size * (key / 16)) + 'x';
 		}
+		// 反馈#373：这张对话框记住上一次确认的设定（跨对话框、跨工程、跨启动继承），
+		// 与「向模板追加元素」(#185) 同一套 StateMemory 记忆。名称不记——带出上一次的贴图名
+		// 只会撞名；类型/像素密度受当前格式与模型条件限制，记忆值不合法时回退默认。
+		const memory_defaults = {
+			type: Object.keys(type_options)[0],
+			resolution: resolution,
+			resolution_vec: [Project.texture_width, Project.texture_height],
+			color: undefined,
+			color_enabled: false,
+			adjust_uv: false,
+			rearrange_uv: true,
+			keep_uv_size: false,
+			box_uv: false,
+			power: true,
+			double_use: true,
+			combine_polys: true,
+			max_edge_angle: 36,
+			max_island_angle: 45,
+			padding: Mesh.selected.length > 0,
+			disable_mirror_uv: true,
+		};
+		StateMemory.init('texture_create_options', 'object', {});
+		let remembered = Object.assign({}, memory_defaults, StateMemory.texture_create_options || {});
+		if (type_options[remembered.type] === undefined) remembered.type = memory_defaults.type;
+		if (!Object.prototype.hasOwnProperty.call(resolution_presets, remembered.resolution)) {
+			remembered.resolution = memory_defaults.resolution;
+		}
+		if (!Array.isArray(remembered.resolution_vec)
+			|| remembered.resolution_vec.length != 2
+			|| remembered.resolution_vec.some(value => typeof value != 'number' || !isFinite(value))) {
+			remembered.resolution_vec = memory_defaults.resolution_vec;
+		}
 		var dialog = new Dialog({
 			id: 'add_bitmap',
 			title: tl('action.create_texture'),
 			width: 610,
+			onBuild() {
+				// 颜色走的是全局共享的 ColorPicker（构造后无法再用 form 的 value 改），
+				// 记忆值在这里写回去；勾选态由 color 字段的 toggle_default 负责。
+				if (remembered.color) TextureGenerator.background_color.set(remembered.color);
+			},
 			form: {
 				name: {
 					label: 'generic.name',
@@ -51,6 +88,7 @@ export const TextureGenerator = {
 					label: 'dialog.create_texture.type',
 					type: 'inline_select',
 					options: type_options,
+					value: remembered.type,
 					condition: Object.keys(type_options).length > 1
 				},
 				section2: "_",
@@ -59,7 +97,7 @@ export const TextureGenerator = {
 					label: 'dialog.create_texture.pixel_density',
 					description: 'dialog.create_texture.pixel_density.desc',
 					type: 'select',
-					value: resolution_presets[resolution] ? resolution : undefined,
+					value: remembered.resolution,
 					condition: (form) => (form.type == 'template'),
 					options: resolution_presets
 				},
@@ -68,8 +106,7 @@ export const TextureGenerator = {
 					type: 'vector',
 					condition: (form) => (form.type == 'blank'),
 					dimensions: 2,
-					value: [Project.texture_width,
-						Project.texture_height],
+					value: remembered.resolution_vec.slice(),
 					min: 1,
 					max: 2048
 				},
@@ -77,85 +114,106 @@ export const TextureGenerator = {
 					label: 'data.color',
 					type: 'color',
 					colorpicker: TextureGenerator.background_color,
+					value: remembered.color,
 					toggle_enabled: true,
-					toggle_default: false
+					toggle_default: remembered.color_enabled
 				},
 
 				adjust_uv: {
 					label: 'dialog.create_texture.adjust_uv',
 					description: 'dialog.create_texture.adjust_uv.desc',
 					type: 'checkbox',
-					value: false,
+					value: remembered.adjust_uv,
 					condition: (form) => (form.type == 'blank' && Outliner.elements.some(el => el.faces))
 				},
 				rearrange_uv: {
 					label: 'dialog.create_texture.rearrange_uv',
 					description: 'dialog.create_texture.rearrange_uv.desc',
 					type: 'checkbox',
-					value: true,
+					value: remembered.rearrange_uv,
 					condition: (form) => (form.type == 'template')
 				},
 				keep_uv_size: {
 					label: 'dialog.create_texture.keep_uv_size',
 					description: 'dialog.create_texture.keep_uv_size.desc',
 					type: 'checkbox',
-					value: false,
+					value: remembered.keep_uv_size,
 					condition: (form) => (form.type == 'template' && form.rearrange_uv)
 				},
 				box_uv: {
 					label: 'dialog.project.uv_mode.box_uv',
 					type: 'checkbox',
-					value: false,
+					value: remembered.box_uv,
 					condition: (form) => (form.type == 'template' && !Project.box_uv && Outliner.elements.some(el => el.getTypeBehavior('support_box_uv')))
 				},
 				power: {
 					label: 'dialog.create_texture.power',
 					description: 'dialog.create_texture.power.desc',
 					type: 'checkbox',
-					value: true,
+					value: remembered.power,
 					condition: (form) => (form.type !== 'blank' && (form.rearrange_uv || form.type == 'color_map'))
 				},
 				double_use: {
 					label: 'dialog.create_texture.double_use',
 					description: 'dialog.create_texture.double_use.desc',
 					type: 'checkbox',
-					value: true,
+					value: remembered.double_use,
 					condition: ((form) => (form.type == 'template' && form.rearrange_uv))
 				},
 				combine_polys: {
 					label: 'dialog.create_texture.combine_polys',
 					description: 'dialog.create_texture.combine_polys.desc',
 					type: 'checkbox',
-					value: true,
+					value: remembered.combine_polys,
 					condition: (form) => (form.type == 'template' && form.rearrange_uv && Mesh.selected.length)
 				},
 				max_edge_angle: {
 					label: 'dialog.create_texture.max_edge_angle',
 					description: 'dialog.create_texture.max_edge_angle.desc',
 					type: 'number',
-					value: 36,
+					value: remembered.max_edge_angle,
 					condition: (form) => (form.type == 'template' && form.rearrange_uv && Mesh.selected.length)},
 				max_island_angle: {
 					label: 'dialog.create_texture.max_island_angle',
 					description: 'dialog.create_texture.max_island_angle.desc',
 					type: 'number',
-					value: 45,
+					value: remembered.max_island_angle,
 					condition: (form) => (form.type == 'template' && form.rearrange_uv && Mesh.selected.length)},
 				padding: {
 					label: 'dialog.create_texture.padding',
 					description: 'dialog.create_texture.padding.desc',
 					type: 'checkbox',
-					value: Mesh.selected.length > 0,
+					value: remembered.padding,
 					condition: (form) => (form.type == 'template' && form.rearrange_uv)},
 				disable_mirror_uv: {
 					label: 'dialog.create_texture.disable_mirror_uv',
 					description: 'dialog.create_texture.disable_mirror_uv.desc',
 					type: 'checkbox',
-					value: true,
+					value: remembered.disable_mirror_uv,
 					condition: (form) => BarItems.mirror_modeling.value && BarItems.mirror_modeling.tool_config.options.mirror_uv
 				},
 			},
 			onConfirm: function(results) {
+				// 反馈#373：把这次确认的设定记下来（下一次打开按记忆预选）。颜色被关掉时
+				// getResult 返回 null，此时保留上次的颜色值，只把「不启用」记下来。
+				StateMemory.set('texture_create_options', {
+					type: results.type,
+					resolution: results.resolution,
+					resolution_vec: Array.isArray(results.resolution_vec) ? results.resolution_vec.slice() : memory_defaults.resolution_vec,
+					color: results.color ? String(typeof results.color.toHex8String == 'function' ? results.color.toHex8String() : results.color) : remembered.color,
+					color_enabled: !!results.color,
+					adjust_uv: !!results.adjust_uv,
+					rearrange_uv: !!results.rearrange_uv,
+					keep_uv_size: !!results.keep_uv_size,
+					box_uv: !!results.box_uv,
+					power: !!results.power,
+					double_use: !!results.double_use,
+					combine_polys: !!results.combine_polys,
+					max_edge_angle: results.max_edge_angle,
+					max_island_angle: results.max_island_angle,
+					padding: !!results.padding,
+					disable_mirror_uv: !!results.disable_mirror_uv,
+				});
 				results.particle = 'auto';
 				if (results.type == 'blank') {
 					results.resolution = results.resolution_vec;

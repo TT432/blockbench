@@ -71,7 +71,12 @@ function translateGroupPivots(world_delta, ignore_axis) {
 		} else {
 			vec.sub(Canvas.scene.position);
 		}
-		if (group.parent instanceof OutlinerNode && group.parent.getTypeBehavior('use_absolute_position')) {
+		// 反馈#375：与 snap() 的枢轴分支同一判据——只有 mesh 真的挂在「绝对位置」父组 mesh 下时
+		// 才加回父 origin；非骨骼架构造型里组 origin 本身就是绝对坐标（见 snap() 内注释）
+		if (Format.bone_rig
+			&& group.parent instanceof OutlinerNode
+			&& group.parent.getTypeBehavior('parent')
+			&& group.parent.getTypeBehavior('use_absolute_position')) {
 			vec.x += group.parent.origin[0];
 			vec.y += group.parent.origin[1];
 			vec.z += group.parent.origin[2];
@@ -81,6 +86,96 @@ function translateGroupPivots(world_delta, ignore_axis) {
 	targets.forEach(([group, vec]) => {
 		group.origin.V3_set(vec);
 	});
+}
+
+/**
+ * 反馈#375：组的 mesh 变换是否作用在内容上。
+ *
+ * 骨骼架构造型里子级 mesh 挂在组 mesh 下（updateTransform 里 parent.mesh.add），组旋转与枢轴
+ * 变化会带动内容——Group.transferOrigin 的旋转补偿正是为此而设。
+ * 非骨骼架构造型（Java 方块等）里元素 mesh 直接挂在模型根节点下、组只是文件夹，组旋转对内容
+ * 没有作用；此时若仍按组旋转做补偿，捕捉枢轴点会把组内方块整体推走（组旋转/枢轴越大偏得越多）。
+ * 判据：子级 mesh 是否真的挂在组 mesh 之下（智能对象容器若挂在组下也算）。
+ */
+function groupTransformAppliesToContent(group) {
+	if (Format.bone_rig) return true;
+	if (!group.mesh) return false;
+	let has_previewed_child = false;
+	for (let child of group.children) {
+		if (!child.mesh) continue;
+		has_previewed_child = true;
+		let parent = child.mesh.parent;
+		while (parent) {
+			if (parent === group.mesh) return true;
+			parent = parent.parent;
+		}
+	}
+	// 没有任何子级预览可判定（空组/预览尚未建立）时保持 transferOrigin 的既有行为
+	return !has_previewed_child;
+}
+
+/**
+ * 反馈#375：只保留「最外层」目标节点。
+ *
+ * 选中父组时，它的后代组同样在 Group.multi_selected 里（select_children 行为）。
+ * 逐个执行 transferOrigin 时，父组已经把后代的 origin 连同内容一起做过补偿位移，
+ * 再把后代组搬到目标点就等于二次位移（实测子组枢轴飞到两倍距离）。
+ * 过滤口径与 transform.js 的 getPivotObjects / getRotationObjects 一致：父子同时选中只留父级。
+ */
+function getOutermostNodes(nodes) {
+	return nodes.filter(node => !nodes.some(other => other !== node && node.getAllAncestors().includes(other)));
+}
+
+/**
+ * 反馈#375：读取世界坐标前按当前 TRS 重组 mesh 矩阵。
+ * 合批方块（Cube）的 mesh 关闭了 matrixAutoUpdate，局部矩阵由 preview_controller.updateTransform
+ * 显式刷新；若中途有代码改了 TRS 却没重组矩阵，localToWorld 会拿到过期矩阵，枢轴落点随之偏掉。
+ */
+function refreshNodeWorldMatrix(node) {
+	if (!node?.mesh) return;
+	if (node.mesh.updateMatrix) node.mesh.updateMatrix();
+	node.mesh.updateWorldMatrix(true, false);
+}
+
+/**
+ * 反馈#375：transferOrigin 的「枢轴变形补偿」只按自身旋转推导，忽略了 mesh.scale，
+ * 缩放不为 1 时补偿量缺一截，捕捉枢轴点会把内容整体推走（Java 格式「重缩放旋转」rescale 的
+ * 方块、以及带 scale 的网格元素都会踩到）。
+ *
+ * 推导（Δ = 新 origin − 旧 origin，储存坐标空间，R = mesh 四元数，S = mesh 缩放）：
+ *   Cube：几何局部坐标 = from/to − origin，世界 = origin + R·S·(from − origin)
+ *         精确补偿 = Δ − (R·S)⁻¹Δ，transferOrigin 实际给的是 Δ − R⁻¹Δ
+ *   Mesh：顶点是绝对坐标，世界 = origin + R·S·vertex
+ *         精确补偿 = −(R·S)⁻¹Δ，transferOrigin 实际给的是 −R⁻¹Δ
+ *   两者差值同为 R⁻¹Δ − S⁻¹R⁻¹Δ，即本函数补的量。
+ */
+function correctScaledPivotTransfer(node, origin_before) {
+	let scale = node?.mesh?.scale;
+	if (!scale) return;
+	if (Math.abs(scale.x - 1) < 1e-9 && Math.abs(scale.y - 1) < 1e-9 && Math.abs(scale.z - 1) < 1e-9) return;
+	let delta = new THREE.Vector3(
+		node.origin[0] - origin_before[0],
+		node.origin[1] - origin_before[1],
+		node.origin[2] - origin_before[2],
+	);
+	if (delta.lengthSq() < 1e-20) return;
+	let rotated = delta.applyQuaternion(new THREE.Quaternion().copy(node.mesh.quaternion).invert());
+	let correction = rotated.clone().sub(new THREE.Vector3(
+		rotated.x / scale.x,
+		rotated.y / scale.y,
+		rotated.z / scale.z,
+	)).toArray();
+	if (node instanceof Cube) {
+		node.from.V3_add(correction);
+		node.to.V3_add(correction);
+		if (node.mapAutoUV) node.mapAutoUV();
+		node.preview_controller.updateGeometry(node);
+	} else if (node.vertices) {
+		for (let vkey in node.vertices) {
+			if (node.vertices[vkey]) node.vertices[vkey].V3_add(correction);
+		}
+		node.preview_controller.updateGeometry(node);
+	}
 }
 
 /**
@@ -826,9 +921,14 @@ export const Vertexsnap = {
 		}
 
 		if (Vertexsnap.move_pivot) {
+			refreshNodeWorldMatrix(data.element);
 			let world_pos = Vertexsnap.getGlobalVertexPos(data.element, data.vertex);
-			let pivot_targets = Vertexsnap.groups.length ? Vertexsnap.groups : Vertexsnap.elements;
+			// 反馈#375：父子组同时选中时只处理最外层目标（后代理应保持自己的枢轴随内容走）
+			let pivot_targets = Vertexsnap.groups.length
+				? getOutermostNodes(Vertexsnap.groups)
+				: Vertexsnap.elements;
 			for (let node of pivot_targets) {
+				refreshNodeWorldMatrix(node);
 				// Transform the world-space target into the space in which the node's origin
 				// is expressed, with a single matrix transform instead of piecemeal offsets
 				let vec = new THREE.Vector3().copy(world_pos);
@@ -838,13 +938,32 @@ export const Vertexsnap = {
 				} else {
 					vec.sub(Canvas.scene.position);
 				}
-				if (node.parent instanceof OutlinerNode && node.parent.getTypeBehavior('use_absolute_position')) {
+				// 反馈#375：储存的 origin 只有在 mesh 真的挂在「绝对位置」父组 mesh 下时，才需要用父 origin
+				// 换算回绝对坐标。非骨骼架构造型（Java 方块等）里元素 mesh 直接挂在模型根节点下，
+				// origin 本身就是绝对坐标——原来无条件加父 origin 会让枢轴落点整体偏出父 origin 那么多
+				// （父组 origin 越大偏得越狠，于是表现为「有概率错位」）。判据与 transform.js
+				// changeNodeLocalPosition 保持一致。
+				if (Format.bone_rig
+					&& node.parent instanceof OutlinerNode
+					&& node.parent.getTypeBehavior('parent')
+					&& node.parent.getTypeBehavior('use_absolute_position')) {
 					vec.x += node.parent.origin[0];
 					vec.y += node.parent.origin[1];
 					vec.z += node.parent.origin[2];
 				}
 				// 反馈#350：忽略轴要把枢轴点留在原坐标上，只让其余轴落到目标顶点
-				node.transferOrigin(clampIgnoredAxes(vec, node, options.ignore_axis));
+				let origin_before = node.origin.slice();
+				let target_origin = clampIgnoredAxes(vec, node, options.ignore_axis);
+				if (node instanceof Group && !groupTransformAppliesToContent(node)) {
+					// 反馈#375：组只是文件夹（非骨骼架构造型）时，组枢轴不影响内容——直接写枢轴即可，
+					// 走 transferOrigin 会按组旋转给内容做补偿，把方块整体推走
+					node.origin.V3_set(target_origin);
+					node.preview_controller.updateTransform(node);
+				} else {
+					node.transferOrigin(target_origin);
+					// 反馈#375：mesh 带缩放时 transferOrigin 的补偿少一截，把差值补回去（内容才会真的一动不动）
+					correctScaledPivotTransfer(node, origin_before);
+				}
 			}
 		} else {
 
@@ -866,7 +985,22 @@ export const Vertexsnap = {
 				// 反馈#323：先按「对齐」方式把被抓顶点的方向转到目标方向；「自动缩放至顶点」打开后，
 				// 再按「缩放模式」的同一套口径（抓到的角点 + 目标点两个顶点的世界位移，逐轴推
 				// from/to）把方块拉长到目标点上——等价于旋转完再手动切缩放模式点这两个顶点。
+				//
+				// 反馈#374：选组时旋转组本身，选方块时旋转方块。
+				// 选中组时 select_children 行为会把组内方块一并放进 Outliner.selected，若仍按元素
+				// 逐个旋转，就会出现「组内方块各自被改 rotation、组本身不动」的现象（本条反馈）。
+				// 这里按「最外层」拆成两组目标：最外层组按组旋转（绕组枢轴），其余元素照旧按方块旋转；
+				// 已被选中组覆盖的后代元素不再单独旋转，避免重复旋转。
 				const auto_scale = !!options.auto_scale;
+				const rotate_groups = getOutermostNodes(Vertexsnap.groups);
+				const rotate_elements = Vertexsnap.elements.filter(obj =>
+					!rotate_groups.some(group => obj.getAllAncestors().includes(group)));
+				const rotate_targets = rotate_groups.concat(rotate_elements);
+				// 组类型没有 scalable 行为（Group 数据里也没有 scale），绕枢轴「缩放组」无从下手；
+				// 保守方案：选组时跳过自动缩放，只做旋转，并提示原因——不去改组内方块的 from/to，
+				// 否则又会回到「选组却改了子方块」的老问题。
+				const skip_group_scale = auto_scale && rotate_groups.length > 0;
+				const auto_scale_in_effect = auto_scale && !skip_group_scale;
 				function scaleAboutPivot(obj, factor) {
 					if (!factor || !isFinite(factor) || factor <= 0) return;
 					let pivot = new THREE.Vector3();
@@ -902,7 +1036,8 @@ export const Vertexsnap = {
 				}
 				// 旋转前的起点距离，非方块元素（没有可拆的轴边界）按等比缩放落到目标
 				let rotate_distances = new Map();
-				Vertexsnap.elements.forEach((obj) => {
+				rotate_targets.forEach((obj) => {
+					refreshNodeWorldMatrix(obj);
 					let local_start = obj.mesh.worldToLocal(new THREE.Vector3().copy(Vertexsnap.vertex_pos));
 					let local_target = obj.mesh.worldToLocal(new THREE.Vector3().copy(global_target_pos));
 
@@ -942,10 +1077,10 @@ export const Vertexsnap = {
 					let modified_rotation = obj.mesh.rotation.toArray().slice(0, 3).map(Math.radToDeg);
 					obj.extend({rotation: modified_rotation});
 				})
-				if (auto_scale) {
+				if (auto_scale_in_effect) {
 					// 合批 cube 的 mesh 矩阵由批处理器维护（matrixAutoUpdate=false），旋转后只改
 					// quaternion 不会反映到 matrixWorld，取「旋转后」的顶点位置前必须先刷矩阵
-					Vertexsnap.elements.forEach((obj) => {
+					rotate_targets.forEach((obj) => {
 						obj.mesh.updateMatrix();
 						obj.mesh.updateWorldMatrix(true, false);
 					});
@@ -961,12 +1096,16 @@ export const Vertexsnap = {
 					if (!scaled) {
 						// 不是方块（网格/样条）或抓到的不是 8 角点之一：没有可拆的轴边界，
 						// 退化为绕枢轴等比缩放
-						Vertexsnap.elements.forEach((obj) => {
+						rotate_elements.forEach((obj) => {
 							let distances = rotate_distances.get(obj.uuid);
 							if (!distances || !distances.start) return;
 							scaleAboutPivot(obj, distances.end / distances.start);
 						});
 					}
+				} else if (skip_group_scale) {
+					// 反馈#374：组不可缩放，自动缩放至顶点在选组时跳过，明确告知而不是静默失效
+					Blockbench.showQuickMessage(tl('message.vertex_snap.group_auto_scale_skipped', [],
+						'Groups cannot be scaled, “auto scale to vertex” was skipped'));
 				}
 			}
 		}

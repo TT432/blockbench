@@ -515,6 +515,148 @@ export function flipNameOnAxis(node, axis, check, original_name) {
 	return node.name;
 }
 /**
+ * 反馈#376：「翻转忽略组旋转」——世界空间镜像的推导与实现。
+ *
+ * 数据空间 = from/to/origin 所在的坐标系。编辑视图里场景与它只差画布平移和模型视图变换
+ * （都不改轴向，且本文件一律用相对 Project.model_3d 的矩阵），所以按数据空间算出的轴向镜像
+ * 就是用户说的「按世界位置坐标翻转」。
+ *
+ * 元素自身几何局部 ⇒ 数据空间的完整变换 L = model_3d⁻¹ · mesh.matrixWorld，且
+ *   L = Q · T(origin) · R      （Q = 父链变换，R = 方块自身旋转；无父组时 Q 为单位阵）
+ * 设 F 为数据空间里沿轴 a 的反射 F(x) = D·x + (I−D)·c（c = 该轴面坐标，D 只把 a 分量取反），
+ * 那么同一个反射在元素坐标系里的表达是 W = Q⁻¹ · F · Q，父链不变 ⇒ 新状态为
+ *   origin' = W(origin)、R' = W_linear · R · D、from' = origin' + D(from − origin)（to' 同理，
+ *   沿轴 a 两端颠倒后按大小重排，长度不变）。
+ * 这里刻意让本地几何做 D（本地轴反射）：R' = W_linear·R·D 的行列式为 +1，是纯旋转，
+ * 能写回 rotation；而本地几何沿轴取反等价于把 +a 面贴到 −a 面，所以换面/UV 规则与
+ * Cube.flip 的局部镜像完全一致（Cube.flip 里 "rotation 另外两轴取负" 在 ZYX 欧拉序下
+ * 正是 D·R·D，同样验证了这一点），因此直接复用它的换面/UV/改名逻辑。
+ */
+function getElementDataMatrix(element) {
+	if (!element.mesh || !Project?.model_3d) return null;
+	element.mesh.updateWorldMatrix(true, false);
+	Project.model_3d.updateWorldMatrix(true, false);
+	return new THREE.Matrix4()
+		.copy(Project.model_3d.matrixWorld).invert()
+		.multiply(element.mesh.matrixWorld);
+}
+/**
+ * 反馈#376：取出父链变换 Q（元素位置值 ⇒ 数据空间）。按 L·R⁻¹·T(−origin) 反推，
+ * 这样不依赖各格式把 mesh.position 写成绝对坐标还是相对父级原点的差异。
+ * 只有在「Q 含旋转且是纯旋转」时才走世界镜像：无旋转时局部镜像与它完全等价（保持既有行为），
+ * 含缩放/剪切时 R' 不再是纯旋转、写不回 rotation 字段，也只能退回局部镜像。
+ */
+function getGroupRotationFrame(cube) {
+	let matrix = getElementDataMatrix(cube);
+	if (!matrix) return null;
+	let scale = cube.mesh.scale;
+	if (Math.abs(scale.x - 1) > 1e-4 || Math.abs(scale.y - 1) > 1e-4 || Math.abs(scale.z - 1) > 1e-4) return null;
+	let origin = new THREE.Vector3().fromArray(cube.origin);
+	let rotation = new THREE.Matrix4().makeRotationFromQuaternion(getNodeRotationQuaternion(cube));
+	let frame = new THREE.Matrix4().copy(matrix)
+		.multiply(new THREE.Matrix4().copy(rotation).invert())
+		.multiply(new THREE.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z));
+	// 纯旋转校验（正交、无缩放/剪切；det 为 +1 由正交保证，镜像父链在 Blockbench 里不存在）
+	let e = frame.elements;
+	let axes = [
+		new THREE.Vector3(e[0], e[1], e[2]),
+		new THREE.Vector3(e[4], e[5], e[6]),
+		new THREE.Vector3(e[8], e[9], e[10]),
+	];
+	if (axes.some(axis => Math.abs(axis.length() - 1) > 1e-4)) return null;
+	if (Math.abs(axes[0].dot(axes[1])) > 1e-4 || Math.abs(axes[0].dot(axes[2])) > 1e-4 || Math.abs(axes[1].dot(axes[2])) > 1e-4) return null;
+	let rotated = false;
+	for (let i = 0; i < 3; i++) {
+		let unit = new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
+		if (axes[i].distanceToSquared(unit) > 1e-8) rotated = true;
+	}
+	return rotated ? frame : null;
+}
+/**
+ * 反馈#376：方块几何中心在数据空间里沿轴 a 的坐标（就地翻转的镜像面位置）。
+ * 带旋转父组时 getCubeCenterAlongAxis 返回的是父级坐标系里的分量，不是世界轴上的位置。
+ */
+function getCubeWorldCenterAlongAxis(cube, axis) {
+	let local_center = new THREE.Vector3(
+		(cube.from[0] + cube.to[0]) / 2 - cube.origin[0],
+		(cube.from[1] + cube.to[1]) / 2 - cube.origin[1],
+		(cube.from[2] + cube.to[2]) / 2 - cube.origin[2]
+	);
+	let matrix = getElementDataMatrix(cube);
+	if (!matrix) return cube.origin[axis] + local_center.getComponent(axis);
+	return local_center.applyMatrix4(matrix).getComponent(axis);
+}
+/**
+ * 反馈#376：按世界（数据空间）轴面镜像一个方块，忽略父组旋转。
+ * 返回 false 表示该方块不适用（开关关闭 / 无旋转父组 / 父链带缩放 / 父组本身也在被翻转），
+ * 调用方继续走原来的局部镜像。面交换 + UV 镜像 + 名称翻转沿用 Cube.flip，随后把几何与旋转
+ * 覆盖成上面的世界空间结果。
+ * 倾斜轴面（FlipPlane.isAligned 为 false）不在本函数处理：反馈#299 的斜向反射路径会先把节点
+ * 绕轴面枢轴刚性旋转，而带旋转父组的节点 origin 不是数据空间坐标，世界轴镜像在那里没有确定的
+ * 镜像面（实测：无组旋转时该路径与「R(θ)·F·R(−θ)」吻合，带旋转父组时开关开/关都不吻合，
+ * 说明这是既有实现本身的近似）。因此倾斜轴面保持原行为，调用方按 FlipPlane.isAligned 拦截。
+ */
+function flipCubeIgnoringGroupRotation(cube, axis, center) {
+	if (!(cube instanceof Cube) || !cube.mesh) return false;
+	if (!Settings.get('community_flip_ignore_group_rotation')) return false;
+	// Java 块格式的 rescale 用网格非等比缩放补偿方块旋转，视觉变换里含缩放，旋转字段表达不了镜像
+	if (cube.rescale === true) return false;
+	// 父组本身也在这次翻转里被翻（选中组时组内方块会一起进选区）：组仍按原局部规则翻，
+	// 若再让组内方块按世界轴镜像，两者合成的结果既不是原行为也不是世界镜像，
+	// 所以这种「整组翻转」保持原版行为（组与其内容一起按局部规则翻）。
+	for (let parent = cube.parent; parent instanceof OutlinerNode; parent = parent.parent) {
+		if (parent instanceof Group && Group.multi_selected.includes(parent)) return false;
+	}
+	let frame = getGroupRotationFrame(cube);
+	if (!frame) return false;
+
+	// 数据空间里的反射 F：轴 a 分量 x → 2·center − x
+	let reflection = new THREE.Matrix4().set(
+		axis === 0 ? -1 : 1, 0, 0, axis === 0 ? center * 2 : 0,
+		0, axis === 1 ? -1 : 1, 0, axis === 1 ? center * 2 : 0,
+		0, 0, axis === 2 ? -1 : 1, axis === 2 ? center * 2 : 0,
+		0, 0, 0, 1
+	);
+	// W = Q⁻¹ · F · Q：同一个反射在元素坐标系里的表达
+	let local_mirror = new THREE.Matrix4().copy(frame).invert().multiply(reflection).multiply(frame);
+	let old_origin = new THREE.Vector3().fromArray(cube.origin);
+	let new_origin = old_origin.clone().applyMatrix4(local_mirror);
+	let local_linear = new THREE.Matrix4().copy(local_mirror).setPosition(0, 0, 0);
+	let axis_mirror = new THREE.Matrix4().makeScale(
+		axis === 0 ? -1 : 1, axis === 1 ? -1 : 1, axis === 2 ? -1 : 1
+	);
+	let new_rotation = new THREE.Matrix4()
+		.multiplyMatrices(local_linear, new THREE.Matrix4().makeRotationFromQuaternion(getNodeRotationQuaternion(cube)))
+		.multiply(axis_mirror);
+
+	let old_from = cube.from.slice();
+	let old_to = cube.to.slice();
+	let new_from = old_from.slice();
+	let new_to = old_to.slice();
+	for (let i = 0; i < 3; i++) {
+		if (i === axis) continue;
+		let delta = new_origin.getComponent(i) - old_origin.getComponent(i);
+		new_from[i] = old_from[i] + delta;
+		new_to[i] = old_to[i] + delta;
+	}
+	// 沿轴 a：反射后的旧「大端」落到新的 from 侧（等价于本地坐标取反后按大小重排，轴长不变）
+	let old_axis_origin = old_origin.getComponent(axis);
+	let new_axis_origin = new_origin.getComponent(axis);
+	new_from[axis] = new_axis_origin + old_axis_origin - old_to[axis];
+	new_to[axis] = new_axis_origin + old_axis_origin - old_from[axis];
+
+	// 换面/UV/改名复用局部镜像那套（本函数只覆盖几何与旋转）
+	cube.flip(axis, center, false);
+	cube.origin.V3_set(new_origin.x, new_origin.y, new_origin.z);
+	cube.from.V3_set(new_from[0], new_from[1], new_from[2]);
+	cube.to.V3_set(new_to[0], new_to[1], new_to[2]);
+	setNodeRotationFromQuaternion(cube, new THREE.Quaternion().setFromRotationMatrix(new_rotation));
+	cube.preview_controller.updateTransform(cube);
+	cube.preview_controller.updateGeometry(cube);
+	cube.preview_controller.updateFaces(cube);
+	return true;
+}
+/**
  * 反馈#299：轴对齐（未旋转）时的镜像主体，不含 Undo 记录——倾斜轴面要在旋转后的坐标系里复用它。
  */
 function flipSelectionOnAxisPlane(axis) {
@@ -540,9 +682,13 @@ function flipSelectionOnAxisPlane(axis) {
 			group.forEachChild(flipGroup, Group);
 		}
 	}
+	// 反馈#376：倾斜轴面（反馈#299 的斜向反射路径）保持原行为，见 flipCubeIgnoringGroupRotation 的说明
+	let world_space_flip = FlipPlane.isAligned(axis);
 	Outliner.selected.forEach(function(obj) {
 		if (obj instanceof Mesh) {
 			obj.flipSelection(axis);
+		} else if (world_space_flip && flipCubeIgnoringGroupRotation(obj, axis, center)) {
+			// 反馈#376：已按世界轴面镜像（函数内部处理了面/UV/名称与预览刷新）
 		} else {
 			obj.flip(axis, center, false);
 		}
@@ -790,7 +936,11 @@ export function mirrorSelectedInPlace(axis) {
 			let center = selection_center ? getSharedCenterAlongAxis(obj, axis, selection_center) : obj.origin[axis];
 			obj.flipSelection(axis, center, !selection_center);
 		} else if (obj instanceof Cube) {
-			obj.flip(axis, getCubeCenterAlongAxis(obj, axis, selection_center), false);
+			// 反馈#376：开启「翻转忽略组旋转」时，就地翻转的镜像面取方块几何中心在世界轴上的位置
+			let world_center = selection_center ? selection_center[axis] : getCubeWorldCenterAlongAxis(obj, axis);
+			if (!flipCubeIgnoringGroupRotation(obj, axis, world_center)) {
+				obj.flip(axis, getCubeCenterAlongAxis(obj, axis, selection_center), false);
+			}
 		} else {
 			obj.flip(axis, obj.origin[axis], true);
 		}
@@ -3095,6 +3245,15 @@ BARS.defineActions(function() {
 		click() {
 			mirrorSelectedInPlace(2);
 		}
+	})
+	// 反馈#376：翻转是否忽略父组旋转（linked_setting 与设置项同名取值，按钮可在「自定义工具栏」里加到任意工具栏）。
+	// 快捷键只在编辑模式生效，默认 Shift+N，可在「快捷键」设置里改绑。
+	new Toggle('flip_ignore_group_rotation', {
+		category: 'transform',
+		icon: 'flip',
+		condition: {modes: ['edit']},
+		linked_setting: 'community_flip_ignore_group_rotation',
+		keybind: new Keybind({key: 'n', shift: true}),
 	})
 
 	new Action('center_x', {

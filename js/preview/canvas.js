@@ -534,7 +534,14 @@ export const Canvas = {
 				if ((aspects.uv || update_all)) {
 					if (controller.updateUV) controller.updateUV(element);
 				}
-				if ((aspects.painting_grid || aspects.geometry || aspects.transform || aspects.visibility || update_all) && Modes.paint && settings.painting_grid.value) {
+				// 反馈#372：可见性变化也要重建像素网格。编辑模式的「像素网格」在隐藏元素上
+				// 不会保留 grid_box（Cube.updatePixelGrid 见 visibility=false 直接返回），
+				// 而「仅显示所选项」取消时只走可见性更新——不同步重建的话，那些元素一直到
+				// 下次几何/变换更新前都没有网格，看起来「网格只在之前独显过的元素上生效」。
+				// updatePixelGrid 在「没有网格且当前模式不需要网格」时直接返回，代价可忽略。
+				let update_grid = aspects.visibility || update_all
+					|| ((aspects.painting_grid || aspects.geometry || aspects.transform) && Modes.paint && settings.painting_grid.value);
+				if (update_grid) {
 					if (controller.updatePixelGrid) controller.updatePixelGrid(element);
 				}
 				if (aspects.visibility || update_all) {

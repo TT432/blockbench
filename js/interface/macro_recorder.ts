@@ -22,6 +22,10 @@
  *   贴图的名字（贴图选中态不是大纲选区，回放时重建不出来）。回放按名字找同名贴图再删，
  *   同名多个时删面板里最顶上的那个；名字对不上就跳过该步并记日志，与组/元素名字对不上的
  *   处理口径一致。
+ * - **不回删本轮回放新建的贴图**（反馈#370）：回放期间记下所有新出现的贴图。删除步骤按名字
+ *   找同名贴图时跳过它们，只删回放开始前就存在的同名贴图——典型场景是宏第一步「创建贴图」
+ *   （默认名 texture）、后面删掉旧贴图也改名成了 texture：不跳过的话删掉的是刚建好的那张。
+ *   同名贴图全部都是本轮新建的，就跳过该步并记日志。
  * - **导出与截屏**：录制时记下实际落盘的路径（导出 → `export` 步骤，图片 → `screenshot` 步骤），
  *   路径里可以用 `${name}`（模型名）与 `${file}`（模型文件路径）占位；批量处理时按模型替换，
  *   因此一套宏可以给整批模型各自输出到不同文件。文件名整段换成 `${name}`、只保留扩展名
@@ -300,6 +304,12 @@ const MacroRecorder = {
 	/** 回放中：当前步骤（对话框自动填表要用） */
 	current_step: null as MacroStep | null,
 	current_context: null as {file?: string, name?: string} | null,
+	/**
+	 * 回放期间（这一轮 play）新建的贴图 uuid（反馈#370）。贴图删除步骤会跳过这些贴图：
+	 * 宏里「创建贴图 + 删除同名旧贴图」重放时，新建贴图的默认名恰好与旧贴图重名，
+	 * 只按名字找会删掉刚建好的那张。
+	 */
+	run_created_textures: new Set<string>(),
 	action_listeners: [] as Deletable[],
 	mode_listener: null as Deletable | null,
 	hooks_installed: false,
@@ -895,6 +905,9 @@ const MacroRecorder = {
 	 * 回放贴图删除步骤（反馈#369）：只按名字删同名的贴图，同名多个时删面板里最顶上的那个
 	 * （遍历顺序就是面板顺序）。名字对不上就整步跳过并写日志——拿别的贴图去删，改的是
 	 * 另一个模型的内容，和「组/元素名字对不上就跳过」是同一条口径。
+	 * 反馈#370：本轮回放新建的贴图是「不能被删」的——宏里的「创建贴图」默认名就叫 texture，
+	 * 后面删旧贴图时若旧贴图也叫这个名，按名字找到的第一张就是刚建好的那张。所以按名字
+	 * 取候选时跳过本轮新建的贴图；同名贴图全是新建的就跳过该步并记日志。
 	 */
 	replayTextureDelete(step: MacroStep) {
 		if (typeof Texture == 'undefined' || typeof Project == 'undefined') return;
@@ -904,14 +917,24 @@ const MacroRecorder = {
 			return;
 		}
 		let missing: string[] = [];
+		let kept_created: string[] = [];
 		for (let name of names) {
-			let texture = Texture.all.find(candidate => candidate.name === name);
-			if (!texture) {
+			let matches = Texture.all.filter(candidate => candidate.name === name);
+			if (!matches.length) {
 				missing.push(name);
+				continue;
+			}
+			// 同名多个：取面板里最顶上的那张；本轮新建的一律不碰
+			let texture = matches.find(candidate => !this.run_created_textures.has(candidate.uuid));
+			if (!texture) {
+				kept_created.push(name);
 				continue;
 			}
 			// `remove()` 自带 undo 事务与画布/面板刷新（与纹理面板里删除走同一段实现）
 			texture.remove();
+		}
+		if (kept_created.length) {
+			this.pushLog(tl('message.macro.log_texture_created_kept', [kept_created.join(', ')]));
 		}
 		if (missing.length) {
 			this.pushLog(tl('message.macro.log_missing_textures', [missing.join(', ')]));
@@ -1023,6 +1046,12 @@ const MacroRecorder = {
 		this.current_context = context;
 		this.clearLog();
 		this.refreshToolbar();
+		// 反馈#370：记下本轮新建的贴图，删除步骤不碰它们（见 replayTextureDelete）
+		this.run_created_textures.clear();
+		let texture_listener = Blockbench.on('add_texture', (event: {texture?: {uuid?: string}}) => {
+			let uuid = event?.texture?.uuid;
+			if (uuid) this.run_created_textures.add(uuid);
+		});
 		try {
 			// 也在 try 里：这里抛异常时 `playing` 必须复位，否则工具栏永远停在「回放中」
 			// ——播放/批量按钮一起消失，面板再也回不到可用状态（反馈#362）
@@ -1035,6 +1064,7 @@ const MacroRecorder = {
 				await this.runStep(this.steps[i]);
 			}
 		} finally {
+			texture_listener?.delete();
 			this.current_step = null;
 			this.step_index = -1;
 			this.playing = false;
