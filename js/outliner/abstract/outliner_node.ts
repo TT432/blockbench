@@ -369,17 +369,15 @@ export abstract class OutlinerNode {
 		return iterate(this.parent, 0)
 	}
 	/**
-	 * 节点是否处于「锁定」状态：自身锁定，或任一祖先组锁定。
-	 * 反馈#254：锁定组的后代也不能被选中/被批量操作，选择类入口统一用本方法判断。
+	 * 节点是否处于「锁定」状态——只看自己的 `locked` 标志，选择类入口统一用本方法判断。
+	 * 反馈#254：点组的锁会把 locked 级联写进当时存在的全部后代（outliner.js dragToggle 的
+	 * `key == 'locked'` 分支），所以「锁一个组 = 锁住它的内容」靠的是标志而不是祖先关系。
+	 * 反馈#377：也正因为如此，用户随后在锁定父组里单独解锁某个子组时必须真的能选中它——
+	 * 旧的「任一祖先锁定即锁定」判定会把这次显式解锁重新盖住，导致该子组及其内容点不动。
+	 * 代价：之后新放进锁定组的元素不会被自动上锁（要保护它请单独锁定）。
 	 */
 	isEffectivelyLocked(): boolean {
-		if (this.locked) return true;
-		let parent: OutlinerNode | 'root' | undefined = this.parent;
-		while (parent instanceof OutlinerNode) {
-			if (parent.locked) return true;
-			parent = parent.parent;
-		}
-		return false;
+		return !!this.locked;
 	}
 	/**
 	 * 祖先组是否已经隐藏了本节点（自身 visibility 标志保持 true）。

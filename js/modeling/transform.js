@@ -2900,6 +2900,39 @@ BARS.defineActions(function() {
 			Blockbench.showQuickMessage(tl('message.flip_plane_center.set'));
 		}
 	})
+	// 反馈#378：轴面对齐的第二个目标——把所选组的「世界旋转」数值复制到三个轴面旋转上。
+	// 与上面的对齐按钮一样按 rotationAxis 投影到各轴面（X 面绕 Z、Y 面绕 X、Z 面绕 Y），
+	// 区别是这里先把祖先链的旋转乘进来：组在带旋转的父组里时，用的是它最终呈现给用户的角度。
+	new Action('flip_plane_rotation_from_group', {
+		name: 'action.flip_plane_rotation_from_group',
+		description: 'action.flip_plane_rotation_from_group.desc',
+		icon: '3d_rotation',
+		category: 'transform',
+		condition: {modes: ['edit'], method: () => !!Group.first_selected},
+		click() {
+			let group = Group.first_selected;
+			if (!group) return;
+			let locked = [0, 1, 2].filter(axis => isFlipPlaneLocked(axis));
+			if (locked.length == 3) {
+				Blockbench.showQuickMessage(tl('message.flip_plane_center.all_locked'), 2500);
+				return;
+			}
+			let quaternion = getAncestorChainQuaternion(group).multiply(getNodeRotationQuaternion(group));
+			let order = group.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+			let euler = new THREE.Euler().setFromQuaternion(quaternion, order);
+			let world_rotation = [Math.radToDeg(euler.x), Math.radToDeg(euler.y), Math.radToDeg(euler.z)];
+			Undo.initEdit({flip_plane: true, keep_saved: true});
+			for (let axis = 0; axis < 3; axis++) {
+				if (isFlipPlaneLocked(axis)) continue;
+				let angle = ((world_rotation[FlipPlane.rotationAxis(axis)] + 180) % 360 + 360) % 360 - 180;
+				FlipPlane.rotation[axis] = Math.round(angle * 1000) / 1000;
+			}
+			updateFlipPlaneVisual();
+			updateFlipPlaneSliders();
+			Undo.finishEdit('Copy group world rotation to flip planes', {flip_plane: true, keep_saved: true});
+			Blockbench.showQuickMessage(tl('message.flip_plane_rotation.from_group'));
+		}
+	})
 	// 反馈#299：「轴面对齐所选中心」右侧的重置按钮——偏移与旋转共 6 个数值一键归零
 	new Action('flip_plane_reset', {
 		name: 'action.flip_plane_reset',
@@ -3248,9 +3281,10 @@ BARS.defineActions(function() {
 	})
 	// 反馈#376：翻转是否忽略父组旋转（linked_setting 与设置项同名取值，按钮可在「自定义工具栏」里加到任意工具栏）。
 	// 快捷键只在编辑模式生效，默认 Shift+N，可在「快捷键」设置里改绑。
+	// 反馈#379：图标换成「四向扩展」，不再和镜像/翻转共用 flip 图标；开关同时出现在翻转轴面面板里。
 	new Toggle('flip_ignore_group_rotation', {
 		category: 'transform',
-		icon: 'flip',
+		icon: 'open_in_full',
 		condition: {modes: ['edit']},
 		linked_setting: 'community_flip_ignore_group_rotation',
 		keybind: new Keybind({key: 'n', shift: true}),

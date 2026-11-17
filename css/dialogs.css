@@ -2716,6 +2716,10 @@
 		display: block;
 		margin-bottom: -3px;
 		font-size: 0.94em;
+		/* 反馈#380：预览区（.texture_adjust_previews）与右上角的折叠按钮都是左浮动，
+		   不清浮动的话这两个浮动的行内剩余宽度只剩几像素，第一个标签会被挤成竖排跑到贴图右侧，
+		   和它下面的数值滑条分家。滑条行本来就是 clear: both，标签跟着一起清即可。 */
+		clear: both;
 	}
 	.bar.button_bar_checkbox {
 		position: absolute;
