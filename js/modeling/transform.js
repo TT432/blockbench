@@ -1039,23 +1039,32 @@ export function moveSelectionInWorldAxis(difference, world_axis) {
 	});
 }
 /**
- * 反馈#339：轴面被单轴旋转后，元素在该轴上的「居中位置」不再唯一确定（倾斜的对称平面
- * 与选区的关系不是一个沿轴的位移），因此这时的居中动作直接拒绝并提示。
- * 只在轴面绕自身法线转过角度时成立；旋转回 0（`isAligned`）后恢复原行为。
+ * 反馈#339/#378：轴面被单轴旋转后，元素在该轴上的「居中位置」按轴面法线定义——
+ * 沿轴面法线把选区中心推到轴面上。轴面对齐（未旋转）时退化为原来的单分量位移。
  */
-function flipPlaneBlocksCentering(axes) {
-	if (axes.every(axis => FlipPlane.isAligned(axis))) return false;
-	Blockbench.showQuickMessage(tl('message.center.flip_plane_rotated'), 2500);
-	return true;
-}
 export function centerElements(axis, update) {
 	if (!Outliner.selected.length) return;
-	let center = getSelectionCenter()[axis];
-	// 反馈#337：居中目标是「当前的翻转轴面（对称轴）」，不是画布中心。
-	// 轴面偏移为 0 时与旧行为完全一致；改过轴面后居中也跟着新轴走。
-	var difference = FlipPlane.position(axis) - center
+	let center = getSelectionCenter();
 	let world_delta = new THREE.Vector3();
-	world_delta.setComponent(axis, difference);
+	if (FlipPlane.isAligned(axis)) {
+		// 反馈#337：居中目标是「当前的翻转轴面（对称轴）」，不是画布中心。
+		// 轴面偏移为 0 时与旧行为完全一致；改过轴面后居中也跟着新轴走。
+		world_delta.setComponent(axis, FlipPlane.position(axis) - center[axis]);
+	} else {
+		// 反馈#378：倾斜轴面没有「沿某个世界轴的单分量位移」可言，居中就是沿轴面法线走。
+		// 法线与镜像用的是同一套定义（R·e_axis，绕 rotationAxis 转 rotation[axis]），
+		// 因此把选区中心推到轴面上后，镜像面正好穿过选区中心。
+		let rotation_axis = FlipPlane.rotationAxis(axis);
+		let normal = new THREE.Vector3();
+		normal.setComponent(axis, 1);
+		normal.applyAxisAngle(
+			new THREE.Vector3(rotation_axis === 0 ? 1 : 0, rotation_axis === 1 ? 1 : 0, rotation_axis === 2 ? 1 : 0),
+			Math.degToRad(FlipPlane.rotation[axis])
+		);
+		let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
+		let point = new THREE.Vector3(center[0], center[1], center[2]);
+		world_delta.copy(normal).multiplyScalar(-normal.dot(point.sub(pivot)));
+	}
 
 	Outliner.selected.forEach(function(obj) {
 		let local_delta = getWorldDeltaInParentSpace(obj, world_delta);
@@ -2900,9 +2909,13 @@ BARS.defineActions(function() {
 			Blockbench.showQuickMessage(tl('message.flip_plane_center.set'));
 		}
 	})
-	// 反馈#378：轴面对齐的第二个目标——把所选组的「世界旋转」数值复制到三个轴面旋转上。
-	// 与上面的对齐按钮一样按 rotationAxis 投影到各轴面（X 面绕 Z、Y 面绕 X、Z 面绕 Y），
-	// 区别是这里先把祖先链的旋转乘进来：组在带旋转的父组里时，用的是它最终呈现给用户的角度。
+	// 反馈#378：#378 第一版只把组的「世界旋转」抄进三个轴面旋转，枢轴还留在原处，
+	// 所以翻转出来的镜像面不经过组枢轴——用户测试仍判未修复。现在这个目标一次对齐两样：
+	// 枢轴（偏移 = 组枢轴，与「轴面对齐所选中心」同一口径）+ 世界旋转（连同父链）。
+	// 用法：选中带旋转的组 → 点它 → 翻转该轴就按「组枢轴 + 组朝向」镜像。
+	// 局限：三个轴面各自只能绕一个轴旋转（X 面绕 Z、Y 面绕 X、Z 面绕 Y），组的朝向能分解成
+	// 这种单轴角度（骨骼动画绝大多数只有一根轴有角度）时轴面与组的对称面完全重合，多轴
+	// 旋转只能取到同一组欧拉分量，轴面近似贴合。
 	new Action('flip_plane_rotation_from_group', {
 		name: 'action.flip_plane_rotation_from_group',
 		description: 'action.flip_plane_rotation_from_group.desc',
@@ -2921,15 +2934,21 @@ BARS.defineActions(function() {
 			let order = group.mesh?.rotation?.order || Format.euler_order || 'ZYX';
 			let euler = new THREE.Euler().setFromQuaternion(quaternion, order);
 			let world_rotation = [Math.radToDeg(euler.x), Math.radToDeg(euler.y), Math.radToDeg(euler.z)];
+			// 组枢轴（数据空间口径与「对齐所选中心」一致）：智能复制根取实例容器
+			let reference = group.smart_object ? (group._smart_instance_container || group.mesh) : group.mesh;
+			reference.updateWorldMatrix(true, false);
+			let center = THREE.fastWorldPosition(reference, new THREE.Vector3()).toArray();
+			let base = Format.centered_grid ? 0 : 8;
 			Undo.initEdit({flip_plane: true, keep_saved: true});
 			for (let axis = 0; axis < 3; axis++) {
 				if (isFlipPlaneLocked(axis)) continue;
+				FlipPlane.offset[axis] = Math.round((center[axis] - base) * 1000) / 1000;
 				let angle = ((world_rotation[FlipPlane.rotationAxis(axis)] + 180) % 360 + 360) % 360 - 180;
 				FlipPlane.rotation[axis] = Math.round(angle * 1000) / 1000;
 			}
 			updateFlipPlaneVisual();
 			updateFlipPlaneSliders();
-			Undo.finishEdit('Copy group world rotation to flip planes', {flip_plane: true, keep_saved: true});
+			Undo.finishEdit('Align flip planes to group pivot and world rotation', {flip_plane: true, keep_saved: true});
 			Blockbench.showQuickMessage(tl('message.flip_plane_rotation.from_group'));
 		}
 	})
@@ -3296,7 +3315,6 @@ BARS.defineActions(function() {
 		color: 'x',
 		category: 'transform',
 		click() {
-			if (flipPlaneBlocksCentering([0])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(0, true);
 			Undo.finishEdit('Center selection on X axis')
@@ -3308,7 +3326,6 @@ BARS.defineActions(function() {
 		color: 'y',
 		category: 'transform',
 		click() {
-			if (flipPlaneBlocksCentering([1])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(1, true);
 			Undo.finishEdit('Center selection on Y axis')
@@ -3320,7 +3337,6 @@ BARS.defineActions(function() {
 		color: 'z',
 		category: 'transform',
 		click() {
-			if (flipPlaneBlocksCentering([2])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(2, true);
 			Undo.finishEdit('Center selection on Z axis')
@@ -3330,7 +3346,6 @@ BARS.defineActions(function() {
 		icon: 'filter_center_focus',
 		category: 'transform',
 		click() {
-			if (flipPlaneBlocksCentering([0, 2])) return;
 			Undo.initEdit({elements: Outliner.selected, groups: Group.all.filter(g => g.selected)});
 			centerElements(0, false);
 			centerElements(2, true);

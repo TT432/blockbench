@@ -272,7 +272,7 @@ export const SmartCopyGroup = {
 	 * （gizmo 直接改 origin），只能靠这份快照判断哪些组的位移/旋转变了，才能把子组同步到对侧、
 	 * 并在「成员根被移动 + 属性链接已断开」时整棵冻结该成员。
 	 */
-	pre_group_transforms: null as Map<UUID, {origin: number[], rotation: number[], scale?: number[]}> | null,
+	pre_group_transforms: null as Map<UUID, {origin: number[], rotation: number[], scale?: number[], visibility?: boolean}> | null,
 	/**
 	 * 编辑前「成员 + 下标路径」→ 节点（复报第 2 轮）：删除动作会在 finishEdit 之前清空
 	 * aspects.elements（outliner.js 的 `recursive_list.empty()`），只能靠这份快照做差集
@@ -397,6 +397,8 @@ export const SmartCopyGroup = {
 						origin: current.origin.slice(),
 						rotation: current.rotation.slice(),
 						scale: current.scale ? current.scale.slice() : undefined,
+						// 反馈#381：显隐也进快照，下面据此判断本次编辑是否真的改了它
+						visibility: current.visibility,
 					});
 					current.children.forEach((child, child_index) => walk(child, path.concat(child_index), member));
 				}
@@ -1099,6 +1101,18 @@ export const SmartCopyGroup = {
 					MirrorModeling.insertGroupIntoUndo(partner, aspects, before);
 					mirrorGroupTransform(group, partner, pairMirror(group, partner));
 					this.syncName(group, partner, edited_names.get(group.uuid));
+					// 反馈#381：显隐属于组级属性——藏一侧就该把对侧一起藏起来。
+					// 只在本次编辑确实改过源组 visibility 时才同步：可见性平时是每侧独立的
+					// （#351 独显 / 集合显隐都靠这一点），若每次位移/旋转同步都照抄源值，
+					// 会把用户特意分开的显隐状态抹掉。
+					// 注意此处的必要性：眼睛开关对锁定后代不级联改写标志（#254/#265），
+					// 此时只有组自己的 visibility 变了，元素级同步拿不到任何可镜像的改动。
+					let before_visibility = this.pre_group_transforms?.get(group.uuid)?.visibility;
+					if (before_visibility !== undefined && before_visibility !== group.visibility) {
+						partner.visibility = group.visibility;
+						partner.preview_controller?.updateVisibility(partner);
+						Outliner.syncNodeDomState(partner);
+					}
 					aspects.groups.safePush(partner);
 					changed = true;
 				}
