@@ -1278,11 +1278,20 @@ BARS.defineActions(function() {
 	new Action('pick_screen_color', {
 		icon: 'colorize',
 		category: 'color',
-		condition: () => (typeof EyeDropper == 'function' && Blockbench.platform != 'linux'),
+		condition: () => Blockbench.platform != 'linux' && (Blockbench.platform == 'win32' || typeof EyeDropper == 'function'),
 		click: async function () {
-			if (Blockbench.platform == 'win32') {
-				// workaround for https://github.com/electron/electron/issues/27980
-				ipcRenderer.send('request-color-picker', {sync: false});
+			if (isApp && (Blockbench.platform == 'win32' || typeof EyeDropper != 'function')) {
+				// 反馈#382：Windows 上既有原生取色器与现代桌面不兼容，Chromium EyeDropper 也不可用，
+				// 改由主进程开覆盖层取色（详见 electron/main.js openScreenColorPicker）
+				try {
+					let color = await ipcRenderer.invoke('bb-pick-screen-color');
+					if (color) ColorPanel.set(color);
+				} catch (error) {
+					if (/No handler registered/i.test(String(error))) {
+						// 应用内热更新只换渲染层，主程序还停在旧版
+						Blockbench.showQuickMessage('message.pick_screen_color_needs_update', 4000);
+					}
+				}
 
 			} else if (typeof EyeDropper == 'function') {
 				let dropper = new EyeDropper();

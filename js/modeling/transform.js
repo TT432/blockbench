@@ -59,7 +59,44 @@ export const FlipPlane = {
 	},
 }
 
+/** 反馈#378：轴面在数据空间里的法线（e_axis 绕 rotationAxis 转 rotation[axis]）。 */
+export function getFlipPlaneNormal(axis) {
+	let rotation_axis = FlipPlane.rotationAxis(axis);
+	let normal = new THREE.Vector3();
+	normal.setComponent(axis, 1);
+	normal.applyAxisAngle(
+		new THREE.Vector3(rotation_axis === 0 ? 1 : 0, rotation_axis === 1 ? 1 : 0, rotation_axis === 2 ? 1 : 0),
+		Math.degToRad(FlipPlane.rotation[axis])
+	);
+	return normal;
+}
+/**
+ * 反馈#378：数据空间里「绕法线 n、过枢轴 pivot 的平面」的反射矩阵 F(x) = (I − 2nnᵀ)x + 2(n·p)n。
+ * det(F) = −1；倾斜轴面与轴对齐轴面用同一套公式（旋转角为 0 时退化为单轴反射）。
+ */
+export function getFlipPlaneReflection(axis) {
+	let normal = getFlipPlaneNormal(axis);
+	let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
+	let d = 2 * normal.dot(pivot);
+	let n = normal;
+	return new THREE.Matrix4().set(
+		1 - 2*n.x*n.x, -2*n.x*n.y, -2*n.x*n.z, d*n.x,
+		-2*n.y*n.x, 1 - 2*n.y*n.y, -2*n.y*n.z, d*n.y,
+		-2*n.z*n.x, -2*n.z*n.y, 1 - 2*n.z*n.z, d*n.z,
+		0, 0, 0, 1
+	);
+}
+
 //Actions
+/**
+ * 反馈#378：fastWorldPosition 给的是场景坐标；非居中网格的模型在场景里整体平移了 (−8, 0, −8)
+ * （format.ts 的 model_3d.position），FlipPlane 与元素坐标都在数据空间，两者混用时 X/Z 会差 8。
+ */
+function scenePointToDataSpace(point) {
+	let vec = new THREE.Vector3(point[0] ?? point.x ?? 0, point[1] ?? point.y ?? 0, point[2] ?? point.z ?? 0);
+	if (!Format.centered_grid) vec.x += 8, vec.z += 8;
+	return vec;
+}
 export function getSelectionCenter(all = false) {
 	// 反馈#234：智能根的实例 TRS 落在骨骼（bone_rig）或独立实例容器（其他格式）上，
 	// 后代元素的 matrixWorld 只有渲染循环才刷新；拖动过程中按后代包围盒算中心会停在上一帧，
@@ -69,12 +106,12 @@ export function getSelectionCenter(all = false) {
 		if (group.smart_object && (Outliner.selected.length == 0 || group.matchesSelection())) {
 			let reference = group._smart_instance_container || group.mesh;
 			reference.updateWorldMatrix(true, false);
-			return THREE.fastWorldPosition(reference, new THREE.Vector3()).toArray();
+			return scenePointToDataSpace(THREE.fastWorldPosition(reference, new THREE.Vector3())).toArray();
 		}
 	}
 	if (Group.selected.length == 1 && Outliner.selected.length == 0 && !all) {
 		let vec = THREE.fastWorldPosition(Group.first_selected.mesh, new THREE.Vector3());
-		return vec.toArray();
+		return scenePointToDataSpace(vec).toArray();
 	}
 
 	let max = [-Infinity, -Infinity, -Infinity];
@@ -546,13 +583,13 @@ function getElementDataMatrix(element) {
  * 只有在「Q 含旋转且是纯旋转」时才走世界镜像：无旋转时局部镜像与它完全等价（保持既有行为），
  * 含缩放/剪切时 R' 不再是纯旋转、写不回 rotation 字段，也只能退回局部镜像。
  */
-function getGroupRotationFrame(cube) {
-	let matrix = getElementDataMatrix(cube);
+function getParentRotationFrame(node) {
+	let matrix = getElementDataMatrix(node);
 	if (!matrix) return null;
-	let scale = cube.mesh.scale;
+	let scale = node.mesh.scale;
 	if (Math.abs(scale.x - 1) > 1e-4 || Math.abs(scale.y - 1) > 1e-4 || Math.abs(scale.z - 1) > 1e-4) return null;
-	let origin = new THREE.Vector3().fromArray(cube.origin);
-	let rotation = new THREE.Matrix4().makeRotationFromQuaternion(getNodeRotationQuaternion(cube));
+	let origin = new THREE.Vector3().fromArray(node.origin);
+	let rotation = new THREE.Matrix4().makeRotationFromQuaternion(getNodeRotationQuaternion(node));
 	let frame = new THREE.Matrix4().copy(matrix)
 		.multiply(new THREE.Matrix4().copy(rotation).invert())
 		.multiply(new THREE.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z));
@@ -565,10 +602,17 @@ function getGroupRotationFrame(cube) {
 	];
 	if (axes.some(axis => Math.abs(axis.length() - 1) > 1e-4)) return null;
 	if (Math.abs(axes[0].dot(axes[1])) > 1e-4 || Math.abs(axes[0].dot(axes[2])) > 1e-4 || Math.abs(axes[1].dot(axes[2])) > 1e-4) return null;
+	return frame;
+}
+function getGroupRotationFrame(cube) {
+	let frame = getParentRotationFrame(cube);
+	if (!frame) return null;
+	let e = frame.elements;
 	let rotated = false;
 	for (let i = 0; i < 3; i++) {
 		let unit = new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
-		if (axes[i].distanceToSquared(unit) > 1e-8) rotated = true;
+		let axis = new THREE.Vector3(e[i * 4], e[i * 4 + 1], e[i * 4 + 2]);
+		if (axis.distanceToSquared(unit) > 1e-8) rotated = true;
 	}
 	return rotated ? frame : null;
 }
@@ -587,28 +631,91 @@ function getCubeWorldCenterAlongAxis(cube, axis) {
 	return local_center.applyMatrix4(matrix).getComponent(axis);
 }
 /**
+ * 反馈#378：把一个元素按数据空间里的反射矩阵 F 精确镜像。
+ * 父链只含旋转时，元素在父级空间里的表达是 W = Q⁻¹·F·Q：
+ *   origin' = W(origin)、rotation' = W_lin·R·D、几何沿翻转轴做本地镜像（D 为沿 axis 的反射）。
+ * 因为 det(W_lin) = −1、det(D) = −1，rotation' 仍是纯旋转；方块/网格的本地几何沿该轴取反后
+ * 与原形状等价（端点互换 / 顶点取反），因此对任意朝向的平面都精确，不带近似。
+ * 返回 false 表示该元素无法用字段表达（父链含缩放、TextureMesh、无 mesh 等），调用方需要降级。
+ */
+function reflectElementAboutPlane(element, axis, reflection) {
+	if (!element?.mesh || !element.origin || !element.rotation) return false;
+	if (!(element instanceof Cube) && !element.vertices) return false;
+	if (element.rescale === true) return false;
+	let frame = getParentRotationFrame(element);
+	if (!frame) return false;
+	// 网格正在按顶点选择编辑时只能翻选中的顶点，整网格的精确反射交给原路径（flipSelection）
+	if (typeof element.getSelectedVertices == 'function' && element.getSelectedVertices().length) return false;
+
+	// W = Q⁻¹ · F · Q：同一个反射在元素父级坐标系里的表达
+	let local_mirror = new THREE.Matrix4().copy(frame).invert().multiply(reflection).multiply(frame);
+	let old_origin = new THREE.Vector3().fromArray(element.origin);
+	let new_origin = old_origin.clone().applyMatrix4(local_mirror);
+	let local_linear = new THREE.Matrix4().copy(local_mirror).setPosition(0, 0, 0);
+	let axis_mirror = new THREE.Matrix4().makeScale(
+		axis === 0 ? -1 : 1, axis === 1 ? -1 : 1, axis === 2 ? -1 : 1
+	);
+	let new_rotation = new THREE.Matrix4()
+		.multiplyMatrices(local_linear, new THREE.Matrix4().makeRotationFromQuaternion(getNodeRotationQuaternion(element)))
+		.multiply(axis_mirror);
+
+	if (element instanceof Cube) {
+		let old_from = element.from.slice();
+		let old_to = element.to.slice();
+		let new_from = old_from.slice();
+		let new_to = old_to.slice();
+		for (let i = 0; i < 3; i++) {
+			if (i === axis) continue;
+			let delta = new_origin.getComponent(i) - old_origin.getComponent(i);
+			new_from[i] = old_from[i] + delta;
+			new_to[i] = old_to[i] + delta;
+		}
+		// 沿轴 a：反射后的旧「大端」落到新的 from 侧（等价于本地坐标取反后按大小重排，轴长不变）
+		let old_axis_origin = old_origin.getComponent(axis);
+		let new_axis_origin = new_origin.getComponent(axis);
+		new_from[axis] = new_axis_origin + old_axis_origin - old_to[axis];
+		new_to[axis] = new_axis_origin + old_axis_origin - old_from[axis];
+
+		// 换面/UV/改名复用局部镜像那套（本函数只覆盖几何与旋转）
+		element.flip(axis, 0, false);
+		element.origin.V3_set(new_origin.x, new_origin.y, new_origin.z);
+		element.from.V3_set(new_from[0], new_from[1], new_from[2]);
+		element.to.V3_set(new_to[0], new_to[1], new_to[2]);
+	} else {
+		// 网格顶点与方块 from/to 同一口径（相对 origin 的本地坐标）：沿翻转轴取反即可
+		for (let vkey in element.vertices) {
+			element.vertices[vkey][axis] *= -1;
+		}
+		for (let fkey in element.faces) {
+			element.faces[fkey].invert();
+		}
+		flipNameOnAxis(element, axis);
+		element.origin.V3_set(new_origin.x, new_origin.y, new_origin.z);
+	}
+	setNodeRotationFromQuaternion(element, new THREE.Quaternion().setFromRotationMatrix(new_rotation));
+	element.preview_controller.updateTransform(element);
+	element.preview_controller.updateGeometry(element);
+	if (element.preview_controller.updateFaces) element.preview_controller.updateFaces(element);
+	if (element.preview_controller.updateUV) element.preview_controller.updateUV(element);
+	return true;
+}
+/**
  * 反馈#376：按世界（数据空间）轴面镜像一个方块，忽略父组旋转。
  * 返回 false 表示该方块不适用（开关关闭 / 无旋转父组 / 父链带缩放 / 父组本身也在被翻转），
  * 调用方继续走原来的局部镜像。面交换 + UV 镜像 + 名称翻转沿用 Cube.flip，随后把几何与旋转
  * 覆盖成上面的世界空间结果。
- * 倾斜轴面（FlipPlane.isAligned 为 false）不在本函数处理：反馈#299 的斜向反射路径会先把节点
- * 绕轴面枢轴刚性旋转，而带旋转父组的节点 origin 不是数据空间坐标，世界轴镜像在那里没有确定的
- * 镜像面（实测：无组旋转时该路径与「R(θ)·F·R(−θ)」吻合，带旋转父组时开关开/关都不吻合，
- * 说明这是既有实现本身的近似）。因此倾斜轴面保持原行为，调用方按 FlipPlane.isAligned 拦截。
  */
 function flipCubeIgnoringGroupRotation(cube, axis, center) {
 	if (!(cube instanceof Cube) || !cube.mesh) return false;
 	if (!Settings.get('community_flip_ignore_group_rotation')) return false;
-	// Java 块格式的 rescale 用网格非等比缩放补偿方块旋转，视觉变换里含缩放，旋转字段表达不了镜像
-	if (cube.rescale === true) return false;
 	// 父组本身也在这次翻转里被翻（选中组时组内方块会一起进选区）：组仍按原局部规则翻，
 	// 若再让组内方块按世界轴镜像，两者合成的结果既不是原行为也不是世界镜像，
 	// 所以这种「整组翻转」保持原版行为（组与其内容一起按局部规则翻）。
 	for (let parent = cube.parent; parent instanceof OutlinerNode; parent = parent.parent) {
 		if (parent instanceof Group && Group.multi_selected.includes(parent)) return false;
 	}
-	let frame = getGroupRotationFrame(cube);
-	if (!frame) return false;
+	// 无旋转父链时局部镜像与轴对齐世界镜像等价，保持既有行为（也避免浮点误差进字段）
+	if (!getGroupRotationFrame(cube)) return false;
 
 	// 数据空间里的反射 F：轴 a 分量 x → 2·center − x
 	let reflection = new THREE.Matrix4().set(
@@ -617,44 +724,7 @@ function flipCubeIgnoringGroupRotation(cube, axis, center) {
 		0, 0, axis === 2 ? -1 : 1, axis === 2 ? center * 2 : 0,
 		0, 0, 0, 1
 	);
-	// W = Q⁻¹ · F · Q：同一个反射在元素坐标系里的表达
-	let local_mirror = new THREE.Matrix4().copy(frame).invert().multiply(reflection).multiply(frame);
-	let old_origin = new THREE.Vector3().fromArray(cube.origin);
-	let new_origin = old_origin.clone().applyMatrix4(local_mirror);
-	let local_linear = new THREE.Matrix4().copy(local_mirror).setPosition(0, 0, 0);
-	let axis_mirror = new THREE.Matrix4().makeScale(
-		axis === 0 ? -1 : 1, axis === 1 ? -1 : 1, axis === 2 ? -1 : 1
-	);
-	let new_rotation = new THREE.Matrix4()
-		.multiplyMatrices(local_linear, new THREE.Matrix4().makeRotationFromQuaternion(getNodeRotationQuaternion(cube)))
-		.multiply(axis_mirror);
-
-	let old_from = cube.from.slice();
-	let old_to = cube.to.slice();
-	let new_from = old_from.slice();
-	let new_to = old_to.slice();
-	for (let i = 0; i < 3; i++) {
-		if (i === axis) continue;
-		let delta = new_origin.getComponent(i) - old_origin.getComponent(i);
-		new_from[i] = old_from[i] + delta;
-		new_to[i] = old_to[i] + delta;
-	}
-	// 沿轴 a：反射后的旧「大端」落到新的 from 侧（等价于本地坐标取反后按大小重排，轴长不变）
-	let old_axis_origin = old_origin.getComponent(axis);
-	let new_axis_origin = new_origin.getComponent(axis);
-	new_from[axis] = new_axis_origin + old_axis_origin - old_to[axis];
-	new_to[axis] = new_axis_origin + old_axis_origin - old_from[axis];
-
-	// 换面/UV/改名复用局部镜像那套（本函数只覆盖几何与旋转）
-	cube.flip(axis, center, false);
-	cube.origin.V3_set(new_origin.x, new_origin.y, new_origin.z);
-	cube.from.V3_set(new_from[0], new_from[1], new_from[2]);
-	cube.to.V3_set(new_to[0], new_to[1], new_to[2]);
-	setNodeRotationFromQuaternion(cube, new THREE.Quaternion().setFromRotationMatrix(new_rotation));
-	cube.preview_controller.updateTransform(cube);
-	cube.preview_controller.updateGeometry(cube);
-	cube.preview_controller.updateFaces(cube);
-	return true;
+	return reflectElementAboutPlane(cube, axis, reflection);
 }
 /**
  * 反馈#299：轴对齐（未旋转）时的镜像主体，不含 Undo 记录——倾斜轴面要在旋转后的坐标系里复用它。
@@ -803,24 +873,42 @@ function mirrorNodesOnAxisPlane(nodes, axis) {
 	return {groups, elements};
 }
 /**
- * 反馈#299/#301：把给定节点集合按当前翻转轴面（含位置与旋转角）镜像一次。
- * 轴面未旋转时就是轴对齐镜像；旋转过时先刚性转 −θ、按轴对齐镜像、再转回 +θ，合成倾斜面的反射。
- * 返回被改动的 {groups, elements}，供调用方写 Undo 后置快照。
+ * 反馈#378：倾斜轴面（rotation[axis] ≠ 0）的镜像。
+ * 旧实现「绕轴面枢轴刚性转 −θ → 轴对齐镜像 → 转回 +θ」只对「数据坐标 == 节点坐标」的节点成立；
+ * 节点在带旋转父组里时 origin/from-to 属于父级空间，被当成数据空间坐标一起旋转，镜像结果
+ * 既不是轴面对称也不等于任何解析反射（复报实测角点误差 3.6）。现在直接用轴面反射矩阵 F
+ * 精确镜像每个元素（reflectElementAboutPlane），任意父链旋转 / 任意元素自身旋转都精确。
+ * 父链含缩放、TextureMesh 等无法用字段表达的元素保留原来的局部镜像并提示。
  */
+function reflectElementsAboutTiltedPlane(nodes, axis) {
+	if (typeof SmartCopyGroup != 'undefined') SmartCopyGroup.markGroupFlip();
+	let reflection = getFlipPlaneReflection(axis);
+	let {groups, elements} = collectSubtreeNodes(nodes);
+	let fallback = [];
+	for (let element of elements) {
+		if (!reflectElementAboutPlane(element, axis, reflection)) fallback.push(element);
+	}
+	fallback.forEach(element => {
+		if (element instanceof Mesh) {
+			element.flipSelection(axis, FlipPlane.position(axis), false);
+		} else if (element.flip) {
+			element.flip(axis, FlipPlane.position(axis), false);
+		}
+	});
+	if (fallback.length) {
+		Blockbench.showQuickMessage(tl('message.flip_plane.tilted_approximate'), 3000);
+	}
+	Canvas.updateView({
+		elements: elements,
+		groups: [],
+		element_aspects: {transform: true, geometry: true, faces: true, uv: true},
+		selection: true
+	});
+	return {groups: [], elements};
+}
 export function reflectNodesAboutFlipPlane(nodes, axis) {
 	if (FlipPlane.isAligned(axis)) return mirrorNodesOnAxisPlane(nodes, axis);
-	let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
-	let rotation_axis = FlipPlane.rotationAxis(axis);
-	let axis_vector = new THREE.Vector3(
-		rotation_axis === 0 ? 1 : 0,
-		rotation_axis === 1 ? 1 : 0,
-		rotation_axis === 2 ? 1 : 0
-	);
-	let rad = Math.degToRad(FlipPlane.rotation[axis]);
-	rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(axis_vector, -rad), pivot);
-	let targets = mirrorNodesOnAxisPlane(nodes, axis);
-	rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(axis_vector, rad), pivot);
-	return targets;
+	return reflectElementsAboutTiltedPlane(nodes, axis);
 }
 export function mirrorSelected(axis) {
 	if (Modes.animate && Timeline.selected.length) {
@@ -852,22 +940,13 @@ export function mirrorSelected(axis) {
 			outliner: Format.bone_rig || Group.first_selected,
 			selection: true
 		});
-		// 反馈#299：轴面旋转过时走斜向反射（转 −θ → 轴对齐镜像 → 转回 +θ），未旋转时保持原路径
+		// 反馈#299/#378：轴面未旋转时保持原路径；旋转过时按轴面反射矩阵精确镜像
 		if (!tilt_nodes) {
 			flipSelectionOnAxisPlane(axis);
 		} else {
-			let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
-			let rotation_axis = FlipPlane.rotationAxis(axis);
-			let rotation_axis_vector = new THREE.Vector3(
-				rotation_axis === 0 ? 1 : 0,
-				rotation_axis === 1 ? 1 : 0,
-				rotation_axis === 2 ? 1 : 0
-			);
-			let rad = Math.degToRad(FlipPlane.rotation[axis]);
-			let nodes = getFlipPlaneRotationNodes();
-			rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(rotation_axis_vector, -rad), pivot);
-			flipSelectionOnAxisPlane(axis);
-			rotateNodesRigidly(nodes, new THREE.Quaternion().setFromAxisAngle(rotation_axis_vector, rad), pivot);
+			// 反馈#378：不再用「刚性旋转包住轴对齐镜像」——节点的 origin/from-to 属于父级空间，
+			// 带旋转组时该近似既不是轴面对称也不等于任何解析反射（复报实测角点误差 3.6~5）。
+			reflectElementsAboutTiltedPlane(getFlipPlaneRotationNodes(), axis);
 		}
 		updateSelection()
 		Undo.finishEdit('Flip selection')
@@ -1043,7 +1122,8 @@ export function moveSelectionInWorldAxis(difference, world_axis) {
  * 沿轴面法线把选区中心推到轴面上。轴面对齐（未旋转）时退化为原来的单分量位移。
  */
 export function centerElements(axis, update) {
-	if (!Outliner.selected.length) return;
+	// 反馈#378（复报）：只选中组时也要能居中——早期版本在这里直接返回，点「居中」没有任何反应
+	if (!Outliner.selected.length && !Group.multi_selected.length) return;
 	let center = getSelectionCenter();
 	let world_delta = new THREE.Vector3();
 	if (FlipPlane.isAligned(axis)) {
@@ -1052,15 +1132,9 @@ export function centerElements(axis, update) {
 		world_delta.setComponent(axis, FlipPlane.position(axis) - center[axis]);
 	} else {
 		// 反馈#378：倾斜轴面没有「沿某个世界轴的单分量位移」可言，居中就是沿轴面法线走。
-		// 法线与镜像用的是同一套定义（R·e_axis，绕 rotationAxis 转 rotation[axis]），
-		// 因此把选区中心推到轴面上后，镜像面正好穿过选区中心。
-		let rotation_axis = FlipPlane.rotationAxis(axis);
-		let normal = new THREE.Vector3();
-		normal.setComponent(axis, 1);
-		normal.applyAxisAngle(
-			new THREE.Vector3(rotation_axis === 0 ? 1 : 0, rotation_axis === 1 ? 1 : 0, rotation_axis === 2 ? 1 : 0),
-			Math.degToRad(FlipPlane.rotation[axis])
-		);
+		// 法线与镜像用的是同一套定义（见 getFlipPlaneNormal），因此把选区中心推到轴面上后，
+		// 镜像面正好穿过选区中心。
+		let normal = getFlipPlaneNormal(axis);
 		let pivot = new THREE.Vector3().fromArray(FlipPlane.center());
 		let point = new THREE.Vector3(center[0], center[1], center[2]);
 		world_delta.copy(normal).multiplyScalar(-normal.dot(point.sub(pivot)));
@@ -2937,8 +3011,15 @@ BARS.defineActions(function() {
 			// 组枢轴（数据空间口径与「对齐所选中心」一致）：智能复制根取实例容器
 			let reference = group.smart_object ? (group._smart_instance_container || group.mesh) : group.mesh;
 			reference.updateWorldMatrix(true, false);
-			let center = THREE.fastWorldPosition(reference, new THREE.Vector3()).toArray();
+			// 反馈#378：fastWorldPosition 是场景坐标，非居中网格下模型整体平移了 (−8, 0, −8)，
+			// 直接减 base 会让 X/Z 差 8；先换回数据空间再算偏移。
+			let center = scenePointToDataSpace(THREE.fastWorldPosition(reference, new THREE.Vector3())).toArray();
 			let base = Format.centered_grid ? 0 : 8;
+			// 反馈#378：三个轴面各只能绕一根轴倾斜；组的世界旋转跨多轴时轴面无法与组的朝向完全重合，
+			// 写入的是欧拉分量（近似），提示用户而不是静默给出偏差结果。
+			// 注意：单轴旋转（如只有 Z 有角度）本来就只有对应那个轴面能贴合，其余两个轴面对应的是
+			// 未倾斜的轴——这是设计如此，不算不匹配，不能提示。
+			let mismatched = world_rotation.filter(value => Math.abs(value) > 1e-3).length > 1;
 			Undo.initEdit({flip_plane: true, keep_saved: true});
 			for (let axis = 0; axis < 3; axis++) {
 				if (isFlipPlaneLocked(axis)) continue;
@@ -2949,7 +3030,11 @@ BARS.defineActions(function() {
 			updateFlipPlaneVisual();
 			updateFlipPlaneSliders();
 			Undo.finishEdit('Align flip planes to group pivot and world rotation', {flip_plane: true, keep_saved: true});
-			Blockbench.showQuickMessage(tl('message.flip_plane_rotation.from_group'));
+			if (mismatched) {
+				Blockbench.showQuickMessage(tl('message.flip_plane.rotation_partial'), 3500);
+			} else {
+				Blockbench.showQuickMessage(tl('message.flip_plane_rotation.from_group'));
+			}
 		}
 	})
 	// 反馈#299：「轴面对齐所选中心」右侧的重置按钮——偏移与旋转共 6 个数值一键归零

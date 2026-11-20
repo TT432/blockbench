@@ -1,4 +1,4 @@
-import {app, BrowserWindow, Menu, ipcMain, shell} from 'electron'
+import {app, BrowserWindow, Menu, ipcMain, shell, screen, desktopCapturer} from 'electron'
 import path from 'path'
 import url from 'url'
 import { createRequire } from 'node:module'
@@ -300,15 +300,121 @@ ipcMain.on('close-detached-project', async (event, window_id, uuid) => {
 	let window = all_wins.find(win => win.id == window_id);
 	if (window) window.send('close-detached-project', uuid);
 })
+/**
+ * 反馈#382：屏幕取色。
+ * 旧实现走 electron-color-picker 的 32 位原生取色器，在现代 Windows 上覆盖层是全黑一片
+ * （只剩放大镜小圆），实测截图确认无法对着屏幕取色；Chromium 的 EyeDropper 在 Windows
+ * 上也不可用。改为主进程自绘取色层：先 desktopCapturer 冻结每块屏幕的画面，再为每块
+ * 屏幕开一个无边框置顶窗口铺满该屏幕，页面内放大镜 + 单击取样，结果按请求窗口回传。
+ *
+ * 取色期间不拦截键盘：Esc / 右键 / 窗口失焦都会取消。
+ */
+let screen_color_picker_windows = [];
+let screen_color_picker_resolve = null;
+
+function closeScreenColorPicker(color) {
+	const resolve = screen_color_picker_resolve;
+	screen_color_picker_resolve = null;
+	const windows = screen_color_picker_windows;
+	screen_color_picker_windows = [];
+	windows.forEach(win => {
+		if (!win.isDestroyed()) {
+			win.removeAllListeners('closed');
+			win.destroy();
+		}
+	});
+	if (resolve) resolve(color || null);
+}
+
+async function openScreenColorPicker() {
+	if (screen_color_picker_resolve) {
+		// 已经有一层在取色：忽略重复请求，避免叠出多层
+		return null;
+	}
+	const displays = screen.getAllDisplays();
+	const captures = [];
+	for (const display of displays) {
+		const width = Math.max(1, Math.round(display.size.width * display.scaleFactor));
+		const height = Math.max(1, Math.round(display.size.height * display.scaleFactor));
+		let sources = [];
+		try {
+			sources = await desktopCapturer.getSources({
+				types: ['screen'],
+				thumbnailSize: {width, height},
+				fetchWindowIcons: false
+			});
+		} catch (error) {
+			console.warn('[color-picker] Failed to capture screen', error);
+		}
+		const source = sources.find(source => String(source.display_id) === String(display.id)) || sources[0];
+		if (!source || source.thumbnail.isEmpty()) continue;
+		captures.push({display, data_url: source.thumbnail.toDataURL()});
+	}
+	if (!captures.length) {
+		console.warn('[color-picker] No screen capture available');
+		return null;
+	}
+
+	const promise = new Promise(resolve => {
+		screen_color_picker_resolve = resolve;
+	});
+
+	captures.forEach(({display, data_url}) => {
+		const win = new BrowserWindow({
+			x: display.bounds.x,
+			y: display.bounds.y,
+			width: display.bounds.width,
+			height: display.bounds.height,
+			frame: false,
+			transparent: false,
+			resizable: false,
+			movable: false,
+			minimizable: false,
+			maximizable: false,
+			fullscreenable: false,
+			skipTaskbar: true,
+			hasShadow: false,
+			show: false,
+			backgroundColor: '#000000',
+			webPreferences: {
+				nodeIntegration: true,
+				contextIsolation: false,
+				enableRemoteModule: true,
+				backgroundThrottling: false
+			}
+		});
+		screen_color_picker_windows.push(win);
+		win.setMenu(null);
+		win.setAlwaysOnTop(true, 'screen-saver');
+		win.webContents.once('did-finish-load', () => {
+			win.webContents.send('screen-color-picker-image', data_url);
+			win.show();
+			win.focus();
+		});
+		win.loadFile(path.join(__dirname, 'screen_color_picker.html'));
+		win.on('closed', () => {
+			// 用户用系统方式关掉某一层时整体取消
+			closeScreenColorPicker(null);
+		});
+	});
+	return promise;
+}
+
+ipcMain.handle('bb-pick-screen-color', async (event) => {
+	return await openScreenColorPicker();
+});
+
+ipcMain.on('screen-color-picker-result', (event, color) => {
+	closeScreenColorPicker(typeof color === 'string' ? color : null);
+});
+
 ipcMain.on('request-color-picker', async (event, arg) => {
-	const ColorPicker = await import('electron-color-picker');
-	const color = await ColorPicker.getColorHexRGB().catch((error) => {
-		console.warn('[Error] Failed to pick color', error)
-		return ''
-	})
+	// 旧渲染层的入口（payload 比主程序旧时仍会走到这里）：用同一套覆盖层取色，
+	// 结果按旧协议广播给同一渲染进程的窗口。
+	const color = await openScreenColorPicker();
 	if (color) {
 		all_wins.forEach(win => {
-			if (win.isDestroyed() || (!arg.sync && win.webContents.getProcessId() != event.sender.getProcessId())) return;
+			if (win.isDestroyed() || (!arg?.sync && win.webContents.getProcessId() != event.sender.getProcessId())) return;
 			win.webContents.send('set-main-color', color)
 		})
 	}

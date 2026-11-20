@@ -479,6 +479,7 @@
 	"message.copy_paste_tool_viewport": "This tool can only be used in the 2D editor",
 	"message.no_valid_elements": "No valid elements selected...",
 	"message.palette_locked": "The palette is locked",
+	"message.pick_screen_color_needs_update": "Screen color picking needs the latest full installation: in-app hot updates replace the interface only, not the main program",
 	"message.knife_tool.confirm": "Press %0 or click here to apply Knife Tool",
 	"message.knife_tool.skipped_face": "Cannot cut between different faces. Include the edges or vertices between them!",
 
@@ -3580,6 +3581,8 @@
 	"message.flip_plane_center.multi_axis": "The selection contains elements rotated on multiple axes, so the mirror plane is ambiguous",
 	"message.flip_plane_center.set": "Flip planes moved to the selection center",
 	"message.flip_plane_center.all_locked": "All three flip planes are locked, cannot align them to the selection center",
+	"message.flip_plane.rotation_partial": "The selected group is rotated on multiple axes; each flip plane can only tilt about one axis, so the planes follow the single-axis component only",
+	"message.flip_plane.tilted_approximate": "Some elements cannot represent a tilted mirror with their fields (scaled parents or texture meshes); they keep the original local mirror",
 	"action.flip_plane_lock": "Lock Flip Axis %0",
 	"action.flip_plane_lock.desc": "When locked, the flip plane value of this axis is not changed by the slider nor by the flip plane alignment buttons",
 	"action.slider_flip_plane_rotation": "Flip Plane %0 Rotation",
