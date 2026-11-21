@@ -223,6 +223,13 @@ new TransformerModule('animation', {
 		// Keyframes are __v_skip (non-reactive): refresh the keyframe panel so the
 		// value display follows gizmo drags live
 		if (Interface.Panels.keyframe?.inside_vue) Interface.Panels.keyframe.inside_vue.$forceUpdate();
+		// 反馈#384：曲线编辑器的曲线/关键帧点同样由 graph_revision 驱动重算，
+		// 视口 gizmo 拖动不 bump 时下方的曲线要等到松手（Undo.finishEdit 里的
+		// finished_edit 钩子）才更新。与面板滑块、曲线关键帧拖动保持同一约定。
+		if (Timeline.vue && Timeline.vue.graph_editor_open) {
+			Timeline.vue.graph_revision++;
+			Timeline.vue.$forceUpdate();
+		}
 
 	},
 	onEnd(context) {
