@@ -895,6 +895,30 @@ export function updateTabGroupAfterReorder(project: ModelProject) {
 	if (!adjacent) removeProjectFromTabGroup(project);
 }
 
+/**
+ * 反馈#391：把刚拖到 `project` 位置的标签并入落点所在的组。
+ *
+ * 之前拖进一组标签中间时，标签只是被插进组员之间、自己仍不属于任何组：渲染按
+ * 「同一组的标签必须连续」展开，于是该组被这根标签截成两段、渲染成两个组芯片（用户看到
+ * 「把组合隔开」）。现在只要落点前后任一相邻标签属于某个组，就直接把拖拽标签并入该组，
+ * 位置保持不动；前后分属两个组时并入前一个（落点在它后面，符合「贴着它落」的直觉）。
+ */
+export function joinTabGroupAtDropIndex(project: ModelProject) {
+	let index = ModelProject.all.indexOf(project);
+	let before = ModelProject.all[index - 1];
+	let after = ModelProject.all[index + 1];
+	let group = (before && getProjectTabGroup(before)) || (after && getProjectTabGroup(after)) || null;
+	if (!group) {
+		// 两边都不在组里：维持原逻辑——本来在组里、现在不再挨着组员就移出组
+		updateTabGroupAfterReorder(project);
+		return;
+	}
+	if (project.tab_group == group.uuid) return;
+	project.tab_group = group.uuid;
+	cleanupEmptyTabGroups();
+	saveTabGroupSession();
+}
+
 // 持久化：只保存有磁盘路径的工程（未保存工程没有可恢复载体）
 export function saveTabGroupSession() {
 	if (!isApp) return;
@@ -1397,8 +1421,9 @@ onVueSetup(() => {
 						if (index_offset) {
 							ModelProject.all.splice(drag_target_index, 1);
 							ModelProject.all.splice(drag_target_index + index_offset, 0, tab);
-							// #78：拖离组（不再与组员相邻）自动移出组
-							updateTabGroupAfterReorder(tab);
+							// #78：拖离组（不再与组员相邻）自动移出组；
+							// 反馈#391：拖进组员的中间时直接并入该组，不再把组截成两段
+							joinTabGroupAtDropIndex(tab);
 						}
 					}
 				}

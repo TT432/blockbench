@@ -84,6 +84,12 @@ interface UndoAspects {
 	 */
 	mirror_modeling?: false
 	/**
+	 * Marks a visibility-only edit as an explicit user toggle on smart copy group members,
+	 * so the smart copy group system syncs the group visibility to the other members
+	 * instead of skipping the edit. Only set by the toolbar/menu visibility toggle.
+	 */
+	smart_copy_visibility?: boolean
+	/**
 	 * Marks the edit as touching only the UV data of the saved elements.
 	 */
 	uv_only?: boolean

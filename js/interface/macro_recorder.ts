@@ -116,6 +116,17 @@ interface MacroFile {
 	steps: MacroStep[]
 }
 
+/**
+ * 反馈#390：宏库条目——导入/保存过的宏文件。面板里像 PS 的动作面板一样列出来，
+ * 可展开查看里面的步骤、点一下载入当前面板回放；桌面端按路径在下次启动时重新读取。
+ */
+interface MacroLibraryEntry {
+	name: string
+	/** 桌面端的文件路径；浏览器端没有路径，条目只在本次会话里有效 */
+	path?: string
+	steps: MacroStep[]
+}
+
 const MACRO_FORMAT = 'bbmacro';
 const MACRO_VERSION = 1;
 /** 录制时忽略的动作：宏自身、撤销/重做（回放到别的模型上没有意义且危险） */
@@ -291,6 +302,12 @@ const MacroRecorder = {
 	step_index: -1,
 	steps: [] as MacroStep[],
 	macro_name: 'macro',
+	/** 反馈#390：导入/保存过的宏文件列表（面板可展开查看、点选回放），路径持久化到 localStorage */
+	library: [] as MacroLibraryEntry[],
+	/** 当前载入的库条目下标，-1 = 面板里是临时录制/修改的内容 */
+	selected_library: -1,
+	/** 库条目是否展开查看步骤 */
+	library_expanded: [] as boolean[],
 	/** 回放/批量的过程记录，面板只显示最后几条 */
 	log: [] as string[],
 	/** 面板步骤操作的历史快照（反馈#362）：清空/删除/移动/载入前压栈，供「撤销面板操作」还原 */
@@ -1139,17 +1156,99 @@ const MacroRecorder = {
 			steps: this.steps.slice(),
 		};
 	},
+	// MARK: 宏库（反馈#390）
+	/** 把宏文件记进面板的宏库（同一路径/同名覆盖），并持久化路径列表 */
+	rememberMacro(entry: {name: string, path?: string, steps: MacroStep[]}) {
+		let index = this.library.findIndex(item => entry.path
+			? item.path == entry.path
+			: (!item.path && item.name == entry.name));
+		let record: MacroLibraryEntry = {
+			name: entry.name,
+			path: entry.path,
+			steps: entry.steps.map(step => JSON.parse(JSON.stringify(step))),
+		};
+		if (index >= 0) {
+			this.library.splice(index, 1, record);
+		} else {
+			this.library.push(record);
+			this.library_expanded.push(false);
+		}
+		this.selected_library = this.library.indexOf(record);
+		this.saveLibrary();
+		this.changed();
+	},
+	saveLibrary() {
+		try {
+			// 只记有路径的条目：浏览器端（无路径）的文件没法在下次启动时重新读取
+			let data = this.library
+				.filter(item => item.path)
+				.map(item => ({name: item.name, path: item.path}));
+			localStorage.setItem('macro_library', JSON.stringify(data));
+		} catch (error) {}
+	},
+	/** 启动时把上次导入/保存过的宏文件重新读进面板（文件不在了的条目跳过） */
+	restoreLibrary() {
+		if (!isApp) return;
+		let saved: {name?: string, path?: string}[] = [];
+		try { saved = JSON.parse(localStorage.getItem('macro_library') || '[]'); } catch (error) {}
+		if (!Array.isArray(saved) || !saved.length) return;
+		for (let item of saved) {
+			if (!item || typeof item.path != 'string') continue;
+			try {
+				let steps = readMacroFile(fs.readFileSync(item.path, 'utf8'));
+				this.library.push({
+					name: item.name || item.path.split(/[\\/]/).pop() || item.path,
+					path: item.path,
+					steps,
+				});
+				this.library_expanded.push(false);
+			} catch (error) {}
+		}
+		this.changed();
+	},
+	/** 点选库条目：载入它的步骤到当前面板，之后回放/快捷键重放走的就是这套步骤 */
+	selectLibrary(index: number) {
+		let entry = this.library[index];
+		if (!entry) return;
+		if (this.recording) this.stop();
+		this.snapshotSteps();
+		this.steps = entry.steps.map(step => JSON.parse(JSON.stringify(step)));
+		this.macro_name = entry.name.replace(/\.[^.]*$/, '') || entry.name;
+		this.selected_library = index;
+		this.clearLog();
+		Blockbench.showQuickMessage(tl('message.macro.loaded', [this.steps.length]), 2000);
+		this.changed();
+	},
+	toggleLibraryEntry(index: number) {
+		this.library_expanded[index] = !this.library_expanded[index];
+		this.changed();
+	},
+	removeLibraryEntry(index: number) {
+		this.library.splice(index, 1);
+		this.library_expanded.splice(index, 1);
+		if (this.selected_library == index) {
+			this.selected_library = -1;
+		} else if (this.selected_library > index) {
+			this.selected_library--;
+		}
+		this.saveLibrary();
+		this.changed();
+	},
 	save() {
 		if (!this.steps.length) {
 			Blockbench.showQuickMessage(tl('message.macro.empty'), 2000);
 			return;
 		}
+		let name = (this.macro_name || 'macro') + '.' + MACRO_FORMAT;
 		Blockbench.export({
 			resource_id: 'macro',
 			type: tl('macro.file_type'),
 			extensions: [MACRO_FORMAT],
-			name: (this.macro_name || 'macro') + '.' + MACRO_FORMAT,
+			name,
 			content: JSON.stringify(this.serialize(), null, 2),
+		}, (file_path: string) => {
+			// 反馈#390：存下来的宏也进宏库，下次启动还能在面板里直接选出来重放
+			if (file_path) this.rememberMacro({name, path: file_path, steps: this.steps});
 		});
 	},
 	load() {
@@ -1168,6 +1267,9 @@ const MacroRecorder = {
 				this.snapshotSteps();
 				this.steps = steps;
 				this.clearLog();
+				// 反馈#390：导入的宏进宏库（浏览器端没有路径，只在本次会话里有效）
+				let file = files[0];
+				this.rememberMacro({name: file.name || ('macro.' + MACRO_FORMAT), path: file.path, steps});
 				Blockbench.showQuickMessage(tl('message.macro.loaded', [steps.length]), 2500);
 			} catch (error) {
 				Blockbench.showQuickMessage(tl('message.macro.load_failed'), 3000);
@@ -1209,6 +1311,10 @@ declare global {
 	}
 }
 Object.assign(window, {MacroRecorder});
+
+// 反馈#390：启动时把上次导入/保存过的宏文件读回面板（桌面端按路径重新读取文件内容；
+// 文件被移走的条目自动跳过，不会在面板里留下点不开的条目）
+MacroRecorder.restoreLibrary();
 
 // MARK: 面板
 Interface.definePanels(() => {
@@ -1259,6 +1365,19 @@ Interface.definePanels(() => {
 				setPath(index: number, event: Event) {
 					MacroRecorder.setStepPath(index, (event.target as HTMLInputElement).value);
 				},
+				// 反馈#390：宏库（导入/保存过的宏文件）的展开、载入与删除
+				selectLibrary(index: number) {
+					MacroRecorder.selectLibrary(index);
+				},
+				toggleLibrary(index: number) {
+					MacroRecorder.toggleLibraryEntry(index);
+				},
+				libraryExpanded(index: number) {
+					return !!MacroRecorder.library_expanded[index];
+				},
+				removeLibrary(index: number) {
+					MacroRecorder.removeLibraryEntry(index);
+				},
 			},
 			template: `
 				<div id="macro_panel">
@@ -1266,6 +1385,29 @@ Interface.definePanels(() => {
 						<i class="material-icons">fiber_manual_record</i>
 						{{ t('macro.recording') }}
 					</p>
+					<div class="macro_library" v-if="recorder.library.length">
+						<p class="macro_library_title">{{ t('macro.library') }}</p>
+						<ul class="list macro_library_list">
+							<li
+								v-for="(entry, index) in recorder.library"
+								:key="entry.path || entry.name"
+								class="macro_library_entry"
+								:class="{selected: index === recorder.selected_library}"
+							>
+								<i class="material-icons macro_library_chevron" @click="toggleLibrary(index)">{{ libraryExpanded(index) ? 'expand_more' : 'chevron_right' }}</i>
+								<span class="macro_library_name" @click="selectLibrary(index)" :title="entry.path || entry.name">{{ entry.name }}</span>
+								<span class="macro_library_count">{{ entry.steps.length }}</span>
+								<i class="material-icons macro_library_remove" @click="removeLibrary(index)">delete</i>
+								<ul class="list macro_steps macro_library_steps" v-if="libraryExpanded(index)">
+									<li v-for="(step, step_index) in entry.steps" :key="step_index" class="macro_step">
+										<span class="macro_step_index">{{ step_index + 1 }}</span>
+										<i class="material-icons macro_step_icon">{{ icon(step) }}</i>
+										<span class="macro_step_label">{{ label(step) }}</span>
+									</li>
+								</ul>
+							</li>
+						</ul>
+					</div>
 					<ul class="list macro_steps" v-if="recorder.steps.length">
 						<li
 							v-for="(step, index) in recorder.steps"

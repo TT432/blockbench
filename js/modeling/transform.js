@@ -2285,41 +2285,60 @@ BARS.defineActions(function() {
 		}
 		// 反馈#345：尺寸滑块的可选基准——开启后围绕枢轴点缩放（枢轴点在缩放中保持不动）
 		const scale_around_pivot = BarItems.size_slider_pivot_scale.value;
+		// 反馈#383：尺寸滑块也支持「自身轴锁定」（与位置/旋转的锁定同一参考：第一个选中的组/元素）。
+		// 锁定后每根滑条沿参考对象的自身轴缩放；每根方块只改自己的厚度，厚度以自身中心为基准变化，
+		// 方块之间不移动（提交人确认的方案②）。
+		const lock_reference = BarItems.size_slider_local_axis_lock?.value ? getLocalAxisLockReference() : null;
+		const lock_world_axis = lock_reference?.mesh ? getLocalAxisInWorld(lock_reference, axis) : null;
+		/** 把参考轴换算到该对象自己的局部轴，取最接近的一根 */
+		function localAxisFor(obj) {
+			if (!lock_world_axis || !obj.mesh) return axis;
+			let frame = getAncestorChainQuaternion(obj).multiply(getNodeRotationQuaternion(obj)).invert();
+			let local = lock_world_axis.clone().applyQuaternion(frame);
+			let absolute = [Math.abs(local.x), Math.abs(local.y), Math.abs(local.z)];
+			return absolute.indexOf(Math.max(...absolute));
+		}
 		Outliner.selected.forEach(function(obj, i) {
 			if (obj.getTypeBehavior('resizable')) {
+				let target_axis = localAxisFor(obj);
 				let bidirectional = obj instanceof Mesh;
-				let center = (obj.from && obj.to) && Math.lerp(obj.from[axis], obj.to[axis], 0.5);
+				let center = (obj.from && obj.to) && Math.lerp(obj.from[target_axis], obj.to[target_axis], 0.5);
 				let pivot = (scale_around_pivot && obj.origin) ? obj.origin : null;
-				let old_from = obj.from && obj.from[axis];
-				let old_to = obj.to && obj.to[axis];
-				obj.resize(modify, axis, false, true, bidirectional, pivot);
+				if (!pivot && lock_world_axis && obj.from && obj.to) {
+					// 锁定轴：厚度围绕自身中心变化，方块位置保持不动
+					pivot = [0, 1, 2].map(k => Math.lerp(obj.from[k], obj.to[k], 0.5));
+				}
+				let old_from = obj.from && obj.from[target_axis];
+				let old_to = obj.to && obj.to[target_axis];
+				obj.resize(modify, target_axis, false, true, bidirectional, pivot);
 				if (obj.from && obj.to) {
 					if (pivot && old_from !== undefined && Math.abs(old_to - old_from) > 1e-8) {
 						// 方块类元素先按原逻辑缩放，再把 from/to 整体平移，使枢轴点保持原位：
 						// 新 from = 枢轴 + (旧 from − 枢轴) × 缩放比，尺寸沿用缩放后的实际值
-						let new_size = obj.size(axis);
+						let new_size = obj.size(target_axis);
 						let factor = new_size / (old_to - old_from);
-						let from = pivot[axis] + (old_from - pivot[axis]) * factor;
+						let from = pivot[target_axis] + (old_from - pivot[target_axis]) * factor;
 						if (Format.integer_size) from = Math.round(from);
-						obj.from[axis] = from;
-						obj.to[axis] = from + new_size;
+						obj.from[target_axis] = from;
+						obj.to[target_axis] = from + new_size;
 						if (Format.cube_size_limiter && !settings.deactivate_size_limit.value) {
-							Format.cube_size_limiter.clamp(obj, {}, axis, null);
+							Format.cube_size_limiter.clamp(obj, {}, target_axis, null);
 						}
 						obj.preview_controller.updateGeometry(obj);
 					} else if (settings.transform_cube_from_center.value) {
-						let offset = Math.lerp(obj.from[axis], obj.to[axis], 0.5) - center;
-						obj.from[axis] -= offset;
-						obj.to[axis] -= offset;
+						let offset = Math.lerp(obj.from[target_axis], obj.to[target_axis], 0.5) - center;
+						obj.from[target_axis] -= offset;
+						obj.to[target_axis] -= offset;
 						obj.preview_controller.updateGeometry(obj);
 					}
 				}
 			} else if (obj.getTypeBehavior('scalable')) {
-				obj.scale[axis] = modify(obj.scale[axis]);
+				let target_axis = localAxisFor(obj);
+				obj.scale[target_axis] = modify(obj.scale[target_axis]);
 				obj.preview_controller.updateTransform(obj);
 				if (obj.preview_controller.updateGeometry) obj.preview_controller.updateGeometry(obj);
 			}
-		})
+		});
 		if (ArmatureBone.hasSelected()) updateNslideValues();
 	}
 	new NumSlider('slider_size_x', {
@@ -2418,6 +2437,14 @@ BARS.defineActions(function() {
 	// 关闭时保持原版手感（方块从起始边缩放、网格从所选顶点中心缩放）
 	new Toggle('size_slider_pivot_scale', {
 		icon: 'center_focus_weak',
+		default: false,
+		category: 'transform',
+		condition: () => ((getSmartInstanceTransformGroup() || (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')))) && Modes.edit),
+	})
+	// 反馈#383：尺寸滑块的自身轴锁定——开启后三根尺寸滑条沿「第一个选中」对象的自身轴缩放，
+	// 每个方块只改自己的厚度、位置不动（与位置/旋转的锁定同一参考口径）
+	new Toggle('size_slider_local_axis_lock', {
+		icon: 'lock',
 		default: false,
 		category: 'transform',
 		condition: () => ((getSmartInstanceTransformGroup() || (Outliner.selected[0] && (Outliner.selected[0].getTypeBehavior('resizable') || Outliner.selected[0].getTypeBehavior('scalable')))) && Modes.edit),
@@ -2774,7 +2801,7 @@ BARS.defineActions(function() {
 		icon: 'fas.fa-lock-open',
 		default: false,
 		category: 'transform',
-		condition: () => Modes.edit,
+		condition: () => (Modes.edit || Modes.paint),
 		onChange() {
 			let toggle = BarItems['flip_plane_lock_' + 'xyz'[axis]];
 			toggle.setIcon(toggle.value ? 'fas.fa-lock' : 'fas.fa-lock-open');
@@ -2845,7 +2872,8 @@ BARS.defineActions(function() {
 		description: 'action.slider_flip_plane.desc',
 		color: 'xyz'[axis],
 		category: 'transform',
-		condition: () => Modes.edit,
+		// 反馈#387：绘画模式也要能用轴面——镜像绘画的「轴面对称」要在这里调位置
+		condition: () => (Modes.edit || Modes.paint),
 		get: function() {
 			return FlipPlane.offset[axis];
 		},
@@ -2870,7 +2898,7 @@ BARS.defineActions(function() {
 		description: 'action.slider_flip_plane_rotation.desc',
 		color: 'xyz'[axis],
 		category: 'transform',
-		condition: () => Modes.edit,
+		condition: () => (Modes.edit || Modes.paint),
 		get: function() {
 			return FlipPlane.rotation[axis];
 		},
@@ -2995,21 +3023,25 @@ BARS.defineActions(function() {
 		description: 'action.flip_plane_rotation_from_group.desc',
 		icon: '3d_rotation',
 		category: 'transform',
-		condition: {modes: ['edit'], method: () => !!Group.first_selected},
+		// 反馈#386：组之外，选中方块/元素时也启用（取第一个选中的元素作基准）
+		condition: {modes: ['edit'], method: () => !!(Group.first_selected || Outliner.selected.length)},
 		click() {
-			let group = Group.first_selected;
-			if (!group) return;
+			// 反馈#386：基准可以是组，也可以是一个方块/元素——取「第一个选中」的那一个，
+			// 用它的枢轴（origin）与它连同父链的世界朝向对齐轴面。
+			let node = Group.first_selected || Outliner.selected[0];
+			if (!node) return;
 			let locked = [0, 1, 2].filter(axis => isFlipPlaneLocked(axis));
 			if (locked.length == 3) {
 				Blockbench.showQuickMessage(tl('message.flip_plane_center.all_locked'), 2500);
 				return;
 			}
-			let quaternion = getAncestorChainQuaternion(group).multiply(getNodeRotationQuaternion(group));
-			let order = group.mesh?.rotation?.order || Format.euler_order || 'ZYX';
+			let quaternion = getAncestorChainQuaternion(node).multiply(getNodeRotationQuaternion(node));
+			let order = node.mesh?.rotation?.order || Format.euler_order || 'ZYX';
 			let euler = new THREE.Euler().setFromQuaternion(quaternion, order);
 			let world_rotation = [Math.radToDeg(euler.x), Math.radToDeg(euler.y), Math.radToDeg(euler.z)];
-			// 组枢轴（数据空间口径与「对齐所选中心」一致）：智能复制根取实例容器
-			let reference = group.smart_object ? (group._smart_instance_container || group.mesh) : group.mesh;
+			// 枢轴（数据空间口径与「对齐所选中心」一致）：智能复制根取实例容器，元素取自身网格原点
+			let reference = node instanceof Group && node.smart_object ? (node._smart_instance_container || node.mesh) : node.mesh;
+			if (!reference) return;
 			reference.updateWorldMatrix(true, false);
 			// 反馈#378：fastWorldPosition 是场景坐标，非居中网格下模型整体平移了 (−8, 0, −8)，
 			// 直接减 base 会让 X/Z 差 8；先换回数据空间再算偏移。
@@ -3043,7 +3075,7 @@ BARS.defineActions(function() {
 		description: 'action.flip_plane_reset.desc',
 		icon: 'restart_alt',
 		category: 'transform',
-		condition: () => Modes.edit,
+		condition: () => (Modes.edit || Modes.paint),
 		click() {
 			if (!FlipPlane.offset.some(value => value) && !FlipPlane.rotation.some(value => value)) return;
 			Undo.initEdit({flip_plane: true, keep_saved: true});

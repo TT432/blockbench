@@ -546,7 +546,9 @@ export const BARS = {
 				'slider_size_x',
 				'slider_size_y',
 				'slider_size_z',
-				'slider_inflate'
+				'slider_inflate',
+				// 反馈#383：尺寸的自身轴锁定（与位置/旋转的锁同一行尾位置）
+				'size_slider_local_axis_lock',
 			]
 		})
 		Toolbars.element_stretch = new Toolbar({

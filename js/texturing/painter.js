@@ -95,6 +95,8 @@ export const Painter = {
 	current: {/*texture, image*/},
 	selection: {},
 	mirror_painting: false,
+	/** 反馈#387：轴面有旋转时「轴面对称」只能退回模型中线，提示过一次就不再刷屏 */
+	mirror_plane_rotation_warned: false,
 	lock_alpha: false,
 	erase_mode: false,
 	/** 反馈#268：最近一次绘制命中的面 {element, fkey}，供「选中对焦」使用 */
@@ -1394,9 +1396,10 @@ export const Painter = {
 		
 		let targets = [];
 		if (uvTag && Painter.current.element) {
+			// 反馈#387：轴选择加上 Y（原先只有 X/Z），Y 轴镜像用于上下对称的模型
 			let mirror_vectors = [[
 				Painter.mirror_painting_options.axis.x?1:0,
-				0, //Painter.mirror_painting_options.axis.y?1:0,
+				Painter.mirror_painting_options.axis.y?1:0,
 				Painter.mirror_painting_options.axis.z?1:0
 			]];
 			if (mirror_vectors[0].filter(v => v).length == 3) {
@@ -1419,14 +1422,20 @@ export const Painter = {
 					targets.push(Painter.getPhysicalMirrorTarget(texture, x, y, mirror_vector));
 				})
 			} else {
+				// 反馈#387：轴面对称——镜面取翻转轴面的偏移（mirrorCenters 里按选项换算），
+				// 其余落点计算与全局对称完全一致。勾选它时不再重复叠加全局对称（同一个镜面）。
+				let use_plane = !!Painter.mirror_painting_options.plane;
 				mirror_vectors.forEach((mirror_vector, i) => {
-					if (Painter.mirror_painting_options.global) {
+					if (use_plane) {
+						targets.push(getTargetWithOptions(mirror_vector, false));
+					}
+					if (Painter.mirror_painting_options.global && !use_plane) {
 						targets.push(getTargetWithOptions(mirror_vector, false));
 					}
 					if (Painter.mirror_painting_options.local) {
 						targets.push(getTargetWithOptions(mirror_vector, true));
 					}
-					if (Painter.mirror_painting_options.global && Painter.mirror_painting_options.local) {
+					if (Painter.mirror_painting_options.global && Painter.mirror_painting_options.local && !use_plane) {
 						targets.push(getTargetWithOptions(mirror_vector, null));
 					}
 				})
@@ -2010,14 +2019,40 @@ export const Painter = {
 		added.a = original_a
 		return mix;
 	},
+	/**
+	 * 反馈#387：镜像对称的镜面坐标（数据空间，逐轴）。
+	 *
+	 * 默认取模型中线（居中网格 0，否则 8）。勾选「轴面对称」后改取翻转轴面的位置：
+	 * `FlipPlane.offset` 记录的是「相对模型中线的偏移」，所以镜面 = 中线 + offset。
+	 * 轴面被旋转时无法用「找镜像方块」的方式表达斜向镜面，该轴退回模型中线并给出提示
+	 * （面板里的说明也写明了只支持偏移）。
+	 */
+	mirrorCenters(symmetry_axes) {
+		let base = Format.centered_grid ? 0 : 8;
+		let use_plane = !!Painter.mirror_painting_options.plane && !Painter.mirror_painting_options.physical;
+		let rotated = false;
+		let centers = [0, 1, 2].map(axis => {
+			if (!use_plane || !symmetry_axes[axis]) return base;
+			if (typeof FlipPlane != 'undefined' && !FlipPlane.isAligned(axis)) {
+				rotated = true;
+				return base;
+			}
+			return base + (FlipPlane?.offset?.[axis] ?? 0);
+		});
+		if (rotated && !Painter.mirror_plane_rotation_warned) {
+			Painter.mirror_plane_rotation_warned = true;
+			Blockbench.showQuickMessage(tl('message.mirror_painting.plane_rotation'), 3500);
+		}
+		return centers;
+	},
 	getMirrorElement(element, symmetry_axes) {
-		let center = Format.centered_grid ? 0 : 8;
+		let centers = this.mirrorCenters(symmetry_axes);
 		let e = 0.01;
 		symmetry_axes = symmetry_axes.map((v, i) => v ? i : false).filter(v => v !== false);
 		let off_axes = [0, 1, 2].filter(i => !symmetry_axes.includes(i));
 		if (element instanceof Cube) {
 			if (
-				symmetry_axes.find((axis) => !Math.epsilon(element.from[axis]-center, center-element.to[axis], e)) == undefined &&
+				symmetry_axes.find((axis) => !Math.epsilon(element.from[axis]-centers[axis], centers[axis]-element.to[axis], e)) == undefined &&
 				off_axes.find(axis => element.rotation[axis]) == undefined
 			) {
 				return element;
@@ -2028,7 +2063,7 @@ export const Painter = {
 						off_axes.find(axis => !Math.epsilon(element.from[axis], element2.from[axis], e)) == undefined &&
 						off_axes.find(axis => !Math.epsilon(element.to[axis], element2.to[axis], e)) == undefined &&
 						symmetry_axes.find(axis => !Math.epsilon(element.size(axis), element2.size(axis), e)) == undefined &&
-						symmetry_axes.find(axis => !Math.epsilon(element.to[axis]-center, center-element2.from[axis], e)) == undefined &&
+						symmetry_axes.find(axis => !Math.epsilon(element.to[axis]-centers[axis], centers[axis]-element2.from[axis], e)) == undefined &&
 						symmetry_axes.find(axis => !Math.epsilon(element.rotation[axis], element2.rotation[axis], e)) == undefined
 					) {
 						return element2;
@@ -2040,8 +2075,8 @@ export const Painter = {
 			let ep = 0.5;
 			let this_center = element.getCenter(true);
 			if (
-				symmetry_axes.find((axis) => !Math.epsilon(element.origin[axis], center, e)) == undefined &&
-				symmetry_axes.find((axis) => !Math.epsilon(this_center[axis], center, ep)) == undefined &&
+				symmetry_axes.find((axis) => !Math.epsilon(element.origin[axis], centers[axis], e)) == undefined &&
+				symmetry_axes.find((axis) => !Math.epsilon(this_center[axis], centers[axis], ep)) == undefined &&
 				off_axes.find(axis => element.rotation[axis]) == undefined
 			) {
 				return element;
@@ -2050,8 +2085,8 @@ export const Painter = {
 					let other_center = element2.getCenter(true);
 					if (Object.keys(element.vertices).length !== Object.keys(element2.vertices).length) continue;
 					if (
-						symmetry_axes.find(axis => !Math.epsilon(element.origin[axis]-center, center-element2.origin[axis], e)) == undefined &&
-						symmetry_axes.find(axis => !Math.epsilon(this_center[axis]-center, center-other_center[axis], ep)) == undefined &&
+						symmetry_axes.find(axis => !Math.epsilon(element.origin[axis]-centers[axis], centers[axis]-element2.origin[axis], e)) == undefined &&
+						symmetry_axes.find(axis => !Math.epsilon(this_center[axis]-centers[axis], centers[axis]-other_center[axis], ep)) == undefined &&
 						off_axes.find(axis => !Math.epsilon(element.origin[axis], element2.origin[axis], e)) == undefined &&
 						off_axes.find(axis => !Math.epsilon(this_center[axis], other_center[axis], ep)) == undefined
 					) {
@@ -2070,7 +2105,8 @@ export const Painter = {
 		let source_face = source_element.faces[source_fkey];
 		if (!source_face) return;
 
-		let grid_center = Format.centered_grid ? 0 : 8;
+		// 反馈#387：物理镜像同样支持「轴面对称」——镜面位置逐轴取翻转轴面
+		let centers = Painter.mirrorCenters(mirror_vector);
 		let offset_pixel_brush = Condition(Toolbox.selected.brush?.floor_coordinates) ? 1 : 0;
 		let even_brush_size = BarItems.slider_brush_size.get()%2 == 0 && Toolbox.selected.brush?.offset_even_radius && Condition(Toolbox.selected.brush?.floor_coordinates);
 		if (Toolbox.selected.id == 'gradient_tool') even_brush_size = true;
@@ -2093,7 +2129,7 @@ export const Painter = {
 		// 按世界空间镜像（位置与法线一起翻转）
 		mirror_vector.forEach((enabled, axis) => {
 			if (!enabled) return;
-			world_point.setComponent(axis, 2 * grid_center - world_point.getComponent(axis));
+			world_point.setComponent(axis, 2 * centers[axis] - world_point.getComponent(axis));
 			world_normal.setComponent(axis, -world_normal.getComponent(axis));
 		});
 
@@ -4382,9 +4418,11 @@ BARS.defineActions(function() {
 				enabled: {type: 'checkbox', label: 'menu.mirror_painting.enabled', value: Painter.mirror_painting},
 				_1: '_',
 				global: {type: 'checkbox', label: 'menu.mirror_painting.global', value: true, description: 'menu.mirror_painting.global.desc', condition: form => !form.physical},
+				// 反馈#387：轴面对称——按翻转轴面（偏移）镜像，而不是模型中线
+				plane: {type: 'checkbox', label: 'menu.mirror_painting.plane', description: 'menu.mirror_painting.plane.desc', condition: form => !form.physical},
 				local: {type: 'checkbox', label: 'menu.mirror_painting.local', description: 'menu.mirror_painting.local.desc', condition: form => !form.physical},
 				physical: {type: 'checkbox', label: 'menu.mirror_painting.physical', value: false, description: 'menu.mirror_painting.physical.desc'},
-				axis: {type: 'inline_multi_select', label: 'menu.mirror_painting.axis', options: {x: 'X', z: 'Z'}, value: {x: true, z: false}, description: 'menu.mirror_painting.axis.desc'},
+				axis: {type: 'inline_multi_select', label: 'menu.mirror_painting.axis', options: {x: 'X', y: 'Y', z: 'Z'}, value: {x: true, z: false}, description: 'menu.mirror_painting.axis.desc'},
 				_2: '_',
 				texture: {type: 'checkbox', label: 'menu.mirror_painting.texture', description: 'menu.mirror_painting.texture.desc'},
 				texture_center: {type: 'vector', label: 'menu.mirror_painting.texture_center', dimensions: 2, condition: form => form.texture, toggle_enabled: true, toggle_default: false},
@@ -4399,7 +4437,9 @@ BARS.defineActions(function() {
 			onFormChange(result) {
 				Painter.mirror_painting = result.enabled;
 				BarItems.mirror_painting.set(result.enabled);
-				if (!result.axis.x && !result.axis.z) {
+				// 轴面旋转提示只在每次改选项时重置一次，拖动轴面期间不反复弹
+				Painter.mirror_plane_rotation_warned = false;
+				if (!result.axis.x && !result.axis.y && !result.axis.z) {
 					this.setFormValues({axis: {x: true, z: false}});
 				}
 			}

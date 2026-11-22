@@ -63,6 +63,10 @@ function setInitial(group: Group, initial: boolean) {
 function syncSkipEdit(aspects: UndoAspects): boolean {
 	let touches_nodes = aspects.elements != null || aspects.groups != null || aspects.group != null || !!aspects.outliner;
 	if (!touches_nodes) return true;
+	// 反馈#381（复报）：工具栏 / 菜单的「切换可见」对组是显式联动操作，调用方会传
+	// `smart_copy_visibility`。它虽然只带 visibility 字段，也必须进入同步流程——
+	// 否则 initEdit 直接返回，显隐快照不存在，对侧成员不会一起隐藏。
+	if (aspects.smart_copy_visibility) return false;
 	let fields = aspects.element_fields as string[] | undefined;
 	return !!fields?.length && fields.every(field => field == 'visibility');
 }

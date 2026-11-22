@@ -883,10 +883,19 @@ export function toggleElementProperty(key) {
 		});
 		affected.push(...descendants);
 	}
-	Undo.initEdit(key === 'visibility'
-		? {elements: affected, mirror_modeling: false, element_fields: ['visibility']}
-		: {elements: affected, mirror_modeling: false}
-	)
+	// 反馈#381：组与元素分开登记。组必须放进 aspects.groups，智能复制组才会走「组级属性同步」；
+	// 只塞在 aspects.elements 里时对侧只收到元素级镜像，组自身的显隐标志不会被同步
+	// （表现为「切换可见」只藏住被点的那一侧）。
+	let affected_elements = affected.filter(node => node instanceof OutlinerElement);
+	let affected_groups = affected.filter(node => node instanceof Group);
+	let aspects = {elements: affected_elements, groups: affected_groups, mirror_modeling: false};
+	if (key === 'visibility') {
+		aspects.element_fields = ['visibility'];
+		// 显式声明「这次是用户主动切换显隐」：智能复制组据此把显隐联动到其它成员。
+		// 「仅显示所选项」与集合显隐不经过这条路径，仍保持每侧独立（#351）。
+		if (affected_groups.length) aspects.smart_copy_visibility = true;
+	}
+	Undo.initEdit(aspects)
 	affected.forEach(element => {
 		if (element[key] != undefined) {
 			element[key] = state;

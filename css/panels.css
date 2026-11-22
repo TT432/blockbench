@@ -3660,3 +3660,70 @@ span.controller_state_section_info {
 	font-size: 11px;
 	opacity: 0.75;
 }
+
+/* 反馈#390：宏库——导入/保存过的宏文件列表（可展开查看步骤、点选载入回放） */
+#macro_panel .macro_library {
+	margin: 0 0 6px;
+	border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.3));
+	padding-bottom: 4px;
+}
+#macro_panel .macro_library_title {
+	margin: 2px;
+	font-size: 11px;
+	opacity: 0.6;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+#macro_panel .macro_library_list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+#macro_panel .macro_library_entry {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-wrap: wrap;
+	padding: 2px 4px;
+	border-radius: 4px;
+}
+#macro_panel .macro_library_entry:hover {
+	background-color: var(--color-back);
+}
+#macro_panel .macro_library_entry.selected {
+	outline: 1px solid var(--color-accent, var(--color-light));
+}
+#macro_panel .macro_library_chevron {
+	font-size: 16px;
+	cursor: pointer;
+	opacity: 0.7;
+}
+#macro_panel .macro_library_name {
+	flex: 1 1 80px;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+#macro_panel .macro_library_count {
+	font-size: 11px;
+	opacity: 0.6;
+	padding: 0 2px;
+}
+#macro_panel .macro_library_remove {
+	font-size: 14px;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 120ms;
+}
+#macro_panel .macro_library_entry:hover .macro_library_remove {
+	opacity: 0.7;
+}
+#macro_panel .macro_library_remove:hover {
+	color: var(--color-light);
+}
+#macro_panel .macro_library_steps {
+	flex: 1 1 100%;
+	margin-left: 16px;
+	opacity: 0.85;
+}
