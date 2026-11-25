@@ -2303,7 +2303,10 @@ export const Painter = {
 			let mirrored_corners = source_corners.map(point => {
 				let mirrored = point.clone();
 				mirror_vector.forEach((enabled, axis) => {
-					if (enabled) mirrored.setComponent(axis, 2 * grid_center - mirrored.getComponent(axis));
+					// 反馈#392：镜面中心逐轴取 centers（#387 把固定中线换成了 mirrorCenters），
+					// 角点镜像必须与上面的源点镜像用同一组镜面；写死的中线名在这里已不存在，
+					// 多个面靠近（候选面 ≥ 2）时会抛 ReferenceError，整笔绘画中断、一点都画不上。
+					if (enabled) mirrored.setComponent(axis, 2 * centers[axis] - mirrored.getComponent(axis));
 				});
 				return mirrored;
 			});

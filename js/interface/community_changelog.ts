@@ -10,6 +10,13 @@ interface ChangelogEntry {
 
 const COMMUNITY_CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '5.4.19',
+		date: '2026-11-25',
+		changes: [
+			'修复#392：物理镜像绘画时，如果镜像落点附近还有别的面离得很近（几个面几乎重合），整笔会一点都画不上——连点击的那一面也没有反应。现在这类重叠结构能正常绘制：镜像笔触落在与源块互为镜像的那一块上，只是靠近的其他面不受影响',
+		],
+	},
+	{
 		version: '5.4.18',
 		date: '2026-11-22',
 		changes: [
