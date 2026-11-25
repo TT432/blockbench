@@ -100,15 +100,62 @@ function preRootOrigin(group: Group): number[] {
 }
 
 /**
+ * 节点在某一轴上的内容坐标区间（升序），供「镜像轴 vs 纯平移轴」判定用。
+ * 只覆盖有明确几何区间的节点：Cube 等的 from/to、骨骼/定位器等的 position。
+ * 组节点（只有 origin/rotation）和网格类返回 undefined —— 这些保持历史判定，不受本判定影响。
+ */
+function nodeContentRange(node: OutlinerNode, axis: number): [number, number] | undefined {
+	let any = node as any;
+	let from = any.from, to = any.to;
+	if (Array.isArray(from) && Array.isArray(to) && isFinite(from[axis]) && isFinite(to[axis])) {
+		return [Math.min(from[axis], to[axis]), Math.max(from[axis], to[axis])];
+	}
+	let position = any.position;
+	if (Array.isArray(position) && isFinite(position[axis])) {
+		return [position[axis], position[axis]];
+	}
+	return;
+}
+
+/**
+ * 反馈#393 / A4：两侧成员根在某个轴上「分得开」只说明两边整体错开了，**不等于**该轴是镜像轴。
+ *
+ * 实测（#393 实测 3）：断开后把 group2 沿 Z 挪 2，两个成员根就只在 Z 上分得开，旧判定于是把 Z
+ * 当成镜像轴、X 当成「照抄源值」的轴——X 上对侧被写成源的绝对坐标（内容与源重合），Z 上对侧
+ * 又被绕中轴翻走。其实这种「一侧连同内容整体挪开」在内容上是**平移**关系，不是镜像关系。
+ *
+ * 用两侧内容自身的坐标区间区分（都要在 1e-4 内才算命中）：
+ * - 对侧区间 == 源区间绕中轴的反射 → 镜像轴（历史行为，也覆盖 #305 后续④「副本挪到模型前方
+ *   后前后对称」那种情形，那里内容确实是镜像关系）；
+ * - 对侧区间 == 源区间按两侧根之差平移 → 该轴只是整体平移，判为**非镜像轴**（保留对侧自己
+ *   的坐标，见 mirror_modeling.restoreOwnOffAxis）；
+ * - 两种都对得上（内容自身关于中轴对称、平移量与尺寸恰好巧合）或都对不上（本次编辑正在改内容）
+ *   → 保持历史行为判为镜像轴，宁可少改不多改。
+ */
+function contentMirrorsOnAxis(source: OutlinerNode, target: OutlinerNode, axis: number, center: number,
+	source_root: Group, target_root: Group): boolean {
+	let source_range = nodeContentRange(source, axis);
+	let target_range = nodeContentRange(target, axis);
+	if (!source_range || !target_range) return true;
+	let [s_from, s_to] = source_range;
+	let [t_from, t_to] = target_range;
+	if (Math.abs(t_from - (2*center - s_to)) < 1e-4 && Math.abs(t_to - (2*center - s_from)) < 1e-4) return true;
+	let offset = preRootOrigin(target_root)[axis] - preRootOrigin(source_root)[axis];
+	let translated = Math.abs(t_from - (s_from + offset)) < 1e-4 && Math.abs(t_to - (s_to + offset)) < 1e-4;
+	return !translated;
+}
+
+/**
  * 一对成员之间的镜像关系（反馈#305 后续③：不再只支持单轴）。
  *
- * 每个轴独立判定：两个成员根在编辑前的原点在该轴上分得开（差值非零）就镜像该轴，
- * 否则原样沿用源坐标。于是
+ * 每个轴独立判定：两个成员根在编辑前的原点在该轴上分得开（差值非零），**并且**两侧的内容在
+ * 该轴上是镜像关系而不是整体平移，才镜像该轴；否则原样沿用源坐标。于是
  * - 左右对称（只在 X 分得开）→ 只镜像 X，结果与旧行为一致；
  * - 前后对称（副本被挪到模型前方，只在 Z 分得开）→ 镜像 Z；
- * - 对角（X 与 Z 都分得开，leftfront ↔ rightback）→ 两轴一起镜像，等价于绕中点的 180° 中心对称。
+ * - 对角（X 与 Z 都分得开，leftfront ↔ rightback）→ 两轴一起镜像，等价于绕中点的 180° 中心对称；
+ * - 一侧连同内容被整体挪开（反馈#393）→ 该轴按平移处理，不是镜像轴。
  *
- * `axes` 同时给元素镜像用（逐个轴 flip）。
+ * `axes` 同时给元素镜像用（逐个轴 flip），非镜像轴（signs=+1）在 createClone 里保留对侧自己的坐标。
  */
 interface MirrorSpec {
 	/** 每轴符号：-1 = 该轴镜像，1 = 原样沿用 */
@@ -137,8 +184,11 @@ function pairMirror(source_node: OutlinerNode, target_node: OutlinerNode | 'root
 	spec.axes = [];
 	for (let i = 0; i < 3; i++) {
 		if (Math.abs(source[i] - target[i]) > 1e-6) {
+			let center = (source[i] + target[i]) / 2;
+			// 反馈#393：根分得开只说明两侧错开了；内容上是平移关系（而非镜像关系）的轴不算镜像轴
+			if (target_node instanceof OutlinerNode && !contentMirrorsOnAxis(source_node, target_node, i, center, source_root, target_root)) continue;
 			spec.signs[i] = -1;
-			spec.centers[i] = (source[i] + target[i]) / 2;
+			spec.centers[i] = center;
 			spec.axes.push(i);
 		}
 	}
@@ -272,6 +322,15 @@ export const SmartCopyGroup = {
 	 */
 	pre_root_origins: null as Map<UUID, number[]> | null,
 	/**
+	 * 反馈#393：编辑前各成员根自己的变换（原点/旋转/缩放）。
+	 *
+	 * 「本次编辑是不是组级编辑」原先按 `aspects.groups` 里有没有成员根判定，而旋转类编辑的
+	 * aspects 来自 `Group.multi_selected`——选中元素时它的父组通常也挂着选中，于是「编辑组内块」
+	 * 被误判成「编辑组本身」，断开属性链接后整条内容同步被跳过（反馈#393 主缺陷 A1）。
+	 * 现在改成比对这份快照：只有成员根**自身变换确实变了**才算组级编辑。
+	 */
+	pre_root_transforms: null as Map<UUID, {origin: number[], rotation: number[], scale?: number[]}> | null,
+	/**
 	 * 编辑前各组的变换快照（反馈#305 后续①②）：拖动组节点时 undo aspects 里可能没有 groups
 	 * （gizmo 直接改 origin），只能靠这份快照判断哪些组的位移/旋转变了，才能把子组同步到对侧、
 	 * 并在「成员根被移动 + 属性链接已断开」时整棵冻结该成员。
@@ -285,8 +344,6 @@ export const SmartCopyGroup = {
 	pre_index: null as Map<UUID, Map<string, OutlinerNode>> | null,
 	/** 本次编辑涉及的链接属性是否仍连着；断开后组级改动（含枢轴）不再映射（复报第 1 点） */
 	edit_attrs_linked: true,
-	/** 本次编辑是否在组级（组本身被选中/编辑）——断开后连子块的位移也不映射 */
-	edit_group_level: false,
 	/** 本次编辑由本模块新建的对侧节点，避免结构同步与几何同步重复处理 */
 	created_nodes: null as Set<UUID> | null,
 	/**
@@ -302,8 +359,24 @@ export const SmartCopyGroup = {
 	},
 
 	/** 本次编辑是否允许同步组级属性（镜像翻转/已断开属性链接时为 false，供镜像建模的祖先同步跳过） */
-	groupSyncEnabled(): boolean {
-		return !this.group_flip && this.edit_attrs_linked;
+	groupSyncEnabled(node?: OutlinerNode): boolean {
+		if (this.group_flip) return false;
+		// 反馈#393：传了节点就按「它所在的那条链接」判定；多条独立链接并存时互不牵连。
+		// 不传时退回编辑级布尔（历史调用口径）。
+		return node ? this.linkAttrsLinked(node) : this.edit_attrs_linked;
+	},
+
+	/**
+	 * 反馈#393：属性链接状态按「该节点所在的那条链接」判定。
+	 * 原先用一个编辑级的全局布尔，任一链接断开就把整次编辑标成「属性未链接」，于是同时存在
+	 * 多条独立链接时，其它仍连着的链接也一起失效（实测 2 / R6）。
+	 * 保留原语义：同一链接内部成员状态不一致（部分断开）时，整条链接仍按「属性不链接」处理。
+	 */
+	linkAttrsLinked(node: OutlinerNode): boolean {
+		let root = memberRootOf(node);
+		if (!root) return this.edit_attrs_linked;
+		let members = membersOf(linkId(root));
+		return members.length ? members.every(member => attrsLinked(member)) : this.edit_attrs_linked;
 	},
 
 	/** 该组所在链接的全部成员（旧工程的成对 `smart_mirror` 在这里就地迁移成链接 id） */
@@ -357,13 +430,10 @@ export const SmartCopyGroup = {
 		this.pre_roots = new Map();
 		this.pre_index = new Map();
 		this.pre_root_origins = new Map();
+		this.pre_root_transforms = new Map();
 		this.pre_group_transforms = new Map();
 		this.created_nodes = new Set();
 		this.edit_attrs_linked = true;
-		// 反馈#305 复报第 4 轮③：只有「本次编辑确实编辑了成员根」才算组级编辑。
-		// 不能用「当前选中的组」推断：选中元素时它的父组通常也挂着 selected，
-		// 早前按选中状态判定会把「编辑组内块」误当成组级编辑，断开链接后块就不同步了。
-		this.edit_group_level = (aspects.groups ?? []).some(group => group instanceof Group && memberRootOf(group) === group);
 		if (typeof Group == 'undefined' || !Group.all.length) return;
 		// 本次编辑涉及的链接 id：候选节点所在的成员根；结构编辑（大纲拖放/删除）在编辑前
 		// 还不知道节点会被拖进哪个成员，因此把当前所有链接都记下来（反馈#305 复报第 4 轮①：
@@ -411,14 +481,43 @@ export const SmartCopyGroup = {
 		}
 	},
 
-	/** 记录成员根的原点（供 pairMirror 用编辑前的位置算镜像基准） */
+	/**
+	 * 记录成员根的编辑前状态：原点供 pairMirror 算镜像基准，完整变换（原点/旋转/缩放）
+	 * 供 finishEdit 判定「成员根本次是否真的被变换过」（反馈#393 / A1）。
+	 */
 	recordMemberOrigins(members: Group[]) {
-		if (!this.pre_root_origins) return;
 		for (let member of members) {
-			if (!this.pre_root_origins.has(member.uuid)) {
+			if (this.pre_root_origins && !this.pre_root_origins.has(member.uuid)) {
 				this.pre_root_origins.set(member.uuid, member.origin.slice());
 			}
+			if (this.pre_root_transforms && !this.pre_root_transforms.has(member.uuid)) {
+				this.pre_root_transforms.set(member.uuid, {
+					origin: member.origin.slice(),
+					rotation: member.rotation.slice(),
+					scale: member.scale ? member.scale.slice() : undefined,
+				});
+			}
 		}
+	},
+
+	/**
+	 * 反馈#393 / A1：本次编辑里自身变换（原点/旋转/缩放）确实变过的成员根所在的链接。
+	 * 与「成员根是否被选中」严格区分：选中只是 undo aspects 的来源，不代表它真的被变换过。
+	 */
+	changedRootLinks(): Set<UUID> {
+		let links = new Set<UUID>();
+		if (!this.pre_root_transforms) return links;
+		for (let [uuid, before] of this.pre_root_transforms) {
+			let node = OutlinerNode.uuids[uuid] as OutlinerNode | undefined;
+			if (!(node instanceof Group) || !isInTree(node)) continue;
+			let changed = node.origin.some((value, axis) => Math.abs(value - before.origin[axis]) > 1e-6)
+				|| node.rotation.some((value, axis) => Math.abs(value - before.rotation[axis]) > 1e-6)
+				|| (!!before.scale && !!node.scale && node.scale.some((value, axis) => Math.abs(value - before.scale[axis]) > 1e-6));
+			if (!changed) continue;
+			let id = linkId(node);
+			if (id) links.add(id);
+		}
+		return links;
 	},
 
 	/** 新建的对侧节点登记进 undo：post 侧记录 → 撤销时删除、重做时重建 */
@@ -897,11 +996,11 @@ export const SmartCopyGroup = {
 			this.pre_paths = null;
 			this.pre_roots = null;
 			this.pre_root_origins = null;
+			this.pre_root_transforms = null;
 			this.pre_index = null;
 			this.created_nodes = null;
 			this.pre_snapshots = null;
 			this.edit_attrs_linked = true;
-			this.edit_group_level = false;
 			return;
 		}
 		if (typeof Group == 'undefined' || !Group.all.length) return;
@@ -975,8 +1074,6 @@ export const SmartCopyGroup = {
 		let edited_groups = this.edited_groups ?? new Set<UUID>();
 		let edited_names = this.edited_names ?? new Map<UUID, string>();
 		let group_flip = this.group_flip;
-		let attrs_linked = this.edit_attrs_linked;
-		let group_level = this.edit_group_level;
 		// 镜像翻转按「选中组的整棵子树」开 undo，子孙块也会进 aspects.elements；
 		// 它们只是跟着组一起翻，不能镜像到对侧（复报第 3 轮④）
 		let flip_groups = group_flip ? Group.all.filter(group => edited_groups.has(group.uuid)) : [];
@@ -993,12 +1090,12 @@ export const SmartCopyGroup = {
 			this.pre_paths = null;
 			this.pre_roots = null;
 			this.pre_root_origins = null;
+			this.pre_root_transforms = null;
 			this.pre_group_transforms = null;
 			this.pre_index = null;
 			this.created_nodes = null;
 			this.pre_snapshots = null;
 			this.edit_attrs_linked = true;
-			this.edit_group_level = false;
 			return;
 		}
 		let changed = false;
@@ -1007,6 +1104,10 @@ export const SmartCopyGroup = {
 		// 所以组节点的位移要自己比对快照找出来；同时「成员根被移动 + 属性链接断开」要冻结整棵成员。
 		let changed_groups = this.changedGroups();
 		let frozen_members = this.frozenMembers(changed_groups);
+		// 反馈#393 / A1：本次编辑里成员根自身变换真的变过的链接。断开属性链接后只有这些链接的
+		// 内容同步要被当成「组级编辑」丢掉；成员根只是被选中（旋转类编辑会把 Group.multi_selected
+		// 带进 aspects.groups）时仍按内容级同步。
+		let root_changed_links = this.changedRootLinks();
 
 		// 反馈#305 后续③：删除成员根的联动（删除动作会在 finishEdit 前清空 aspects，只能靠快照）
 		changed = this.syncMemberDeletions(aspects) || changed;
@@ -1031,12 +1132,15 @@ export const SmartCopyGroup = {
 				}
 				// 复报第 3 轮④：跟着组一起被翻的块不镜像到对侧（对侧应当完全不动）
 				if (flip_groups.length && hasAncestorGroupIn(element, flip_groups)) continue;
-				// 复报第 1 点：属性链接断开后，组级编辑（移动/枢轴）连子块的位移也不再映射。
+				let element_root = memberRootOf(element);
+				// 复报第 1 点：属性链接断开后，组级编辑（移动/枢轴）连子块的位移也不再映射；
 				// 直接编辑组内的块仍然同步（那不是组级编辑）。
-				if (!attrs_linked && group_level) continue;
+				// 反馈#393 / A1+A2：两条判定都改成按「元素所在的这条链接」来做——
+				// ① 链接是否断开按该链接自己的成员判定，不再被其它链接的断开拖累；
+				// ② 是不是组级编辑按「成员根本次自身变换是否真的变了」判定，而不是「它被选中」。
+				if (element_root && !this.linkAttrsLinked(element) && root_changed_links.has(linkId(element_root))) continue;
 				// 后续②：属性链接断开时移动成员根属于组级操作，整棵成员（含块与子组）都不再映射，
 				// 否则对侧的块会单独跑到镜像位置、在没动的组里错位（用户看到的「对面子组跟着动」）。
-				let element_root = memberRootOf(element);
 				if (element_root && frozen_members.has(element_root.uuid)) continue;
 				if (!MirrorModeling.cached_elements[element.uuid]?.smart_pair) continue;
 				for (let counterpart of this.equivalents(element)) {
@@ -1171,12 +1275,12 @@ export const SmartCopyGroup = {
 		this.pre_paths = null;
 		this.pre_roots = null;
 		this.pre_root_origins = null;
+		this.pre_root_transforms = null;
 		this.pre_group_transforms = null;
 		this.pre_index = null;
 		this.created_nodes = null;
 		this.pre_snapshots = null;
 		this.edit_attrs_linked = true;
-		this.edit_group_level = false;
 	},
 
 	/**

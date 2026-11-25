@@ -4,6 +4,55 @@ import { ArmatureBone } from "../outliner/types/armature_bone";
 import { Billboard } from "../outliner/types/billboard";
 import { flipNameOnAxis } from "./transform";
 
+/**
+ * 反馈#393：非镜像轴上的坐标回填。
+ *
+ * 早前 `createClone` 先 `extend(original)` 把源的坐标整份抄给对侧，再只对镜像轴（sign=-1）
+ * 做绕中轴的反射，于是非镜像轴（sign=+1）上对侧拿到的是源的**绝对坐标**：两侧成员根不再
+ * 关于全局镜像面对称时（断开属性链接后单独把一侧挪开），对侧的块会丢掉自己在成员根内的偏移、
+ * 和源重合成同一位置。
+ *
+ * 语义改为「对侧自己的编辑前坐标 + 源元素在该轴的编辑增量」：两侧互为镜像时增量结果与旧行为
+ * 完全一致（就是源值），一侧被挪开时对侧就留在自己的位置上。
+ */
+function restoreOwnOffAxis(element: OutlinerElement, before: any, source: any, axis: number) {
+	let target = element as any;
+	// 源元素的编辑前快照：undo 在 initEdit 里记录，finishEdit 期间仍然可用
+	let pre_source = (Undo.current_save?.elements as any)?.[source.uuid];
+	if (!target || !before || !pre_source) return;
+	/** 源元素在该字段该轴的编辑增量；快照缺失（窄快照）时返回 undefined，退回旧行为 */
+	function delta(field: string, from: any = source, pre: any = pre_source): number | undefined {
+		let now = from?.[field], before_value = pre?.[field];
+		if (!Array.isArray(now) || !Array.isArray(before_value)) return;
+		let value = now[axis] - before_value[axis];
+		return isFinite(value) ? value : undefined;
+	}
+	function restore(field: string) {
+		let own = before[field];
+		let increase = delta(field);
+		if (!Array.isArray(own) || !Array.isArray(target[field]) || increase === undefined) return;
+		target[field][axis] = own[axis] + increase;
+	}
+
+	if (target.vertices && before.vertices) {
+		// vertices 是相对 origin 的坐标（见 Mesh.transferOrigin），这类元素的平移只落在顶点上；
+		// origin 是枢轴，平移时不跟着走，所以只回填顶点。
+		for (let key in target.vertices) {
+			let own = before.vertices[key];
+			if (!Array.isArray(own) || !Array.isArray(target.vertices[key])) continue;
+			let increase = delta('vertices', source.vertices?.[key], pre_source.vertices?.[key]);
+			if (increase === undefined) continue;
+			target.vertices[key][axis] = own[axis] + increase;
+		}
+		return;
+	}
+	restore('from');
+	restore('to');
+	restore('position');
+	// Cube 等把几何的绝对坐标放在 from/to，origin 是同一坐标系里的枢轴，一起回填
+	restore('origin');
+}
+
 export const MirrorModeling = {
 	initial_transformer_position: 0,
 	outliner_snapshot: null,
@@ -56,6 +105,13 @@ export const MirrorModeling = {
 			for (let axis of mirror_axes) {
 				mirror_element.flip(axis, mirror_centers[axis] ?? center);
 			}
+			// 反馈#393：非镜像轴上不能照抄源的绝对坐标，逐轴回填「对侧自己的旧坐标 + 源的编辑增量」
+			if (cached_data?.smart_pair) {
+				for (let axis = 0; axis < 3; axis++) {
+					if (mirror_axes.includes(axis)) continue;
+					restoreOwnOffAxis(mirror_element, element_before_snapshot, original, axis);
+				}
+			}
 
 			mirror_element.extend({
 				name: element_before_snapshot.name,
@@ -76,7 +132,8 @@ export const MirrorModeling = {
 			// 位移/旋转/缩放不跟着映射（SmartCopyGroup 在该次编辑里判定 group_flip）
 			let sync_parents = !cached_data?.smart_pair
 				|| typeof SmartCopyGroup == 'undefined'
-				|| SmartCopyGroup.groupSyncEnabled();
+				// 反馈#393：属性链接状态按这一对所在的那条链接判定（多条链接并存时互不牵连）
+				|| SmartCopyGroup.groupSyncEnabled(original);
 			function updateParent(child: OutlinerNode, child_b: OutlinerNode) {
 				let parent = child.parent;
 				let parent_b = child_b.parent;
