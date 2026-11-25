@@ -1918,6 +1918,7 @@
 	"menu.mirror_painting.local": "局部对称",
 	"menu.mirror_painting.local.desc": "在本地空间中为每个元素启用镜像绘制",
 	"message.mirror_painting.plane_rotation": "翻转轴面有旋转：「轴面对称」目前只跟随偏移，不跟随旋转",
+	"message.mirror_painting.plane_no_target": "轴面对称：镜像位置上没有可绘制的几何，落笔不会镜像——请调整翻转轴面的偏移，或在该位置补上方块",
 	"menu.mirror_painting.texture_frames": "动画纹理帧",
 	"menu.mirror_painting.texture_frames.desc": "将笔画镜像到动画纹理的每一帧",
 	"format.bedrock_block.info.size_limit": "块的总大小在所有维度上限制为 30 像素。 上线最多可以在所有方向上偏离块中心 7 个像素。",

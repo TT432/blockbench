@@ -445,6 +445,8 @@ export const Painter = {
 	},
 	stopPaintTool() {
 		PointerTarget.endTarget();
+		// 反馈#387：轴面对称「没有对应落点」的提示是按笔画节流的，笔画结束就复位
+		delete Painter.plane_mirror_no_target_warned;
 		if (Painter.paint_stroke_canceled) {
 			delete Painter.paint_stroke_canceled;
 			return;
@@ -1251,7 +1253,18 @@ export const Painter = {
 				if (side_face && local !== null) fkey = CubeFace.opposite[fkey];
 				let face = mirror_element.faces[fkey];
 	
+				/**
+				 * 「同一个面」短路：换面后若目标面与源面是**同一个元素上的同一个面**、UV 区域也完全一致，
+				 * 镜像落点没有意义，直接放弃这一笔。
+				 *
+				 * 反馈#387：原判据只比较 UV 矩形，不比较元素。两个上下（或左右）对称的块把一对面
+				 * 指到同一块贴图区域时（逐面 UV 下很常见），目标面被误判成「同一个面」，整笔镜像被丢弃——
+				 * 表现为勾了 Y 轴后上下两块之间完全不镜像（顶/底面尤其明显，因为 up↔down 必然走这条
+				 * 换面路径）。加上元素判据后，只有真正的同一个面才会短路。
+				 */
 				if (side_face &&
+					mirror_element === Painter.current.element &&
+					fkey === Painter.current.face &&
 					uvTag[1] === face.uv[1] && uvTag[3] === face.uv[3] &&
 					Math.min(uvTag[0], uvTag[2]) === Math.min(face.uv[0], face.uv[2]) &&
 					symmetry_axes.filter(v => v).length == 1
@@ -1266,7 +1279,8 @@ export const Painter = {
 				//calculate new point
 				let mirror_x = symmetry_axes[0] != symmetry_axes[2];
 				if (local === null) mirror_x = !mirror_x;
-				if (fkey === 'up' || fkey === 'down') mirror_x = !!symmetry_axes[0];
+				let vertical_face = (fkey === 'up' || fkey === 'down');
+				if (vertical_face) mirror_x = !!symmetry_axes[0];
 				
 				if ((face.uv[0] > face.uv[0+2] == uvTag[0] > uvTag[0+2]) == mirror_x) {
 					point_on_uv[0] = Math.max(face.uv[0], face.uv[0+2]) * uvFactorX - point_on_uv[0] - offset_pixel_brush;
@@ -1274,11 +1288,35 @@ export const Painter = {
 				} else {
 					point_on_uv[0] = Math.min(face.uv[0], face.uv[0+2]) * uvFactorX + point_on_uv[0];
 				}
-				let mirror_y = symmetry_axes[2] && (fkey === 'up' || fkey === 'down');
+				/**
+				 * 反馈#387：v（纹理竖直方向）要不要做像素回文反射——判据是「源面的 v 增大方向」经镜像翻转后，
+				 * 与「目标面的 v 增大方向」是否相反（相反 → 回文，相同 → 保持）。
+				 *
+				 * 先看每个面的 v 沿哪条世界轴走（`CubeFace.UVToLocal`）：
+				 * - 侧面 north/south/east/west：v 沿世界 Y，两个对称块的 v 方向一致；只有水平镜面（Y 轴反射）
+				 *   才会把 Y 反向 → 取 `symmetry_axes[1]`。Z 轴反射只是把 north 换成 south，v 仍沿 +Y 不变。
+				 * - 顶/底面 up/down：v 沿世界 Z，且两面**互为反向**（up 的 z 随 v 增大，down 的 z 随 v 减小）。
+				 *   于是「up 与 down 互换」（Y 轴反射必然把顶面映到底面）和「Z 轴反射」各让 v 反向一次，
+				 *   两者同时选中时互相抵消 → 取 Y 与 Z 的异或。
+				 *
+				 * 原实现只写了 `symmetry_axes[2] && (up|down)`：勾 Y 时恒为 false，侧面于是永远走「保持 v」的
+				 * 分支，上下对称的两块之间 v 一格都不反射（反馈 #387「两个对称块非正常对称」的根因）。
+				 * 同理 Y 轴下 up/down 没有换面后的 v 处理，顶↔底配对也会错位。
+				 */
+				let mirror_y = vertical_face
+					? (!!symmetry_axes[1] != !!symmetry_axes[2])
+					: !!symmetry_axes[1];
+				// 反馈#343 的偶数直径约定在 v 方向同样要成立：这个 1 与上面 u 分支的 `+= 1` 同义
+				let even_offset_y = 0;
 				if ((face.uv[1] > face.uv[1+2] == uvTag[1] > uvTag[1+2]) != mirror_y) {
 					point_on_uv[1] = Math.min(face.uv[1], face.uv[1+2]) * uvFactorY + point_on_uv[1];
 				} else {
 					point_on_uv[1] = Math.max(face.uv[1], face.uv[1+2]) * uvFactorY - point_on_uv[1] - offset_pixel_brush;
+					// 只在 Y 轴补这一格：Z 轴历史行为（含顶/底面）保持不变，避免改坏已验证的 Z 镜像
+					if (even_brush_size && symmetry_axes[1]) {
+						point_on_uv[1] += 1;
+						even_offset_y = 1;
+					}
 				}
 				if (offset_pixel_brush == 1) {
 					point_on_uv[0] = Math.round(point_on_uv[0]);
@@ -1301,8 +1339,11 @@ export const Painter = {
 					 * 但镜像侧**内容**必须按像素回文对应（镜像像素 q ← 源像素 min_s + max_t - 1 - q），
 					 * 否则复制画笔的镜像图案会与源侧错开 1 像素（#343 复报的现象）。这里把多偏的量报给
 					 * 按像素取内容的工具（复制画笔），由它从内容映射里扣掉。
+					 *
+					 * 反馈#387：v 也做像素回文之后，偶数直径在 **y 分量**上同样会多偏这一格，必须一并上报，
+					 * 否则 Y 轴的偶数直径镜像会差 1 像素（#343 那类现象在竖直方向重演）。
 					 */
-					center_offset: [even_brush_size ? 1 : 0, 0]
+					center_offset: [even_brush_size ? 1 : 0, even_offset_y]
 				}
 	
 			} else if (mirror_element instanceof Mesh) {
@@ -1422,12 +1463,12 @@ export const Painter = {
 					targets.push(Painter.getPhysicalMirrorTarget(texture, x, y, mirror_vector));
 				})
 			} else {
-				// 反馈#387：轴面对称——镜面取翻转轴面的偏移（mirrorCenters 里按选项换算），
-				// 其余落点计算与全局对称完全一致。勾选它时不再重复叠加全局对称（同一个镜面）。
-				let use_plane = !!Painter.mirror_painting_options.plane;
+				// 反馈#387：轴面对称——镜面取翻转轴面的位置。勾选它时不再叠加全局对称（同一个镜面）；
+				// 物理镜像分支在上面已经整体接手，这里再判一次 physical 作兜底，避免两条路径对同一笔重复落点。
+				let use_plane = !!Painter.mirror_painting_options.plane && !Painter.mirror_painting_options.physical;
 				mirror_vectors.forEach((mirror_vector, i) => {
 					if (use_plane) {
-						targets.push(getTargetWithOptions(mirror_vector, false));
+						targets.push(Painter.getPlaneMirrorTarget(texture, x, y, mirror_vector));
 					}
 					if (Painter.mirror_painting_options.global && !use_plane) {
 						targets.push(getTargetWithOptions(mirror_vector, false));
@@ -2045,6 +2086,17 @@ export const Painter = {
 		}
 		return centers;
 	},
+	/**
+	 * 反馈#387：轴面对称时反射点可能完全落在模型之外（例如单一居中块 + 轴面偏移 4）。
+	 * 这种情况下正确行为是**不落笔**（不能凭空造出像素），但不能静默——给一次可见提示说明是
+	 * 轴面位置没有对应落点，让用户知道调轴面或补方块。一次笔画只提示一次，
+	 * 避免每个笔刷脚印都弹（标志在 stopPaintTool 里清掉）。
+	 */
+	warnPlaneMirrorNoTarget() {
+		if (Painter.plane_mirror_no_target_warned) return;
+		Painter.plane_mirror_no_target_warned = true;
+		Blockbench.showQuickMessage(tl('message.mirror_painting.plane_no_target'), 4000);
+	},
 	getMirrorElement(element, symmetry_axes) {
 		let centers = this.mirrorCenters(symmetry_axes);
 		let e = 0.01;
@@ -2334,6 +2386,25 @@ export const Painter = {
 			if (preferred) return preferred.target;
 		}
 		return preferred_candidates[0].target;
+	},
+	/**
+	 * 反馈#387（P2）：轴面对称按「轴面所在位置」做几何反射。
+	 *
+	 * 旧实现（5.4.18）只是把镜面坐标换成轴面，再走「找几何对称的配对块」（getMirrorElement）：
+	 * 一旦轴面不在模型的对称位置上，配对块根本不存在，落点被 `targets.filter(target => !!target)`
+	 * 静默丢弃——用户看到的就是「调了轴面之后一笔都镜像不出去」。
+	 *
+	 * 这里改成真正的几何反射：源点按镜面翻到世界空间，落在哪个元素、哪个面就画在哪里，
+	 * 不再要求配对块存在。实现直接复用物理镜像的世界空间反射（`getPhysicalMirrorTarget`
+	 * 的镜面同样取自 `mirrorCenters`，勾选轴面对称时它就是翻转轴面），因此偏移/旋转后的
+	 * 落点计算、多面重合时的块优选（#392/#80）都与物理镜像完全一致，不存在第二套口径。
+	 * 物理镜像开关打开时本函数不会被调用（上面整个分支由 physical 接手），不会双重落点。
+	 */
+	getPlaneMirrorTarget(texture, x, y, mirror_vector) {
+		let target = Painter.getPhysicalMirrorTarget(texture, x, y, mirror_vector);
+		// 反射点落在模型外：不画，但要说出来（此前是完全静默的）
+		if (!target) Painter.warnPlaneMirrorNoTarget();
+		return target;
 	},
 	updateNslideValues() {
 		BarItems.slider_brush_size.update()
@@ -4396,6 +4467,14 @@ BARS.defineActions(function() {
 			grid.rotation.x = Math.PI/2;
 			grid.position.y = size/2;
 			grid.position.z = Format.centered_grid ? 0 : 8;
+			grids.add(grid);
+		}
+		if (Painter.mirror_painting_options.axis.y) {
+			// 反馈#387：Y 轴（上下对称）此前只有冒泡到这里的空 Object3D，视口没有任何轴面提示，
+			// 用户无法判断镜面在哪。GridHelper 默认就躺在水平面（XZ 平面）上，不需要像 X/Z 分支那样旋转，
+			// 只要把它放到模型中线的高度即可（与 X/Z 分支同样的「未偏移中线」约定）。
+			var grid = new THREE.GridHelper(size, 16*2, new THREE.LineBasicMaterial({color: gizmo_colors.g}));
+			grid.position.y = Format.centered_grid ? 0 : 8;
 			grids.add(grid);
 		}
 		scene.add(grids);
